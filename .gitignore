@@ -1,0 +1,5 @@
+images/
+notebooks/
+
+*.pyc
+__pycache__
