@@ -1,9 +1,11 @@
 import glob
-import importlib
 import os
 import shutil
 import subprocess
 import sys
+import pyproj
+import scipy
+import ucat
 
 from pathlib import Path
 from typing import Union
@@ -16,8 +18,11 @@ import numpy as np
 
 sys.path.append(os.path.join('/users', os.environ["USER"], 'microhh', 'python'))
 sys.path.append(os.path.join('/users', os.environ["USER"], 'microhh', 'processing_chain', 'src'))
+sys.path.append(os.path.join('/users', os.environ["USER"], 'ddeq', 'src'))
+
 import microhh_tools as mht
 import initialisation as init
+import ddeq as ddeq
 
 # molar mass (g/mol)
 gas_mass = {
@@ -31,6 +36,7 @@ gas_mass = {
     'so2': 64.066,
     'ch4': 16.0425,
 }
+
 
 
 class PreProcessing:
@@ -152,42 +158,70 @@ class PreProcessing:
         # Check if build exists
         if self.processor == "gpu" and self.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
-        
+    
     def _check_ini_setup_valid(self):
-        """Check if the setup specified in the .ini file is valid
-        based on the selected number of nodes and the model segreation
-        and number of grid cells.
+        """
+        Check if the setup specified in the .ini file is valid based on the selected number of nodes and the model
+        segregation and number of grid cells.
 
         Raises:
-            ValueError: Raise error if the specified grid and model segreation
-                do not match in x direction.
-            ValueError: Raise error if the specified grid and model segreation
-                do not match in y direction.
-            ValueError: Raise error if the segregation and
-                number of nodes do not match.
+            ValueError: If the specified grid and model segregation do not match in x direction or y direction.
+            ValueError: If the segregation and number of nodes do not match.
         """
-        if not self.mpi and (self.ini_file['master']['npx'] != 1 or self.ini_file['master']['npy'] != 1):
+        self._adjust_mpi_settings()
+
+        self._check_grid_match()
+        self._check_nodes_match()
+
+        self._check_source_position()
+        self._check_buffer_height()
+
+    def _adjust_mpi_settings(self):
+        """Adjust MPI settings if MPI is disabled."""
+        if not self.mpi:
             for dim in ["x", "y"]:
                 self.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
             self.ini_file.save(self.ini_path, allow_overwrite=True)
             print("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
-        if self.ini_file['grid']['itot'] % self.ini_file['master']['npx']:
+    def _check_grid_match(self):
+        """Check if the grid size matches the number of processes."""
+        itot, jtot = self.ini_file['grid']['itot'], self.ini_file['grid']['jtot']
+        npx, npy = self.ini_file['master']['npx'], self.ini_file['master']['npy']
+
+        if itot % npx != 0:
+            raise ValueError(f"itot ({itot}) is not divisible by npx ({npx})")
+        elif jtot % npy != 0:
+            raise ValueError(f"jtot ({jtot}) is not divisible by npy ({npy})")
+
+    def _check_nodes_match(self):
+        """Check if the number of nodes matches the expected value."""
+        expected_nodes = self.ini_file['master']['npx'] * self.ini_file['master']['npy']
+        if expected_nodes != self.ntasks_per_node:
             raise ValueError(
-                f"itot = {self.ini_file['grid']['itot']} is not a multiple "
-                f"of npx = {self.ini_file['master']['npx']}"
-                )
-        elif self.ini_file['grid']['jtot'] % self.ini_file['master']['npy']:
-            raise ValueError(
-                f"itot = {self.ini_file['grid']['jtot']} is not a multiple "
-                f"of npy = {self.ini_file['master']['npy']}"
-                )
-        elif self.ini_file['master']['npx'] * self.ini_file['master']['npy'] != self.ntasks_per_node:
-            raise ValueError(
-                f"Task per node {self.ntasks_per_node} does not equal "
-                f"npx * npy = {self.ini_file['master']['npx']} * "
-                f"{self.ini_file['master']['npy']}"
-                )
+                f"Task per node ({self.ntasks_per_node}) does "
+                f"not match the expected value.")
+
+    def _check_source_position(self):
+        """Check if the source position conflicts with the domain size."""
+        if "source" in self.ini_file.groups:
+            for coord in ["x", "y", "z"]:
+                source_ext = self.ini_file['source'][f'source_{coord}0'] + \
+                             2 * self.ini_file['source'][f'sigma_{coord}']
+
+                if source_ext > self.ini_file['grid'][f'{coord}size']:
+                    raise ValueError(
+                        f"{coord}-positioning conflicts with the domain size.")
+
+    def _check_buffer_height(self):
+        """Check if the buffer height lies within the domain."""
+        if "buffer" in self.ini_file.groups:
+            zstart = self.ini_file['buffer'].get('zstart', 0)
+            zsize = self.ini_file['grid']['zsize']
+            if zstart > zsize:
+                raise ValueError(
+                    f"Buffer height={zstart} lies outside of the domain "
+                    f" with zsize={zsize}.")            
 
     def _parse_run_time(self, run_time: str) -> pd.Timedelta:
         """Parse the run_time string and return a timedelta object
@@ -366,13 +400,17 @@ class PostProcessing:
         self.ini_path = case.ini_path
         self.ini_file = case.ini_file
 
-        if not isinstance(vars, list):
-            self.vars = [vars]
-        else:
-            self.vars = vars
+    def vars_to_list(self, vars):
 
-    def run_postprocessing(self, overwrite: bool=False,
-                           precision: str="double"):
+        if not isinstance(vars, list):
+            vars = [vars]
+
+        return vars
+
+    def run_postprocessing(self, vars,
+                           overwrite: bool=False,
+                           precision: str="double",
+                           start_time=None, end_time=None):
         """Run all post-processing steps.
 
         Args:
@@ -381,19 +419,29 @@ class PostProcessing:
                 'store' should be overwritten.
             precision (str, optional. Default "double"):
                 Precision used for the created .nc file.
+            start_time (int, optional. Default: None):
+                Start time in s of the data.
+            end_time (int, optional. Default: None):
+                End time in s of the data.
         """
 
         self.create_3d_output(
+            vars=vars,
             overwrite=overwrite,
-            precision=precision
+            precision=precision,
+            start_time=start_time,
+            end_time=end_time
             )
         self.move_to_store(
+            vars=vars,
             overwrite=overwrite
             )
 
 
-    def create_3d_output(self, overwrite: bool=False,
-                         precision: str="double"):
+    def create_3d_output(self, vars,
+                         overwrite: bool=False,
+                         precision: str="double",
+                         start_time=None, end_time=None):
         """Create 3D netCDF files for the variables specified
 
         Args:
@@ -402,26 +450,32 @@ class PostProcessing:
                 'store' should be overwritten.
             precision (str, optional. Default: "double"):
                 Precision used for the created .nc file.
+            start_time (int, optional. Default: None):
+                Start time in s of the data.
+            end_time (int, optional. Default: None):
+                End time in s of the data.
         """
-        start_time = self.ini_file['time']['starttime']
-        end_time = self.ini_file['time']['endtime']
+        vars = self.vars_to_list(vars)
+
+        if start_time is None:
+            start_time = self.ini_file['time']['starttime']
+        if end_time is None:
+            end_time = self.ini_file['time']['endtime']
         sample_time = self.ini_file['time']['savetime']
 
-        for var in self.vars:
+        for var in vars:
             nc_file_path = os.path.join(self.scratch_path, f"{var}.nc")
 
             if os.path.exists(nc_file_path):
-                if not overwrite:
-                    raise FileExistsError(
-                        f"File {nc_file_path} already exists. "
-                        "Set 'overwrite=True' to allow overwriting."
-                    )
-                os.remove(nc_file_path)
-                print(f"Overwriting {nc_file_path}")
+                if overwrite:
+                    os.remove(nc_file_path)
+                    print(f"Overwriting {nc_file_path}")
+                else:
+                    return
 
         post_command = (
             f"python 3d_to_nc.py -d {self.scratch_path} "
-            f"-f {self.case_name}.ini -v {' '.join(self.vars)} "
+            f"-f {self.case_name}.ini -v {' '.join(vars)} "
             f"-p {precision} -t0 {start_time} -t1 {end_time} "
             f"-tstep {sample_time}"
         )
@@ -431,18 +485,15 @@ class PostProcessing:
             cwd=os.path.join('/users', self.user, 'microhh', 'python')
             )
         
-        # assign names and units to the resulting netCDF file
-        for var in self.vars:
-            self._nc_assign_names_and_attributes(os.path.join(self.scratch_path, f"{var}.nc"))
         
-    def _nc_assign_names_and_attributes(self, nc_file_path):
+    def _nc_assign_names_and_attributes(self, data):
         """Assign long_name and unit attributes to variables in a .nc file.
     
         Args:
             nc_file_path (str): Path to the .nc file.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
-        variables = {var: (f"{var} mixing ratio", "-") for var in gas_mass.keys()}
+        variables = {var: (f"{var} mixing ratio", "mol mol-1") for var in gas_mass.keys()}
         variables.update({
             'thl': ('liquid water potential temperature', 'K'),
             'qt': ('total specific humidity', 'kg kg-1'),
@@ -452,21 +503,13 @@ class PostProcessing:
             'p': ('air pressure', 'Pa'),
         })
 
-        try:
-            ds = xr.open_dataset(nc_file_path)
-        except ValueError:
-            ds = xr.open_dataset(nc_file_path, decode_times=False)
-
         # Assign attributes to variables
-        for var in ds.variables:
+        for var in data.variables:
             if var in variables:
                 long_name, unit = variables[var]
-                ds[var].attrs.update({'long_name': long_name, 'unit': unit})
+                data[var].attrs.update({'long_name': long_name, 'units': unit})
 
-        # remove existing file because overwriting is not allowed
-        os.remove(nc_file_path)
-
-        ds.to_netcdf(nc_file_path)
+        return data
 
 
     def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset):
@@ -474,6 +517,8 @@ class PostProcessing:
 
         if dim is None:
             return nc_file
+        
+        print(f"Interpolating {dim} to {dim[:-1]}")
 
         midpoints = nc_file[dim][:-1].values + np.diff(nc_file[dim].values)/2
         new_coords = {dim: midpoints}
@@ -495,12 +540,14 @@ class PostProcessing:
 
         return None
     
-    def combine_nc_files(self):
+    def combine_nc_files(self, vars):
+        vars = self.vars_to_list(vars)
+
         # Create a list to store individual xarray.Dataset objects
         datasets = []
 
         # Iterate through each variable
-        for var in self.vars:
+        for var in vars:
             # Construct the file path for the current variable
             nc_file_path = os.path.join(self.store_path, f"{var}.nc")
 
@@ -532,10 +579,447 @@ class PostProcessing:
 
         return combined_dataset
 
+    def open_3d_netCDF(self, variable: str) -> xr.Dataset:
+        """Open 3D output netCDF file of 'variable' from model output.
+
+        Args:
+            variable (str):
+                Variable name of dataset to open.
+
+        Returns:
+            xr.Dataset: 3D netCDF file from model output.
+        """
+
+        fname = f"{self.store_path}/{variable.lower()}.nc"
+        try:
+            data = xr.open_dataset(fname)
+        except ValueError:
+            data = xr.open_dataset(fname, decode_times=False)
+
+        data = self._nc_assign_names_and_attributes(data)
+        data = self._capitalise_variable_names(data)
+
+        return data
+    
+    def _format_column_unit(self, to_unit):
+
+        if '/' in to_unit:
+            n, d = map(str.strip, to_unit.split('/'))
+            if d[-1].isdigit():
+                d = "-".join([d[:-1], d[-1]])
+            
+            formatted_unit = " ".join([n,d])
+
+        else:
+            formatted_unit = to_unit
+
+        return formatted_unit
+    
+    def _format_volume_unit(self, to_unit):
+
+        # vertical integration assumes units to be in m
+        if " " in to_unit: 
+            n, d = to_unit.split()
+            if d == "m":
+                formatted_unit = n
+            if d == "m-2":
+                formatted_unit = " ".join([n, "m-3"])
+            
+            return formatted_unit
+        
+        else:
+            raise ValueError(f"{to_unit} is a unit not supported")
+
+    def convert_to_columns(self, variable, to_unit):
+        data = self.open_3d_netCDF(variable.lower())
+        data = self._nc_assign_names_and_attributes(data)
+
+        new_var_unit = self._format_volume_unit(to_unit)
+
+        variable = variable.upper()
+        
+        # convert to correct volumentric unit first.
+        # default MicroHH output is mol mol-1
+        data[variable] = (
+            data[variable].dims,
+            ucat.convert_points(
+                data[variable],
+                data[variable].attrs.get("units", None),
+                new_var_unit,
+                molar_mass=variable.upper())
+                )
+
+        # integrate vertically
+        df_column = data.integrate(coord="z")
+
+        # adjust units due to integration
+        df_column[variable].attrs["units"] = self._format_column_unit(to_unit)
+        df_column[variable].attrs["description"] = f"vertically integrated {variable} columns"
+
+        return df_column
+
+    def add_gaussian_noise(self, data: xr.Dataset, var: str, std: float) -> xr.Dataset:
+        """
+        Add Gaussian noise to a specified variable in the dataset.
+
+        Args:
+            data (xr.Dataset):
+                The dataset containing the variable to which noise will be added.
+            var (str):  
+                The name of the variable to which Gaussian noise will be added.
+            std (float):
+                The standard deviation of the Gaussian noise distribution.
+
+        Returns:
+            xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
+        """
+        var = var.upper()
+
+        # Create a deep copy of the dataset to avoid modifying the original in-place
+        data_copy = data.copy(deep=True)
+
+        # assume no bias (center = 0) but noise (= std)
+        noise = np.random.normal(0, std, data_copy[var].size)
+        noise = noise.reshape(data_copy[var].shape)
+
+        data_copy[var] = data_copy[var] + noise
+        data_copy[var].attrs.update(data[var].attrs)
+        data_copy[var].attrs["noise_level"] = std
+
+        return data_copy
+    
+
+    def degrade_resolution(self,
+                           data: xr.Dataset,
+                           zonal_res: int,
+                           meridional_res: int) -> xr.Dataset:
+        """Degrade resolution of 3D or 2D MicroHH output by aggregating pixels.
+
+        Args:
+            data (xr.Dataset): 3D or 2D data
+            zonal_res (int):
+                Number of pixels in zonal direction which should be aggregated.
+            meridional_res (int):
+                Number of pixels in meridional direction which should be aggregated.
+
+        Returns:
+            xr.Dataset: Data with coarser resolution.
+        """
+        spatial_dims = {
+            ("x", "y"): ("x", "y"),
+            ("lon", "lat"): ("lon", "lat"),
+            ("longitude", "latitude"): ("longitude", "latitude")
+        }
+
+        for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
+            if all(dim in data.dims for dim in dims):
+                degraded_data = data.coarsen({
+                    zonal_dim: zonal_res,
+                    meridional_dim: meridional_res},
+                    boundary="trim").mean()
+                return degraded_data
+
+        raise ValueError(f"Unknown spatial dimensions: {data.dims}")
 
 
+    def create_sources_dataset(self,
+                           lat, lon,
+                           source_names=None,
+                           source_labels=None,
+                           source_radius=None):
+    
+        def to_list(value):
+            return value if isinstance(value, (list, np.ndarray)) else [value]
+    
+        source_list = self.ini_file['source']['sourcelist']
+        nr_sources = len(to_list(source_list))
+    
+        source_names = source_names or source_labels or [f"source{i+1}" for i in range(nr_sources)]
+        source_labels = source_labels or source_names
+    
+        if source_radius is None:
+            pixel_size = np.max([
+                self.ini_file['grid']['xsize'] / self.ini_file['grid']['itot'],
+                self.ini_file['grid']['ysize'] / self.ini_file['grid']['jtot']
+            ])
+            source_radius = np.full(nr_sources, pixel_size / 1e3) # in km
+    
+        data = {
+            'lon_o': (['source'], np.array(to_list(lon), dtype=float)),
+            'lat_o': (['source'], np.array(to_list(lat), dtype=float)),
+            'grid_x': (['source'], np.array(to_list(self.ini_file['source']['source_x0']), dtype=float)),
+            'grid_y': (['source'], np.array(to_list(self.ini_file['source']['source_y0']), dtype=float)),
+            'type': (['source'], np.full(nr_sources, "power plant", dtype=object)),
+            'label': (['source'], np.array(to_list(source_labels), dtype=object)),
+            'radius': (['source'], np.array(to_list(source_radius), dtype=float)),
+            'strength': (['source'], self.model_emissions_to_kg_per_h()),
+        }
+    
+        coords = {'source': np.array(to_list(source_names), dtype=object)}
+    
+        sources = xr.Dataset(data, coords=coords)
+        sources.lon_o.attrs['units'] = 'longitude of source'
+        sources.lat_o.attrs['units'] = 'latitude of source'
+        sources.radius.attrs['units'] = 'km'
+        sources.strength.attrs['units'] = 'kg h-1'
+    
+        for dim in ["x", "y"]:
+            sources[f"grid_{dim}"].attrs['units'] = 'm'
+            sources[f"grid_{dim}"].attrs['description'] = f'{dim} position in MicroHH grid'
+    
+        return sources
+    
 
-    def move_to_store(self, overwrite: bool):
+    def create_wind_dataset(self, source, sources, radius):
+        vars = ["u", "v"]
+    
+        try:
+            self.run_postprocessing(vars)
+            wind_data = self.combine_nc_files(vars)
+        except Exception as e:
+            raise e
+    
+        wind_data['speed'] = np.sqrt(wind_data.u**2 + wind_data.v**2)
+        wind_data['direction'] = ddeq.wind.calculate_wind_direction(wind_data.u, wind_data.v)
+    
+        selected_source = sources.sel(source=source)
+        grid_x = selected_source.grid_x.values
+        grid_y = selected_source.grid_y.values
+    
+        x_res = wind_data.x.diff(dim="x").median()
+        y_res = wind_data.y.diff(dim="y").median()
+    
+        wind_data_subset = wind_data.where(
+            (wind_data.x > grid_x - x_res/2 - radius) & 
+            (wind_data.x <= grid_x + x_res/2 + radius) &
+            (wind_data.y > grid_y - y_res/2 - radius) & 
+            (wind_data.y <= grid_y + y_res/2 + radius),
+            drop=True
+        )
+
+        wind_data_subset = self.vertically_integrate_wind(wind_data_subset, method="mean")
+    
+        wind_data_subset['u_median'] = wind_data_subset.u.median(
+            dim=["x", "y"])
+        wind_data_subset['v_median'] = wind_data_subset.v.median(
+            dim=["x", "y"])
+        wind_data_subset['speed_median'] = wind_data_subset.speed.median(
+            dim=["x", "y"])
+        wind_data_subset['speed_std'] = wind_data_subset.speed.std(
+            dim=["x", "y"])
+        wind_data_subset['direction_mean'] = self._circular_mean(
+            wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
+                                              list(wind_data_subset.dims).index('x')])
+        wind_data_subset['direction_std'] = self._circular_std(
+            wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
+                                              list(wind_data_subset.dims).index('x')])
+    
+        wind_src = xr.Dataset(
+            coords={
+                "source": (["source"], np.array([source], dtype=object)),
+                "time": (["time"], wind_data_subset.time.values)
+            },
+            data_vars={
+                "lon": (
+                    ["source"],
+                    [selected_source.lon_o.values]),
+                "lat": (
+                    ["source"],
+                    [selected_source.lat_o.values]),
+                "U": (
+                    ["source", "time"],
+                    [wind_data_subset.u_median.values],
+                    {"units": "m s-1"}),
+                "V": (
+                    ["source", "time"],
+                    [wind_data_subset.v_median.values],
+                    {"units": "m s-1"}),
+                "speed": (
+                    ["source", "time"],
+                    [wind_data_subset.speed_median.values],
+                    {"units": "m s-1"}),
+                "speed_precision": (
+                    ["source", "time"],
+                    [wind_data_subset.speed_std.values],
+                    {"units": "m s-1"}),
+                "direction": (
+                    ["source", "time"],
+                    [wind_data_subset.direction_mean.values],
+                    {"units": "°"}),
+                "direction_precision": (
+                    ["source", "time"],
+                    [wind_data_subset.direction_std.values],
+                    {"units": "°"}),
+            },
+            attrs=dict(radius=f"{radius} pixels around determined source pixel")
+        )
+    
+        return wind_src
+    
+
+    def _circular_mean(self, a, axes):
+            return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
+    
+
+    def _circular_std(self, a, axes):
+            return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
+
+    
+    def vertically_integrate_wind(self, wind_data, method):
+
+        if method == "mean":
+            return wind_data.mean(dim="z")
+        else:
+            # FIXME: implement other ways of vertical averaging
+            raise NotImplementedError
+    
+
+    def convert_microhh_grid_to_coords(self, lat_o, lon_o, data, sources,
+                                       target_crs = 'epsg:4326',
+                                       microhh_crs = 'epsg:32632'):
+
+        # convert lat and lon into a metric CRS which is valid for Europe
+        # 'epsg:32632' Coordinate system in meters which covers Europe
+        # 'epsg:4326' Global lat-lon coordinate system
+
+        # convert coordinates to metric crs
+        latlon_to_metric = pyproj.Transformer.from_crs(target_crs, microhh_crs)
+        x_o, y_o = latlon_to_metric.transform(lat_o, lon_o)
+
+        xx, yy = np.meshgrid(data['x'], data['y'])
+
+        # shift grid of x and y values so that the source is at the location
+        # given by lat_o and lon_o
+        shifted_grid_x = xx-sources.grid_x.values+x_o
+        shifted_grid_y = yy-sources.grid_y.values+y_o
+
+        # transform shifted grid to lat / lon
+        lat_grid, lon_grid = latlon_to_metric.transform(
+            shifted_grid_x,
+            shifted_grid_y,
+            direction="INVERSE")
+
+        # capitalise gas names
+        data = self._capitalise_variable_names(data)
+
+        data = data.rename({
+            "y": "nrows",
+            "x": "nobs"
+            })
+
+        # define the coordinates
+        coords = {
+            'time': (['time'], data.time.data),
+            'lon': (['nrows', 'nobs'], lon_grid),
+            'lat': (['nrows', 'nobs'], lat_grid)
+            }
+
+        # extract only the variables that are not already in the dataset
+        vars_to_include = {var: data[var] for var in data.variables if var not in data.dims}
+
+        # create the new dataset
+        data = xr.Dataset(vars_to_include, coords=coords).drop_vars(["nrows", "nobs"])
+
+        return data
+
+
+    def _capitalise_gas_key(self, variable_name):
+        for key in gas_mass.keys():
+            if key in variable_name:
+                return key.upper()
+        return variable_name
+    
+
+    def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
+        """Capitalize variable names in an xarray dataset if they match keys in the gas_mass dictionary.
+    
+        Args:
+            dataset (xr.Dataset): The xarray dataset to process.
+    
+        Returns:
+            xr.Dataset: The dataset with variable names capitalized if they match keys in the gas_mass dictionary.
+        """
+        for var_name in list(dataset.variables):
+            new_var_name = self._capitalise_gas_key(var_name)
+            if new_var_name != var_name:
+                dataset = dataset.rename({var_name: new_var_name})
+        return dataset
+
+
+    def convert_microhh_timestep_to_date(self,
+                                         start_date: Union[str, pd.Timestamp],
+                                         data: xr.Dataset) -> xr.Dataset:
+        """Convert time into a timestamp to make the
+        dataset digestible by `ddeq`
+
+        Args:
+            start_date (Union[str, Timestamp]):
+                The start date as a string or a pandas Timestamp object.
+            data (xr.Dataset):
+                The dataset to convert.
+
+        Returns:
+            xr.Dataset:
+                The dataset with the time converted to a timestamp.
+        """
+        data['time'] = pd.to_timedelta(data['time'], unit='s')
+
+        # Check if start_date is a string and convert it to a Timestamp if necessary
+        if isinstance(start_date, str):
+            start_date = pd.to_datetime(start_date)
+
+        # Add Timedelta to the start date
+        data['time'] = start_date + data['time']
+
+        return data
+
+    def add_corners(self, d, var=('lon', 'lat'), dims=('nrows', 'nobs')):
+        """
+        Add corner coordinates for `var`.
+        """
+        ic = np.arange(d[dims[1]].size+1) - 0.5
+        jc = np.arange(d[dims[0]].size+1) - 0.5
+
+        bbox=[-0.5, d[dims[0]].size, -0.5, d[dims[1]].size]
+
+        for name in var:
+            interpolator = scipy.interpolate.RectBivariateSpline(
+                d[dims[0]], d[dims[1]], d[name], kx=1, ky=1, bbox=bbox
+            )
+            xc = interpolator(jc, ic)
+            xc = np.moveaxis([xc[:-1,:-1], xc[:-1,1:], xc[1:,1:], xc[1:,:-1]], 0, 2)
+            d[f'{name}c'] = xr.DataArray(xc, dims=dims + ('corners', ))
+            
+        return d
+
+
+    def model_emissions_to_kg_per_h(self) -> np.array:
+        """
+        Convert the prescribed emissions from the .ini file to kg/h
+
+        Returns:
+            np.array: Emitted quantities in kg/h
+        """
+        sourcelist = self.ini_file['source']['sourcelist']
+        swvmr = self.ini_file['source']['swvmr']
+        strength = self.ini_file['source']['strength']
+
+        if not isinstance(sourcelist, list):
+            sourcelist = np.array([sourcelist])
+            swvmr = np.array([swvmr])
+            strength = np.array([strength])
+
+        molar_mass = np.array([gas_mass[gas] for gas in sourcelist])
+
+        if all(swvmr): # it true, units are kmol s-1
+            strength *= molar_mass * 3600 # convert to kg/h
+        else: # units are kg kg s-1, seems to be an error
+            strength = np.full(len(swvmr), np.nan)
+
+        return strength
+
+
+    def move_to_store(self, vars, overwrite: bool):
         """Move files used for running MicroHH to store for reproducibility.
 
         Args:
@@ -546,6 +1030,7 @@ class PostProcessing:
             FileExistsError: Raise error if the folder
             already exists and 'overwrite=False'.
         """
+        vars = self.vars_to_list(vars)
 
         # Handle target path
         if not os.path.exists(self.store_path):
@@ -554,26 +1039,31 @@ class PostProcessing:
             shutil.rmtree(self.store_path)
             print(f"Overwriting {self.store_path}.")
             os.makedirs(self.store_path)
-        else:
-            raise FileExistsError(
-                f"Case {self.store_path} already exists. Set 'overwrite=True'."
-                )
 
         # Copy files for reproducibility
         file_patterns = ['*'+self.case_name+'.ini', '*'+self.case_name+'_input.nc', 'slurm-*.out']
         for pattern in file_patterns:
             for file in glob.glob(os.path.join(self.scratch_path, pattern)):
-                shutil.copy(file, self.store_path)
-                print(f"Successfully copied '{file}' to '{self.store_path}'.")
+                dest_file = os.path.join(self.store_path, os.path.basename(file))
+                if not os.path.exists(dest_file) or overwrite:
+                    shutil.copy(file, self.store_path)
+                    print(f"Successfully copied '{file}' to '{self.store_path}'.")
+                else:
+                    print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
 
         # Copy 3D .nc files of variables
-        for var in self.vars:
+        for var in vars:
             var_file = os.path.join(self.scratch_path, f"{var}.nc")
             if os.path.exists(var_file):
-                shutil.copy(var_file, self.store_path)
-                print(f"Successfully copied '{var_file}' to '{self.store_path}'.")
+                dest_file = os.path.join(self.store_path, os.path.basename(var_file))
+                if not os.path.exists(dest_file) or overwrite:
+                    shutil.copy(var_file, self.store_path)
+                    print(f"Successfully copied '{var_file}' to '{self.store_path}'.")
+                else:
+                    print(f"'{var_file}' already exists in '{self.store_path}'. Skipping.")
             else:
                 print(f"'{var_file}' does not exist.")
+
 
     def parse_slurm_output(self, slurm_source: str) -> pd.DataFrame:
         """Parse the output of the 'slurm.out' script to get the job information.
@@ -647,7 +1137,9 @@ class PostProcessing:
         df[['Energy', 'Energy unit']] = df['Energy'].str.split(expand=True)
         df['Energy'] = df['Energy'].astype(float)
 
-        try:
+        try: # only available for simulations on GPU
+            df['Execution time'] = df['Execution time'].apply(pd.to_timedelta)
+
             df[['Usage', 'Usage unit']] = df['Usage'].str.split(expand=True)
             df[['Max mem', 'Max mem unit']] = df['Max mem'].str.split(expand=True)
             df[['Usage', 'Max mem']] = df[['Usage', 'Max mem']].astype(float)

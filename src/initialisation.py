@@ -15,7 +15,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.append(os.path.join('/users', os.environ["USER"], 'microhh', 'python'))
+sys.path.append(os.path.join('/users', os.environ["USER"], 'microhh', 'processing_chain', 'src'))
 import microhh_tools as mht
+import processing as proc
 
 
 # molar mass (g/mol)
@@ -499,9 +501,17 @@ class Initialisation():
         """
         for group, variables in settings.items():
             for variable, value in variables.items():
-                self.ini_file.set_value(group=group,
-                                        variable=variable,
-                                        value=value)
+                if value is None:
+                    self.ini_file.remove_value(
+                        group=group,
+                        variable=variable
+                        )
+                else:
+                    self.ini_file.set_value(
+                        group=group,
+                        variable=variable,
+                        value=value
+                        )
             
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
@@ -532,13 +542,13 @@ def read_initial_cond(case: Case, source: str) -> xr.Dataset:
 
     fname = os.path.join(source_path, f"{case.case_name}_input.nc")
     groups = [''] + list(nc.Dataset(fname).groups.keys())
-    prof_dict = {}
+    merged_dataset = xr.Dataset()
     for group in groups:
-        prof_dict[group] = xr.open_dataset(fname, group=group,
-                                            decode_times=False)
-    prof = xr.merge(prof_dict.values())
+        ds = xr.open_dataset(fname, group=group,
+                             decode_times=False)
+        merged_dataset = xr.merge([merged_dataset, ds])
 
-    return prof
+    return merged_dataset
 
 def convert_to_kmol_per_s(value: Union[int, float],
                           unit: str, gas: str) -> float:

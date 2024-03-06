@@ -19,22 +19,18 @@ sys.path.append(f'/users/{os.environ["USER"]}/microhh/python')
 import microhh_tools as mht
 
 sys.path.append(f'/users/{os.environ["USER"]}/processing_chain/src/')
+import processing as proc
 import initialisation as init
 
-# molar mass (g/mol)
-M = {
-    'air': 28.9664,  # dry air
-    'co':  28.01,
-    'co2': 44.01,
-    'h2o': 18.01528,
-    'no2': 46.0055,
-    'no':  30.01,
-    'o3':  48.00,
-    'so2': 64.066,
-    'ch4': 16.0425,
-}
+
 
 class Visualisation():
+
+    wind_dims = {
+            "u"    : ["xh", "y", "z"],
+            "v"    : ["x", "yh", "z"],
+            "w"    : ["x", "y", "zh"],
+        }
 
     def __init__(self, case: init.Case, source: str):
         """Visualise the model output
@@ -59,25 +55,6 @@ class Visualisation():
         self.ini_file = mht.Read_namelist(self.ini_path)
 
 
-    def open_3d_netCDF(self, variable: str) -> xr.Dataset:
-        """Open 3D output netCDF file of 'variable' from model output.
-
-        Args:
-            variable (str):
-                Variable name of dataset to open.
-
-        Returns:
-            xr.Dataset: 3D netCDF file from model output.
-        """
-
-        fname = f"{self.store_path}/{variable}.nc"
-        try:
-            data = xr.open_dataset(fname)
-        except ValueError:
-            data = xr.open_dataset(fname, decode_times=False)
-
-        return data
-
     def plot_side_views(self, variable: str, timestep: int,
                         fig_width: Union[int, float]=15,
                         cbar_width: Union[int, float]=0.01
@@ -101,15 +78,12 @@ class Visualisation():
         Returns:
             matplotlib.figure.Figure: Figure with subplots and text
         """
-        dims = {
-            "u"    : ["xh", "y", "z"],
-            "v"    : ["x", "yh", "z"],
-            "w"    : ["x", "y", "zh"],
-        }
+        try:
+            data = self.open_3d_netCDF(f"{self.case_name}_output_vars")
+        except FileNotFoundError:
+            data = self.open_3d_netCDF(variable)
 
-        data = self.open_3d_netCDF(variable)
-
-        xdim, ydim, zdim = dims[variable] if variable in dims.keys() else ["x", "y", "z"]
+        xdim, ydim, zdim = self.wind_dims[variable] if variable in self.wind_dims.keys() else ["x", "y", "z"]
         
         if data.time.size > 1 and "time" in data.dims:
             data = data.isel(time=timestep)
@@ -118,7 +92,7 @@ class Visualisation():
         y_max = data[ydim].max().values
         z_max = data[zdim].max().values
 
-        if variable in dims.keys():
+        if variable in self.wind_dims.keys():
             dd_yz = data.mean(dim=xdim)
             dd_xy = data.mean(dim=zdim)
             dd_xz = data.mean(dim=ydim)
@@ -186,7 +160,7 @@ class Visualisation():
 
         Args:
             data (xr.Dataset):
-                Full dataset from which one time step should be plotted.
+                Dataset from which one time step should be plotted.
             timestep (int):
                 Time steop which should be plotted.
 
@@ -216,18 +190,18 @@ class Visualisation():
 
         # Information about wind
         try:
-            data_initial = init.read_initial_cond(self.case, source="scratch")
-
             text.append(f"\nMean wind")
-            text.append(f"u: {data_initial.u.mean(dim='z'):.1f} m/s")
-            text.append(f"v: {data_initial.v.mean(dim='z'):.1f} m/s")
-
-        except FileNotFoundError:
-            pass
+            for wind_component in ["u", "v"]:
+                text.append(
+                    f"{wind_component}: "
+                    f"{data[wind_component].mean():.1f} m/s")
+        except:
+            text.append("Wind data not found.")
 
         # Information about sources
+        post_processing = proc.PostProcessing(self.case)
         try:
-            source_strength = self.model_emissions_to_kg_per_h()
+            source_strength = post_processing.model_emissions_to_kg_per_h()
             source_height = self.ini_file['source']['source_z0']
             if len(source_strength) > 1:
                 # Multiple sources
@@ -248,28 +222,3 @@ class Visualisation():
 
         return '\n'.join(text)
     
-
-    def model_emissions_to_kg_per_h(self) -> Union[int, float]:
-        """
-        Convert the prescribed emissions from the .ini file to kg/h
-
-        Returns:
-            Union[int, float]: Emitted quantities in kg/h
-        """
-        sourcelist = self.ini_file['source']['sourcelist']
-        swvmr = self.ini_file['source']['swvmr']
-        strength = self.ini_file['source']['strength']
-
-        if not isinstance(sourcelist, list):
-            sourcelist = np.array([sourcelist])
-            swvmr = np.array([swvmr])
-            strength = np.array([strength])
-
-        molar_mass = np.array([M[gas] for gas in sourcelist])
-
-        if all(swvmr): # it true, units are kmol s-1
-            strength *= molar_mass * 3600 # convert to kg/h
-        else: # units are kg kg s-1, seems to be an error
-            strength = np.full(len(swvmr), np.nan)
-
-        return strength
