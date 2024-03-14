@@ -78,10 +78,12 @@ class Visualisation():
         Returns:
             matplotlib.figure.Figure: Figure with subplots and text
         """
-        try:
-            data = self.open_3d_netCDF(f"{self.case_name}_output_vars")
-        except FileNotFoundError:
-            data = self.open_3d_netCDF(variable)
+
+        variable = variable.upper()
+
+        post_processing = proc.PostProcessing(self.case)
+
+        data = post_processing.open_3d_netCDF(variable)
 
         xdim, ydim, zdim = self.wind_dims[variable] if variable in self.wind_dims.keys() else ["x", "y", "z"]
         

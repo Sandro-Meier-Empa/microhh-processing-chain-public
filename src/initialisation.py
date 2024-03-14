@@ -19,6 +19,9 @@ sys.path.append(os.path.join('/users', os.environ["USER"], 'microhh', 'processin
 import microhh_tools as mht
 import processing as proc
 
+sys.path.append(os.path.join('/users', os.environ["USER"], 'LS2D'))
+import ls2d
+
 
 # molar mass (g/mol)
 gas_mass = {
@@ -140,12 +143,6 @@ class Case():
 
 
 class Initialisation():
-
-    INIT_NC_GROUPS = {
-        "init"       : ["z"],
-        "timedep"    : ["z", "time_surface", "time_ls"],
-        "radiation"  : ["lay", "lev"]
-        }
     
     def __init__(self, case: Case):
         """Initialise the model run by modifying the .ini file and creating
@@ -169,84 +166,9 @@ class Initialisation():
         self.vars = {}
         self.dims = {}
 
-    def add_dimension(self, name: str, data: np.array):
-        # TODO: Not needed anymore?
-        """Add a dimension to the instance. Is later used to create dimensions
-        for the {case_name}_input.nc file.
-
-        Args:
-            name (str):
-                Name of the dimension to be added.
-            data (np.array):
-                Values of the dimension to be added.
-        """
-
-        self.dims[name] = data
-        self.add_variable(name,
-                          name,
-                          self._get_key_from_value(self.INIT_NC_GROUPS, name),
-                          data)
-
-    def add_variable(self, name: str, dims: tuple, 
-                     group: str, data: np.array):
-        # TODO: Not needed anymore?
-        """Add a variable to the instance. Is later used to create variables
-        for the {case_name}_input.nc file.
-
-        Args:
-            name (str):
-                Name of the variable to be added.
-            dims (tuple):
-                Dimensions of the variable.
-            group (str):
-                Group in the netCDF file to which the variable should belong to.
-            data (np.array):
-                Values of the variable to be added.
-        """
-
-        if not self.dims_in_group(group, dims):
-            raise KeyError(
-                f"'{dims}' is not a valid dimension in group '{group}'. \n"
-                f"For further information, see https://microhh.readthedocs.io/"
-                f"en/latest/setting_up_a_case/the_input_file.html")
-        
-        var = {
-            "name"      : name,
-            "dims"      : dims,
-            "group"     : group,
-            "data"      : data
-        }
-        self.vars[name] = var
-
-    def _get_key_from_value(self, dictionary: dict, search_value: str):
-        # TODO: Not needed anymore?
-        """Get the key from a dictionary based on an item.
-
-        Args:
-            dictionary (dict):
-                Dictionary for which the key should be returned.
-            search_value (str):
-                Item for which the corresponding key should be returned.
-
-        Raises:
-            KeyError: Raise error if the item 'search_value'
-            is not in 'dictionary'.
-
-        Returns:
-            str: Key which corresponds to the given item.
-        """
-        
-        for key, value in dictionary.items():
-            if search_value in value:
-                return key
-
-        raise KeyError(
-            f"'{search_value}' is not a valid dimension. \n"
-            f"For further information, see https://microhh.readthedocs.io/"
-            f"en/latest/setting_up_a_case/the_input_file.html")
 
     def interpolate_to_model_profile(
-            self,
+            self, grid: ls2d.grid,
             variable_profile: Union[list, np.array]=None,
             input_profile: Union[list, np.array]=None
             ):
@@ -254,6 +176,7 @@ class Initialisation():
         the MicroHH model.
 
         Args:
+            grid: TODO
             variable_profile (Union[list, np.array], optional. Default: None):
                 Value of the variable at these heights. If not specified,
                 the variable is set to 0.
@@ -265,10 +188,8 @@ class Initialisation():
             the MicroHH model.
         """
 
-        zsize = self.ini_file['grid']['zsize']
         kmax = self.ini_file['grid']['ktot']
-        dz = zsize / kmax
-        self.model_profile = np.arange(0.5 * dz, zsize, dz)
+        self.model_profile = grid.z
 
         if variable_profile is not None:
             # Convert variable_profile to a NumPy array if it's a list
@@ -291,59 +212,6 @@ class Initialisation():
 
         return model_var_profile
     
-    def add_variable_to_nc(self, nc_group:nc._netCDF4.Group,
-                           name:str, dim:str,
-                           data:np.array, float_type: str='f8'):
-        # TODO: Not needed anymore?
-        """Add a variable to a netCDF file during creation.
-
-        Args:
-            nc_group (nc._netCDF4.Group):
-                netCDF group to which the variable should be added.
-            name (str):
-                Name of the variable.
-            dim (str):
-                Dimension of the variable.
-            data (np.array):
-                Data of the variable.
-            float_type (str, optional. Default: 'f8'):
-                Precision of the netCDF data.
-        """
-        var = nc_group.createVariable(name, float_type, dim)
-        var[:] = data
-
-    def dims_in_group(self, group: str, dims: Union[str, tuple]) -> bool:
-        # TODO: Not needed anymore?
-        """Check if a given dimension is valid for MicroHH.
-
-        Args:
-            group (str):
-                netCDF group to which the variable should be added.
-            dims (str):
-                Dimension of the variable.
-
-        Returns:
-            bool: 'dims' are valid for MicroHH.
-        """
-        # Check if dims is a string
-        if isinstance(dims, str):
-            return dims in self.INIT_NC_GROUPS.get(group, [])
-        # Check if dims is a tuple
-        elif isinstance(dims, tuple):
-            self._check_dim_order(dims)
-            return all(dim in self.INIT_NC_GROUPS.get(group, []) for dim in dims)
-        else:
-            return False
-        
-    def _check_dim_order(self, dims: tuple) -> bool:
-        # TODO: Not needed anymore?
-        # The wrong order will cause the follownig error:
-        # EXCEPTION: NetCDF: Start+count exceeds dimension bound
-
-        expected_order = ("time_ls", "z")
-        if not all(d == e for d, e in zip(dims, expected_order)):
-            raise ValueError(f"The dimensions must be "
-                             f"in the order {expected_order}.")
 
     def change_inflow_outflow(self, overwrite: bool=False):
         """Change the inflow and outflow in the group 'boundar' in the .ini
@@ -415,79 +283,6 @@ class Initialisation():
             self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
             print(f"Modifying {self.ini_path}")
 
-    def create_input_netCDF(self, overwrite: bool=True):
-        # TODO: Not needed anymore?
-        """Create the netCDF file with initial conditions.
-
-        Args:
-            overwrite (bool, optional. Default: True):
-                Specify if the {case_name}_input.py file should be overwritten.
-
-        Raises:
-            Exception: Raise exception if the dimension of a variable has 
-            not been added to the instance of Initialisation.
-        """
-
-        fname = os.path.join(self.scratch_path, f"{self.case_name}_input.nc")
-
-        if os.path.exists(fname) and overwrite:
-            os.remove(fname)
-            print(f"Overwriting {fname}")
-
-        kmax = self.ini_file['grid']['ktot']
-
-        # Write input NetCDF file
-        nc_file = nc.Dataset(fname, mode='w', datamodel='NETCDF4', clobber=True)
-
-        # minimum requirement for input.nc file
-        self.dims["z"] = self.model_profile
-        nc_file.createDimension('z', kmax)
-        print(f"Creating dimension 'z'")
-        self.add_variable_to_nc(nc_file, 'z', ('z'), self.model_profile)
-    
-        unique_groups = set()
-        unique_dims = set()
-
-        # Iterate through the inner dictionaries
-        for inner_dict in self.vars.values():
-            unique_groups.add(inner_dict['group'])
-
-            d = inner_dict['dims']
-
-            if isinstance(d, tuple):
-                unique_dims.update(d)
-            else:
-                unique_dims.add(d)
-
-        # add groups
-        for group, avail_dims in self.INIT_NC_GROUPS.items():
-            if group in unique_groups:
-                nc_group = nc_file.createGroup(group)
-                print(f"Creating group '{group}'")
-
-                # add dimensions
-                for dim in avail_dims:
-                    if dim in unique_dims:
-                        if dim not in self.dims.keys():
-                            raise Exception(
-                                f"Dimension '{dim}' was not added. "
-                                f"Use 'initialisation.add_dimension(name, size)'.")
-                        elif dim == "z":
-                            continue
-                        else:
-                            nc_group.createDimension(dim, self.dims[dim].size)
-                            print(f"Creating dimension '{dim}'")
-
-                # add variables
-                for key, value in self.vars.items():
-                    if value["group"] == group:
-                        self.add_variable_to_nc(nc_group, key,
-                                                value["dims"], value["data"])
-
-        nc_file.close()
-
-        # adjust .ini file according to wind direction
-        self.change_inflow_outflow(overwrite=True)
 
     def modify_ini(self, settings: dict, overwrite: bool=True):
         """Modify the .ini file of a case on scratch.
@@ -514,6 +309,7 @@ class Initialisation():
                         )
             
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
+
 
 def read_initial_cond(case: Case, source: str) -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
@@ -549,6 +345,7 @@ def read_initial_cond(case: Case, source: str) -> xr.Dataset:
         merged_dataset = xr.merge([merged_dataset, ds])
 
     return merged_dataset
+
 
 def convert_to_kmol_per_s(value: Union[int, float],
                           unit: str, gas: str) -> float:

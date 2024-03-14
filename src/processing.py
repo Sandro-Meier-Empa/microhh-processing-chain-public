@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,7 @@ import ucat
 from pathlib import Path
 from typing import Union
 
+import cartopy.crs as ccrs
 import netCDF4 as nc
 import pandas as pd
 import xarray as xr
@@ -366,6 +368,8 @@ class PreProcessing:
                     f"Otherwise, create '{nc_file_name} using "
                     f"the class 'Initialisation'."
                     )
+        else:
+            raise ValueError("Invalid method name.")
 
         # Copy microhh executable
         processor = self.processor
@@ -377,17 +381,37 @@ class PreProcessing:
         # Create bash script
         self.create_batch_script(start_jobs, wait)
 
+    def get_simulation_progress(self):
+        """Print the progress of a simulation based on the saved binary output
+        files of MicroHH"""
+        folder_path = Path(self.scratch_path)
+        current_timestep = -1
+        
+        for file in folder_path.iterdir():
+            if file.is_file():
+                # extract the numeric part from the filename using regex
+                match = re.search(r'\.(\d+)', file.name)
+                if match:
+                    # timestep to an integer
+                    timestep = int(match.group(1))
+                    current_timestep = max(current_timestep, timestep)
+                else:
+                    current_timestep = 0
+        
+        # get max simulation time specified in .ini file
+        max_timestep = int(self.ini_file["time"]["endtime"])
+        progress_percentage = current_timestep / max_timestep * 100
+
+        print(f"Simulation progress: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)")
+
 
 class PostProcessing:
-    def __init__(self, case: init.Case, vars: Union[str, list]):
+    def __init__(self, case: init.Case):
         """Class used for post-processing MicroHH cases and handling the output.
 
         Args:
             case (init.Case):
                 Case to post-process.
-            vars (Union[str, list]):
-                Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
         """
         case.read_case("scratch")
 
@@ -414,6 +438,9 @@ class PostProcessing:
         """Run all post-processing steps.
 
         Args:
+            vars (Union[str, list]):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
             overwrite (bool, optional. Default: False):
                 Specify if existing files on 'scratch' and 
                 'store' should be overwritten.
@@ -445,6 +472,9 @@ class PostProcessing:
         """Create 3D netCDF files for the variables specified
 
         Args:
+            vars (Union[str, list]):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
             overwrite (bool, option. Default: False):
                 Specify if existing files on 'scratch' and 
                 'store' should be overwritten.
@@ -512,7 +542,15 @@ class PostProcessing:
         return data
 
 
-    def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset):
+    def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset) -> xr.Dataset:
+        """Interpolate variables at grid edges '_h' to the middle of the grid.
+
+        Args:
+            nc_file (xr.Dataset): Dataset with the variables to interpolate.
+
+        Returns:
+            xr.Dataset: Dataset with the interpolated variables
+        """
         dim = self._get_dims_at_grid_boundaries(nc_file)
 
         if dim is None:
@@ -531,27 +569,36 @@ class PostProcessing:
 
         return nc_file_interpolated
     
+
     def _get_dims_at_grid_boundaries(self, nc_file):
-        # Iterate over the dimensions of the Dataset
+        # iterate over the dimensions of the Dataset
         for dim in list(nc_file.dims):
-            # Check if the dimension name ends with 'h'
+            # check if the dimension name ends with 'h'
             if dim.endswith('h'):
                 return dim
 
         return None
     
-    def combine_nc_files(self, vars):
+
+    def combine_nc_files(self, vars: Union[str, list]) -> xr.Dataset:
+        """Combine .nc files of different variables to one file.
+
+        Args:
+            vars (Union[str, list]):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+
+        Returns:
+            xr.Dataset: Dataset with combined variables.
+        """
+        
         vars = self.vars_to_list(vars)
 
-        # Create a list to store individual xarray.Dataset objects
         datasets = []
 
-        # Iterate through each variable
         for var in vars:
-            # Construct the file path for the current variable
             nc_file_path = os.path.join(self.store_path, f"{var}.nc")
 
-            # Open the NetCDF file as an xarray.Dataset
             try:
                 dataset = xr.open_dataset(nc_file_path)
             except ValueError:
@@ -560,7 +607,6 @@ class PostProcessing:
             # homogenise dimensions
             dataset = self.interpolate_to_grid_midpoint(dataset)
 
-            # Append the dataset to the list
             datasets.append(dataset)
 
         # Merge all datasets into one
@@ -573,7 +619,6 @@ class PostProcessing:
             )
         combined_dataset.to_netcdf(output_filename)
 
-        # Close all datasets
         for dataset in datasets:
             dataset.close()
 
@@ -601,7 +646,16 @@ class PostProcessing:
 
         return data
     
-    def _format_column_unit(self, to_unit):
+    def _format_column_unit(self, to_unit: str) -> str:
+        """Format unit of columns to have a consistent notation, e.g. 
+        m s-1, kg s-1 etc.
+
+        Args:
+            to_unit (str): Unit which should be formatted
+
+        Returns:
+            str: Formatted unit
+        """
 
         if '/' in to_unit:
             n, d = map(str.strip, to_unit.split('/'))
@@ -615,7 +669,19 @@ class PostProcessing:
 
         return formatted_unit
     
-    def _format_volume_unit(self, to_unit):
+    def _format_volume_unit(self, to_unit: str) -> str:
+        """Determine the corresponding volumetric unit if a target column unit is given.
+        Assumes that the vertical dimension is in units m.
+
+        Args:
+            to_unit (str): Target unit of the column.
+
+        Raises:
+            ValueError: Raise error if the unit could not be parsed.
+
+        Returns:
+            str: Formatted column unit
+        """
 
         # vertical integration assumes units to be in m
         if " " in to_unit: 
@@ -630,7 +696,17 @@ class PostProcessing:
         else:
             raise ValueError(f"{to_unit} is a unit not supported")
 
-    def convert_to_columns(self, variable, to_unit):
+    def convert_to_columns(self, variable: str, to_unit: str) -> xr.Dataset:
+        """Convert 3D MicroHH model output to vertically integrated columns.
+        Assumes that the vertical dimension is in units m.
+
+        Args:
+            variable (str): Variable which should be vertically integrated.
+            to_unit (str): Target unit of the columns.
+
+        Returns:
+            xr.Dataset: Vertically integrated trace gas dataset.
+        """
         data = self.open_3d_netCDF(variable.lower())
         data = self._nc_assign_names_and_attributes(data)
 
@@ -658,6 +734,7 @@ class PostProcessing:
 
         return df_column
 
+
     def add_gaussian_noise(self, data: xr.Dataset, var: str, std: float) -> xr.Dataset:
         """
         Add Gaussian noise to a specified variable in the dataset.
@@ -682,7 +759,7 @@ class PostProcessing:
         noise = np.random.normal(0, std, data_copy[var].size)
         noise = noise.reshape(data_copy[var].shape)
 
-        data_copy[var] = data_copy[var] + noise
+        data_copy[var] = data[var] + noise
         data_copy[var].attrs.update(data[var].attrs)
         data_copy[var].attrs["noise_level"] = std
 
@@ -708,6 +785,7 @@ class PostProcessing:
         spatial_dims = {
             ("x", "y"): ("x", "y"),
             ("lon", "lat"): ("lon", "lat"),
+            ("nrows", "nobs"): ("nrows", "nobs"),
             ("longitude", "latitude"): ("longitude", "latitude")
         }
 
@@ -723,10 +801,34 @@ class PostProcessing:
 
 
     def create_sources_dataset(self,
-                           lat, lon,
-                           source_names=None,
-                           source_labels=None,
-                           source_radius=None):
+                           lat: Union[list, np.ndarray],
+                           lon: Union[list, np.ndarray],
+                           source_names: Union[list, np.ndarray]=None,
+                           source_labels: Union[list, np.ndarray]=None,
+                           source_radius: Union[list, np.ndarray]=None) -> xr.Dataset:
+        """Create a sources dataset used for the plume detection and in 'ddeq'.
+
+        Args:
+            lat (Union[list, np.ndarray]):
+                List of latitudes for the locations of a source.
+            lon (Union[list, np.ndarray]):
+                List of longitudes for the locations of a source.
+            source_names (Union[list, np.ndarray], optional. Default: None):
+                List of names of the sources. Should not contain any special
+                characters. If not specified, the sources will be numbered
+                starting with source1 etc.
+            source_labels (Union[list, np.ndarray], optional. Default: None):
+                List of names of the sources used for plotting.
+                If not specified, the sources will be numbered
+                starting with source1 etc.
+            source_radius (Union[list, np.ndarray], optional. Default: None):
+                Radius (in pixels) around the soruce which are considered
+                to assign a plume to a source. If not specified, 5 * pixel_size
+                is used.
+
+        Returns:
+            xr.Dataset: Dataset with source information.
+        """
     
         def to_list(value):
             return value if isinstance(value, (list, np.ndarray)) else [value]
@@ -742,7 +844,7 @@ class PostProcessing:
                 self.ini_file['grid']['xsize'] / self.ini_file['grid']['itot'],
                 self.ini_file['grid']['ysize'] / self.ini_file['grid']['jtot']
             ])
-            source_radius = np.full(nr_sources, pixel_size / 1e3) # in km
+            source_radius = np.full(nr_sources, 5 * pixel_size / 1e3) # in km
     
         data = {
             'lon_o': (['source'], np.array(to_list(lon), dtype=float)),
@@ -770,103 +872,151 @@ class PostProcessing:
         return sources
     
 
-    def create_wind_dataset(self, source, sources, radius):
-        vars = ["u", "v"]
-    
-        try:
-            self.run_postprocessing(vars)
-            wind_data = self.combine_nc_files(vars)
-        except Exception as e:
-            raise e
-    
-        wind_data['speed'] = np.sqrt(wind_data.u**2 + wind_data.v**2)
-        wind_data['direction'] = ddeq.wind.calculate_wind_direction(wind_data.u, wind_data.v)
-    
-        selected_source = sources.sel(source=source)
-        grid_x = selected_source.grid_x.values
-        grid_y = selected_source.grid_y.values
-    
-        x_res = wind_data.x.diff(dim="x").median()
-        y_res = wind_data.y.diff(dim="y").median()
-    
-        wind_data_subset = wind_data.where(
-            (wind_data.x > grid_x - x_res/2 - radius) & 
-            (wind_data.x <= grid_x + x_res/2 + radius) &
-            (wind_data.y > grid_y - y_res/2 - radius) & 
-            (wind_data.y <= grid_y + y_res/2 + radius),
-            drop=True
-        )
+    def create_wind_dataset(self, source: str, sources: xr.Dataset,
+                            radius: int, save: bool=True) -> xr.Dataset:
+        """Create a dataset containing the wind information around a source
+        which is used for estimating emissions in 'ddeq'.
 
-        wind_data_subset = self.vertically_integrate_wind(wind_data_subset, method="mean")
-    
-        wind_data_subset['u_median'] = wind_data_subset.u.median(
-            dim=["x", "y"])
-        wind_data_subset['v_median'] = wind_data_subset.v.median(
-            dim=["x", "y"])
-        wind_data_subset['speed_median'] = wind_data_subset.speed.median(
-            dim=["x", "y"])
-        wind_data_subset['speed_std'] = wind_data_subset.speed.std(
-            dim=["x", "y"])
-        wind_data_subset['direction_mean'] = self._circular_mean(
-            wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
-                                              list(wind_data_subset.dims).index('x')])
-        wind_data_subset['direction_std'] = self._circular_std(
-            wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
-                                              list(wind_data_subset.dims).index('x')])
-    
-        wind_src = xr.Dataset(
-            coords={
-                "source": (["source"], np.array([source], dtype=object)),
-                "time": (["time"], wind_data_subset.time.values)
-            },
-            data_vars={
-                "lon": (
-                    ["source"],
-                    [selected_source.lon_o.values]),
-                "lat": (
-                    ["source"],
-                    [selected_source.lat_o.values]),
-                "U": (
-                    ["source", "time"],
-                    [wind_data_subset.u_median.values],
-                    {"units": "m s-1"}),
-                "V": (
-                    ["source", "time"],
-                    [wind_data_subset.v_median.values],
-                    {"units": "m s-1"}),
-                "speed": (
-                    ["source", "time"],
-                    [wind_data_subset.speed_median.values],
-                    {"units": "m s-1"}),
-                "speed_precision": (
-                    ["source", "time"],
-                    [wind_data_subset.speed_std.values],
-                    {"units": "m s-1"}),
-                "direction": (
-                    ["source", "time"],
-                    [wind_data_subset.direction_mean.values],
-                    {"units": "°"}),
-                "direction_precision": (
-                    ["source", "time"],
-                    [wind_data_subset.direction_std.values],
-                    {"units": "°"}),
-            },
-            attrs=dict(radius=f"{radius} pixels around determined source pixel")
-        )
+        Args:
+            source (str):
+                Source for which the wind dataset should be created.
+            sources (xr.Dataset):
+                Dataset with source information
+            radius (int):
+                Number of pixels around the source which should be considered
+                for calculating wind properties.
+            save (bool, optional. Default: True):
+                Specify if the dataset should be saved to store.
+
+        Raises:
+            e: Raise an error if the datasets of the wind components u and v
+            could not be found or processed.
+
+        Returns:
+            xr.Dataset: Dataset containg the wind information around a source.
+        """
+
+        vars = ["u", "v"]
+
+        wind_nc_path = os.path.join(self.store_path, 'wind.nc')
+        if os.path.exists(wind_nc_path):
+            wind_src = xr.open_dataset(wind_nc_path)
+        else:
+            try:
+                self.run_postprocessing(vars)
+                wind_data = self.combine_nc_files(vars)
+            except Exception as e:
+                raise e
+        
+            wind_data['speed'] = np.sqrt(wind_data.u**2 + wind_data.v**2)
+            wind_data['direction'] = ddeq.wind.calculate_wind_direction(wind_data.u, wind_data.v)
+        
+            selected_source = sources.sel(source=source)
+            grid_x = selected_source.grid_x.values
+            grid_y = selected_source.grid_y.values
+        
+            x_res = wind_data.x.diff(dim="x").median()
+            y_res = wind_data.y.diff(dim="y").median()
+        
+            wind_data_subset = wind_data.where(
+                (wind_data.x > grid_x - x_res/2 - radius) & 
+                (wind_data.x <= grid_x + x_res/2 + radius) &
+                (wind_data.y > grid_y - y_res/2 - radius) & 
+                (wind_data.y <= grid_y + y_res/2 + radius),
+                drop=True
+            )
+
+            wind_data_subset = self.vertically_integrate_wind(wind_data_subset, method="mean")
+        
+            wind_data_subset['u_median'] = wind_data_subset.u.median(
+                dim=["x", "y"])
+            wind_data_subset['v_median'] = wind_data_subset.v.median(
+                dim=["x", "y"])
+            wind_data_subset['speed_median'] = wind_data_subset.speed.median(
+                dim=["x", "y"])
+            wind_data_subset['speed_std'] = wind_data_subset.speed.std(
+                dim=["x", "y"])
+            wind_data_subset['direction_mean'] = self._circular_mean(
+                wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
+                                                list(wind_data_subset.dims).index('x')])
+            wind_data_subset['direction_std'] = self._circular_std(
+                wind_data_subset.direction, axes=[list(wind_data_subset.dims).index('y'),
+                                                list(wind_data_subset.dims).index('x')])
+        
+            wind_src = xr.Dataset(
+                coords={
+                    "source": (["source"], np.array([source], dtype=object)),
+                    "time": (["time"], wind_data_subset.time.values)
+                },
+                data_vars={
+                    "lon": (
+                        ["source"],
+                        [selected_source.lon_o.values]),
+                    "lat": (
+                        ["source"],
+                        [selected_source.lat_o.values]),
+                    "U": (
+                        ["source", "time"],
+                        [wind_data_subset.u_median.values],
+                        {"units": "m s-1"}),
+                    "V": (
+                        ["source", "time"],
+                        [wind_data_subset.v_median.values],
+                        {"units": "m s-1"}),
+                    "speed": (
+                        ["source", "time"],
+                        [wind_data_subset.speed_median.values],
+                        {"units": "m s-1"}),
+                    "speed_precision": (
+                        ["source", "time"],
+                        [wind_data_subset.speed_std.values],
+                        {"units": "m s-1"}),
+                    "direction": (
+                        ["source", "time"],
+                        [wind_data_subset.direction_mean.values],
+                        {"units": "°"}),
+                    "direction_precision": (
+                        ["source", "time"],
+                        [wind_data_subset.direction_std.values],
+                        {"units": "°"}),
+                },
+                attrs=dict(radius=f"{radius} pixels around determined source pixel")
+            )
+
+            if save:
+                wind_nc_path = os.path.join(self.store_path, 'wind.nc')
+                wind_src.to_netcdf(wind_nc_path)
     
         return wind_src
     
 
     def _circular_mean(self, a, axes):
-            return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
+        """Calculate circular mean, e.g. of wind direction"""
+        return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
     
 
     def _circular_std(self, a, axes):
+            """Calculate circular standard deviation, e.g. of wind direction"""
             return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
     
-    def vertically_integrate_wind(self, wind_data, method):
+    def vertically_integrate_wind(self,
+                                  wind_data: xr.Dataset,
+                                  method: str) -> xr.Dataset:
+        """Vertically integrate 3D wind fields.
 
+        Args:
+            wind_data (xr.Dataset):
+                3D wind dataset
+            method (str):
+                Method of how the wind should be vertically integrated.
+
+        Raises:
+            NotImplementedError: Raise an error if an invalid method is provided.
+
+        Returns:
+            xr.Dataset: Vertically integrated wind dataset.
+        """
         if method == "mean":
             return wind_data.mean(dim="z")
         else:
@@ -874,24 +1024,52 @@ class PostProcessing:
             raise NotImplementedError
     
 
-    def convert_microhh_grid_to_coords(self, lat_o, lon_o, data, sources,
-                                       target_crs = 'epsg:4326',
-                                       microhh_crs = 'epsg:32632'):
+    def convert_microhh_grid_to_coords(self,
+                                       source: str,
+                                       data: xr.Dataset,
+                                       sources: xr.Dataset,
+                                       target_crs: str = 'epsg:4326',
+                                       microhh_crs: str = 'epsg:32632') -> xr.Dataset:
+        """Convert the modelled MicroHH grid into a lat/lon grid where the
+        source is located at the latitude and longitude specified in the
+        'sources' dataset.
 
-        # convert lat and lon into a metric CRS which is valid for Europe
-        # 'epsg:32632' Coordinate system in meters which covers Europe
-        # 'epsg:4326' Global lat-lon coordinate system
+        Args:
+            source (str):
+                Source simulated in the dataset 'data'.
+            data (xr.Dataset):
+                Dataset for which the modelled grid should be transformed to
+                a lat/lon grid.
+            sources (xr.Dataset):
+                Dataset which contains information about the modelled source.
+            target_crs (str, optional. Default: 'epsg:4326'):
+                Coordinate reference system to which the modelled data should
+                be transformed to.
+            microhh_crs (str, optional. Default: 'epsg:32632'):
+                Metric coordinate reference system which matches the desired
+                lat/lon location of the source.
+                Default 'epsg:32632' is suited for sources in Europe.
+
+        Returns:
+            xr.Dataset: Dataset with transformed coordinates.
+        """
+        source_data = sources.sel(source=source)
 
         # convert coordinates to metric crs
-        latlon_to_metric = pyproj.Transformer.from_crs(target_crs, microhh_crs)
-        x_o, y_o = latlon_to_metric.transform(lat_o, lon_o)
+        latlon_to_metric = pyproj.Transformer.from_crs(
+            target_crs,
+            microhh_crs
+            )
+        x_o, y_o = latlon_to_metric.transform(
+            source_data.lat_o.values,
+            source_data.lon_o.values)
 
         xx, yy = np.meshgrid(data['x'], data['y'])
 
         # shift grid of x and y values so that the source is at the location
         # given by lat_o and lon_o
-        shifted_grid_x = xx-sources.grid_x.values+x_o
-        shifted_grid_y = yy-sources.grid_y.values+y_o
+        shifted_grid_x = xx - source_data.grid_x.values + x_o
+        shifted_grid_y = yy - source_data.grid_y.values + y_o
 
         # transform shifted grid to lat / lon
         lat_grid, lon_grid = latlon_to_metric.transform(
@@ -914,7 +1092,7 @@ class PostProcessing:
             'lat': (['nrows', 'nobs'], lat_grid)
             }
 
-        # extract only the variables that are not already in the dataset
+        # extract only the variables that are not a dimension
         vars_to_include = {var: data[var] for var in data.variables if var not in data.dims}
 
         # create the new dataset
@@ -924,6 +1102,7 @@ class PostProcessing:
 
 
     def _capitalise_gas_key(self, variable_name):
+        """Capitalise gases to make them consistent with 'ddeq'"""
         for key in gas_mass.keys():
             if key in variable_name:
                 return key.upper()
@@ -931,13 +1110,15 @@ class PostProcessing:
     
 
     def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
-        """Capitalize variable names in an xarray dataset if they match keys in the gas_mass dictionary.
+        """Capitalize variable names in an xr.Dataset if they match
+        keys in the gas_mass dictionary.
     
         Args:
             dataset (xr.Dataset): The xarray dataset to process.
     
         Returns:
-            xr.Dataset: The dataset with variable names capitalized if they match keys in the gas_mass dictionary.
+            xr.Dataset: The dataset with variable names capitalized if they match
+            keys in the gas_mass dictionary.
         """
         for var_name in list(dataset.variables):
             new_var_name = self._capitalise_gas_key(var_name)
@@ -973,9 +1154,10 @@ class PostProcessing:
 
         return data
 
+
     def add_corners(self, d, var=('lon', 'lat'), dims=('nrows', 'nobs')):
         """
-        Add corner coordinates for `var`.
+        Add corner coordinates for 'var'.
         """
         ic = np.arange(d[dims[1]].size+1) - 0.5
         jc = np.arange(d[dims[0]].size+1) - 0.5
@@ -991,8 +1173,98 @@ class PostProcessing:
             d[f'{name}c'] = xr.DataArray(xc, dims=dims + ('corners', ))
             
         return d
+    
 
+    def estimate_emissions(self,
+                           data: xr.Dataset,
+                           wind: xr.Dataset,
+                           sources: xr.Dataset,
+                           filter_size: Union[int, float],
+                           q: float,
+                           background_dilation: int,
+                           crs: ccrs.epsg)-> tuple[xr.Dataset, dict, dict]:
+        """Estimate CH4 emissions from a simulated source in MicroHH using
+        the Integrated Mass Enhancement (IME) method.
 
+        Args:
+            data (xr.Dataset):
+                Dataset containing the trace gas columns.
+            wind (xr.Dataset):
+                Dataset containing wind information.
+            sources (xr.Dataset):
+                Dataset containing information about the source.
+            filter_size (Union[int, float]):
+                Size of filter user for computing the locam mean in pixels.
+            q (float):
+                probability for threshold z(q) that a pixel is significantly
+                enhanced above the background used for the statistical z-test.
+            background_dilation (int):
+
+            crs (ccrs.epsg):
+                Coordinate reference system for the source.
+
+        Raises:
+            ValueError: Raise error if the wind dataset contains multiple time steps
+
+        Returns:
+            data (xr.Dataset):
+                Dataset containing the trace gas columns and additional variables
+                used for plume detection and quantification.
+            curves (dict):
+                Dictionary with ddeq.plume_coords.Poly2D curves fitted to
+                all detected plumes.
+            results (dict):
+                Dictionary with xr.Datasets containing the estimated emissions
+                and auxiliary variables for all detected sources.
+        """
+        
+        if "time" in wind.dims:
+            raise ValueError("Wind dataset contains multiple time steps. "
+                             "Select one time step.")
+
+        data = ddeq.dplume.detect_plumes(
+                data, sources, variable='CH4', variable_std='CH4_std',
+                filter_type='gaussian', 
+                q=q, filter_size=filter_size,
+                background="median"
+            )
+
+        data, curves = ddeq.plume_coords.compute_plume_line_and_coords(
+            data, crs, radius=2,
+            radius_units='px',
+            plume_area='area',
+            do_coords=True
+        )
+        
+        # convert from ppmv m to kg/m2
+        dims = data['CH4'].dims
+        attrs = {'units': 'kg m-2'}
+        ch4_mass = ucat.convert_points(data['CH4'], 'ppmv', 'kg/m3', molar_mass='CH4')  
+        data['CH4_mass'] = xr.DataArray(ch4_mass, dims=dims, attrs=attrs)
+        data['CH4_mass'].attrs['noise_level'] = ucat.convert_points(
+            np.nanstd(data['CH4_std']),
+            'ppmv', 'kg/m3',
+            molar_mass='CH4') 
+
+        # normalized convolution (sigma 10 px)
+        data = ddeq.background.estimate(data, 'CH4',
+                                        sigma=10, mask_hits=False,
+                                        extra_dilation=background_dilation)
+        mass_bg = ucat.convert_points(data.CH4_estimated_background,
+                                      'ppmv', 'kg/m3',
+                                      molar_mass='CH4')
+        data['CH4_minus_estimated_background_mass'] = xr.DataArray(data.CH4_mass - mass_bg, dims=data.CH4.dims)
+        data['CH4_minus_estimated_background_mass'].attrs['units'] = "kg m-2"
+
+        # estimate emissions 
+        L_max = np.max(data.xp.values[data.detected_plume]) + 0.5 * np.sqrt(np.mean(data.pixel_area))
+        results = ddeq.ime.estimate_emissions(data, wind, sources, curves,
+                                              L_max=L_max, gas='CH4',
+                                              min_pixel_number=1)
+
+        return data, curves, results
+
+    
     def model_emissions_to_kg_per_h(self) -> np.array:
         """
         Convert the prescribed emissions from the .ini file to kg/h
