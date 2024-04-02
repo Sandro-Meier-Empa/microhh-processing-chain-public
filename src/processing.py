@@ -763,6 +763,11 @@ class PostProcessing:
         data_copy[var].attrs.update(data[var].attrs)
         data_copy[var].attrs["noise_level"] = std
 
+        # add std for variable based on artificial noise
+        data_copy[f"{var}_std"] = (data[var].dims,
+                                   np.full_like(data[var], std))
+        data_copy[f"{var}_std"].attrs["units"] = data[var].attrs.get("units", None)
+
         return data_copy
     
 
@@ -1181,6 +1186,7 @@ class PostProcessing:
                            sources: xr.Dataset,
                            filter_size: Union[int, float],
                            q: float,
+                           sigma: int, 
                            background_dilation: int,
                            crs: ccrs.epsg)-> tuple[xr.Dataset, dict, dict]:
         """Estimate CH4 emissions from a simulated source in MicroHH using
@@ -1198,8 +1204,11 @@ class PostProcessing:
             q (float):
                 probability for threshold z(q) that a pixel is significantly
                 enhanced above the background used for the statistical z-test.
+            sigma (int):
+                Size of Gaussian kernel used for normalized convolution in pixels
             background_dilation (int):
-
+                If not None add extra dilation of masked pixels using a disk with
+                given radius given by `extra_dilation`.
             crs (ccrs.epsg):
                 Coordinate reference system for the source.
 
@@ -1226,7 +1235,7 @@ class PostProcessing:
                 data, sources, variable='CH4', variable_std='CH4_std',
                 filter_type='gaussian', 
                 q=q, filter_size=filter_size,
-                background="median"
+                background=np.zeros_like(data['CH4'])
             )
 
         data, curves = ddeq.plume_coords.compute_plume_line_and_coords(
@@ -1242,13 +1251,13 @@ class PostProcessing:
         ch4_mass = ucat.convert_points(data['CH4'], 'ppmv', 'kg/m3', molar_mass='CH4')  
         data['CH4_mass'] = xr.DataArray(ch4_mass, dims=dims, attrs=attrs)
         data['CH4_mass'].attrs['noise_level'] = ucat.convert_points(
-            np.nanstd(data['CH4_std']),
+            np.nanmean(data['CH4_std']),
             'ppmv', 'kg/m3',
             molar_mass='CH4') 
 
         # normalized convolution (sigma 10 px)
         data = ddeq.background.estimate(data, 'CH4',
-                                        sigma=10, mask_hits=False,
+                                        sigma=sigma, mask_hits=False,
                                         extra_dilation=background_dilation)
         mass_bg = ucat.convert_points(data.CH4_estimated_background,
                                       'ppmv', 'kg/m3',
