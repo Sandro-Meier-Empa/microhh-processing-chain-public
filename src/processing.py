@@ -180,7 +180,7 @@ class PreProcessing:
 
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
-        if not self.mpi:
+        if not self.mpi and not self.ini_file['master']['npx'] == 1 and not self.ini_file['master']['npy'] == 1:
             for dim in ["x", "y"]:
                 self.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
             self.ini_file.save(self.ini_path, allow_overwrite=True)
@@ -385,7 +385,7 @@ class PreProcessing:
         """Print the progress of a simulation based on the saved binary output
         files of MicroHH"""
         folder_path = Path(self.scratch_path)
-        current_timestep = -1
+        current_timestep = 0
         
         for file in folder_path.iterdir():
             if file.is_file():
@@ -395,8 +395,6 @@ class PreProcessing:
                     # timestep to an integer
                     timestep = int(match.group(1))
                     current_timestep = max(current_timestep, timestep)
-                else:
-                    current_timestep = 0
         
         # get max simulation time specified in .ini file
         max_timestep = int(self.ini_file["time"]["endtime"])
