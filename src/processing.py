@@ -852,8 +852,8 @@ class PostProcessing:
         data = {
             'lon_o': (['source'], np.array(to_list(lon), dtype=float)),
             'lat_o': (['source'], np.array(to_list(lat), dtype=float)),
-            'grid_x': (['source'], np.array(to_list(self.ini_file['source']['source_x0']), dtype=float)),
-            'grid_y': (['source'], np.array(to_list(self.ini_file['source']['source_y0']), dtype=float)),
+            'source_x0': (['source'], np.array(to_list(self.ini_file['source']['source_x0']), dtype=float)),
+            'source_y0': (['source'], np.array(to_list(self.ini_file['source']['source_y0']), dtype=float)),
             'type': (['source'], np.full(nr_sources, "power plant", dtype=object)),
             'label': (['source'], np.array(to_list(source_labels), dtype=object)),
             'radius': (['source'], np.array(to_list(source_radius), dtype=float)),
@@ -869,8 +869,8 @@ class PostProcessing:
         sources.strength.attrs['units'] = 'kg h-1'
     
         for dim in ["x", "y"]:
-            sources[f"grid_{dim}"].attrs['units'] = 'm'
-            sources[f"grid_{dim}"].attrs['description'] = f'{dim} position in MicroHH grid'
+            sources[f"source_{dim}0"].attrs['units'] = 'm'
+            sources[f"source_{dim}0"].attrs['description'] = f'{dim} position in MicroHH grid'
     
         return sources
     
@@ -915,17 +915,17 @@ class PostProcessing:
             wind_data['direction'] = ddeq.wind.calculate_wind_direction(wind_data.u, wind_data.v)
         
             selected_source = sources.sel(source=source)
-            grid_x = selected_source.grid_x.values
-            grid_y = selected_source.grid_y.values
+            source_x0 = selected_source.source_x0.values
+            source_y0 = selected_source.source_y0.values
         
             x_res = wind_data.x.diff(dim="x").median()
             y_res = wind_data.y.diff(dim="y").median()
         
             wind_data_subset = wind_data.where(
-                (wind_data.x > grid_x - x_res/2 - radius) & 
-                (wind_data.x <= grid_x + x_res/2 + radius) &
-                (wind_data.y > grid_y - y_res/2 - radius) & 
-                (wind_data.y <= grid_y + y_res/2 + radius),
+                (wind_data.x > source_x0 - x_res/2 - radius) & 
+                (wind_data.x <= source_x0 + x_res/2 + radius) &
+                (wind_data.y > source_y0 - y_res/2 - radius) & 
+                (wind_data.y <= source_y0 + y_res/2 + radius),
                 drop=True
             )
 
@@ -1028,22 +1028,25 @@ class PostProcessing:
     
 
     def convert_microhh_grid_to_coords(self,
-                                       source: str,
                                        data: xr.Dataset,
-                                       sources: xr.Dataset,
+                                       source: str = None,
+                                       sources: xr.Dataset = None,
                                        target_crs: str = 'epsg:4326',
                                        microhh_crs: str = 'epsg:32632') -> xr.Dataset:
-        """Convert the modelled MicroHH grid into a lat/lon grid where the
-        source is located at the latitude and longitude specified in the
-        'sources' dataset.
+        """Convert the modelled MicroHH grid into a lat/lon grid.
+        If lat and lon are specified in the .ini file, these values are 
+        used as domain centres.
+        If 'source' and 'sources' are provided, the lat and lon of the source
+        is used to convert the grid such that the source is located at the 
+        latitude and longitude specified in the 'sources' dataset.
 
         Args:
-            source (str):
-                Source simulated in the dataset 'data'.
             data (xr.Dataset):
                 Dataset for which the modelled grid should be transformed to
                 a lat/lon grid.
-            sources (xr.Dataset):
+            source (str, optional):
+                Source simulated in the dataset 'data'.
+            sources (xr.Dataset, optional):
                 Dataset which contains information about the modelled source.
             target_crs (str, optional. Default: 'epsg:4326'):
                 Coordinate reference system to which the modelled data should
@@ -1056,7 +1059,22 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with transformed coordinates.
         """
-        source_data = sources.sel(source=source)
+
+        # if lat/lon is defined in .ini file: use these values to convert grid
+        if "lat" in self.ini_file["grid"] and source is None and sources is None:
+            lat = self.ini_file["grid"]["lat"]
+            lon = self.ini_file["grid"]["lon"]
+            grid_x = self.ini_file["grid"]["xsize"] / 2
+            grid_y = self.ini_file["grid"]["ysize"] / 2
+        elif source is not None and sources is not None:
+            source_data = sources.sel(source=source)
+            lat = source_data.lat_o.values
+            lon = source_data.lon_o.values
+            grid_x = source_data.source_x0.values
+            grid_y = source_data.source_y0.values
+        else:
+            raise ValueError(f"Provide 'lat' and 'lon' in the {self.case_name} "
+                             f"file or 'source' and 'sources' as arguments")
 
         # convert coordinates to metric crs
         latlon_to_metric = pyproj.Transformer.from_crs(
@@ -1064,24 +1082,22 @@ class PostProcessing:
             microhh_crs
             )
         x_o, y_o = latlon_to_metric.transform(
-            source_data.lat_o.values,
-            source_data.lon_o.values)
+            lat,
+            lon)
 
+        # create 2D grid with x and y values
         xx, yy = np.meshgrid(data['x'], data['y'])
 
-        # shift grid of x and y values so that the source is at the location
-        # given by lat_o and lon_o
-        shifted_grid_x = xx - source_data.grid_x.values + x_o
-        shifted_grid_y = yy - source_data.grid_y.values + y_o
+        # shift grid of x and y values so that the source or domain center
+        # is at the location given by lat_o and lon_o
+        shifted_grid_x = xx - grid_x + x_o
+        shifted_grid_y = yy - grid_y + y_o
 
         # transform shifted grid to lat / lon
         lat_grid, lon_grid = latlon_to_metric.transform(
             shifted_grid_x,
             shifted_grid_y,
             direction="INVERSE")
-
-        # capitalise gas names
-        data = self._capitalise_variable_names(data)
 
         data = data.rename({
             "y": "nrows",
@@ -1131,29 +1147,52 @@ class PostProcessing:
 
 
     def convert_microhh_timestep_to_date(self,
-                                         start_date: Union[str, pd.Timestamp],
-                                         data: xr.Dataset) -> xr.Dataset:
+                                         data: xr.Dataset,
+                                         start_date: Union[str, pd.Timestamp] = None,
+                                         format = '%Y-%m-%d %H:%M:%S'
+                                         ) -> xr.Dataset:
         """Convert time into a timestamp to make the
-        dataset digestible by `ddeq`
+        dataset digestible by `ddeq`.
+        Use 'datetime_utc' if available in the .ini file.
 
         Args:
-            start_date (Union[str, Timestamp]):
-                The start date as a string or a pandas Timestamp object.
             data (xr.Dataset):
                 The dataset to convert.
+            start_date (Union[str, Timestamp], optional):
+                The start date as a string or a pandas Timestamp object. 
 
         Returns:
             xr.Dataset:
                 The dataset with the time converted to a timestamp.
         """
-        data['time'] = pd.to_timedelta(data['time'], unit='s')
+        # use 'datetime_utc' if available in the .ini file
+        if "datetime_utc" in self.ini_file["time"] and start_date is None:
+            start_date = self.ini_file["time"]["datetime_utc"]
+        elif "datetime_utc" in self.ini_file["time"] and start_date is not None:
+            start_date = start_date
+            print(f"Using {start_date} to overwrite {self.ini_file['time']['datetime_utc']} "
+                  f"in .ini file")
+        else:
+            start_date = start_date
 
         # Check if start_date is a string and convert it to a Timestamp if necessary
         if isinstance(start_date, str):
-            start_date = pd.to_datetime(start_date)
+            start_date = pd.to_datetime(start_date, format=format)
 
-        # Add Timedelta to the start date
-        data['time'] = start_date + data['time']
+        # check if the time coordinate is alreay given as datetime:
+        if data["time"].dtype == "<M8[ns]":
+            # overwrite datetime
+            time_diff = pd.Timestamp(data["time"][0].values) - start_date
+            data["time"] = data["time"] - time_diff
+
+        elif data["time"].dtype in ["int64", "float64"]:
+            # convert time to timedelta
+            data["time"] = pd.to_timedelta(data["time"], unit="s")
+            # add Timedelta to the start date
+            data["time"] = start_date + data["time"]
+
+        else:
+            raise ValueError("Data type of 'time' was not recognized.")
 
         return data
 
@@ -1253,7 +1292,7 @@ class PostProcessing:
             'ppmv', 'kg/m3',
             molar_mass='CH4') 
 
-        # normalized convolution (sigma 10 px)
+        # normalized convolution (sigma px)
         data = ddeq.background.estimate(data, 'CH4',
                                         sigma=sigma, mask_hits=False,
                                         extra_dilation=background_dilation)
@@ -1477,3 +1516,43 @@ def jobs_in_queue(omit: list=[
     df = df.drop(columns=omit)
 
     return df
+
+
+def delete_empty_folders(scratch_path="/scratch/snx3000"):
+    """
+    Finds and prints empty directories on your personal scratch. If the user
+    agrees, all directories found are deleted.
+
+    Parameters:
+    - scratch_path (str):
+        The path to search for empty directories. Default is your personal scratch.
+    """
+
+    personal_scratch_path = os.path.join(scratch_path, os.environ["USER"])
+
+    print_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-print"]
+    delete_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-delete"]
+
+    # list empty folders
+    list_folders = subprocess.run(print_command, capture_output=True, text=True)
+
+    count = len(list_folders.stdout.split('\n')) - 1
+    
+    if count > 0:
+        print(list_folders.stdout)
+        
+        ask_delete = input("Should these folders be deleted? (y/n)")
+        while ask_delete not in ['yes', 'YES', 'Yes', 'y', 'Y', 'no', 'NO', 'No', 'n', 'N']:
+            ask_delete = input("Enter 'y' (delete) or 'n' (don't delete).")
+            
+        if ask_delete in ['yes', 'YES', 'Yes', 'y', 'Y']:
+            delete_folders = subprocess.run(delete_command, capture_output=True, text=True)
+            print("deleting...")
+        else:
+            print("No folder has been deleted.")
+
+    else:
+        print("No empty folder found")
+
+
+

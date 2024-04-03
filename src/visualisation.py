@@ -83,7 +83,10 @@ class Visualisation():
 
         post_processing = proc.PostProcessing(self.case)
 
-        data = post_processing.open_3d_netCDF(variable)
+        try:
+            data = post_processing.open_3d_netCDF(f"{self.case_name}_output_vars")
+        except:
+            data = post_processing.open_3d_netCDF(variable)
 
         xdim, ydim, zdim = self.wind_dims[variable] if variable in self.wind_dims.keys() else ["x", "y", "z"]
         
