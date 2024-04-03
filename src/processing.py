@@ -578,20 +578,33 @@ class PostProcessing:
         return None
     
 
-    def combine_nc_files(self, vars: Union[str, list]) -> xr.Dataset:
+    def combine_nc_files(self, vars: Union[str, list],
+                         overwrite: bool=False, save: bool=True) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
 
         Args:
             vars (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+            overwrite (bool. Default: False):
+                Indicate if an existing file should be overwritten.
+            save (bool. Default: True):
+                Indicate if the creates file should be saved.
 
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
+        output_filename = os.path.join(
+            self.store_path,
+            f"{self.case_name}_output_vars.nc"
+        )
+
+        # Check if the output file already exists
+        if os.path.exists(output_filename) and not overwrite:
+            # If the file exists, open and return it
+            return xr.open_dataset(output_filename, decode_times=False)
         
         vars = self.vars_to_list(vars)
-
         datasets = []
 
         for var in vars:
@@ -611,14 +624,11 @@ class PostProcessing:
         combined_dataset = xr.merge(datasets)
 
         # Save the combined dataset to a new NetCDF file
-        output_filename = os.path.join(
-            self.store_path,
-            f"{self.case_name}_output_vars.nc"
-            )
-        combined_dataset.to_netcdf(output_filename)
+        if save:
+            combined_dataset.to_netcdf(output_filename)
 
-        for dataset in datasets:
-            dataset.close()
+            for dataset in datasets:
+                dataset.close()
 
         return combined_dataset
 
@@ -907,7 +917,7 @@ class PostProcessing:
         else:
             try:
                 self.run_postprocessing(vars)
-                wind_data = self.combine_nc_files(vars)
+                wind_data = self.combine_nc_files(vars, save = False)
             except Exception as e:
                 raise e
         
@@ -1077,11 +1087,11 @@ class PostProcessing:
                              f"file or 'source' and 'sources' as arguments")
 
         # convert coordinates to metric crs
-        latlon_to_metric = pyproj.Transformer.from_crs(
+        transformer = pyproj.Transformer.from_crs(
             target_crs,
             microhh_crs
             )
-        x_o, y_o = latlon_to_metric.transform(
+        x_o, y_o = transformer.transform(
             lat,
             lon)
 
@@ -1094,7 +1104,7 @@ class PostProcessing:
         shifted_grid_y = yy - grid_y + y_o
 
         # transform shifted grid to lat / lon
-        lat_grid, lon_grid = latlon_to_metric.transform(
+        lat_grid, lon_grid = transformer.transform(
             shifted_grid_x,
             shifted_grid_y,
             direction="INVERSE")
