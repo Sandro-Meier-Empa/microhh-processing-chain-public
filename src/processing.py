@@ -133,6 +133,7 @@ class PreProcessing:
         else:
             return 1
 
+
     def _check_cscs_setup_valid(self):
         """Checks if the setup is valid to be run on daint based
         on the selected queue, wall time and number of nodes.
@@ -151,6 +152,7 @@ class PreProcessing:
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
 
+
     def _check_build_exists(self):
         """Check if the selected model build exists.
 
@@ -160,7 +162,8 @@ class PreProcessing:
         # Check if build exists
         if self.processor == "gpu" and self.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
-    
+
+
     def _check_ini_setup_valid(self):
         """
         Check if the setup specified in the .ini file is valid based on the selected number of nodes and the model
@@ -186,6 +189,7 @@ class PreProcessing:
             self.ini_file.save(self.ini_path, allow_overwrite=True)
             print("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
+
     def _check_grid_match(self):
         """Check if the grid size matches the number of processes."""
         itot, jtot = self.ini_file['grid']['itot'], self.ini_file['grid']['jtot']
@@ -196,6 +200,7 @@ class PreProcessing:
         elif jtot % npy != 0:
             raise ValueError(f"jtot ({jtot}) is not divisible by npy ({npy})")
 
+
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
         expected_nodes = self.ini_file['master']['npx'] * self.ini_file['master']['npy']
@@ -203,6 +208,7 @@ class PreProcessing:
             raise ValueError(
                 f"Task per node ({self.ntasks_per_node}) does "
                 f"not match the expected value.")
+
 
     def _check_source_position(self):
         """Check if the source position conflicts with the domain size."""
@@ -215,6 +221,7 @@ class PreProcessing:
                     raise ValueError(
                         f"{coord}-positioning conflicts with the domain size.")
 
+
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
         if "buffer" in self.ini_file.groups:
@@ -224,6 +231,7 @@ class PreProcessing:
                 raise ValueError(
                     f"Buffer height={zstart} lies outside of the domain "
                     f" with zsize={zsize}.")            
+
 
     def _parse_run_time(self, run_time: str) -> pd.Timedelta:
         """Parse the run_time string and return a timedelta object
@@ -317,6 +325,7 @@ class PreProcessing:
         print(f"Starting {job_file=}")
         os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
 
+
     def run_preprocessing(self, method: str,
                           start_jobs: bool=False,
                           wait: bool=False):
@@ -381,6 +390,7 @@ class PreProcessing:
         # Create bash script
         self.create_batch_script(start_jobs, wait)
 
+
     def get_simulation_progress(self):
         """Print the progress of a simulation based on the saved binary output
         files of MicroHH"""
@@ -422,12 +432,14 @@ class PostProcessing:
         self.ini_path = case.ini_path
         self.ini_file = case.ini_file
 
+
     def vars_to_list(self, vars):
 
         if not isinstance(vars, list):
             vars = [vars]
 
         return vars
+
 
     def run_postprocessing(self, vars,
                            overwrite: bool=False,
@@ -632,6 +644,7 @@ class PostProcessing:
 
         return combined_dataset
 
+
     def open_3d_netCDF(self, variable: str) -> xr.Dataset:
         """Open 3D output netCDF file of 'variable' from model output.
 
@@ -653,7 +666,8 @@ class PostProcessing:
         data = self._capitalise_variable_names(data)
 
         return data
-    
+
+
     def _format_column_unit(self, to_unit: str) -> str:
         """Format unit of columns to have a consistent notation, e.g. 
         m s-1, kg s-1 etc.
@@ -676,7 +690,8 @@ class PostProcessing:
             formatted_unit = to_unit
 
         return formatted_unit
-    
+
+
     def _format_volume_unit(self, to_unit: str) -> str:
         """Determine the corresponding volumetric unit if a target column unit is given.
         Assumes that the vertical dimension is in units m.
@@ -703,6 +718,7 @@ class PostProcessing:
         
         else:
             raise ValueError(f"{to_unit} is a unit not supported")
+
 
     def convert_to_columns(self, variable: str, to_unit: str) -> xr.Dataset:
         """Convert 3D MicroHH model output to vertically integrated columns.
@@ -883,7 +899,7 @@ class PostProcessing:
             sources[f"source_{dim}0"].attrs['description'] = f'{dim} position in MicroHH grid'
     
         return sources
-    
+
 
     def create_wind_dataset(self, source: str, sources: xr.Dataset,
                             radius: int, save: bool=True) -> xr.Dataset:
@@ -1012,7 +1028,7 @@ class PostProcessing:
             """Calculate circular standard deviation, e.g. of wind direction"""
             return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
-    
+
     def vertically_integrate_wind(self,
                                   wind_data: xr.Dataset,
                                   method: str) -> xr.Dataset:
@@ -1035,7 +1051,7 @@ class PostProcessing:
         else:
             # FIXME: implement other ways of vertical averaging
             raise NotImplementedError
-    
+
 
     def convert_microhh_grid_to_coords(self,
                                        data: xr.Dataset,
@@ -1136,7 +1152,7 @@ class PostProcessing:
             if key in variable_name:
                 return key.upper()
         return variable_name
-    
+
 
     def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
         """Capitalize variable names in an xr.Dataset if they match
@@ -1225,7 +1241,7 @@ class PostProcessing:
             d[f'{name}c'] = xr.DataArray(xc, dims=dims + ('corners', ))
             
         return d
-    
+
 
     def estimate_emissions(self,
                            data: xr.Dataset,
@@ -1320,7 +1336,7 @@ class PostProcessing:
 
         return data, curves, results
 
-    
+
     def model_emissions_to_kg_per_h(self) -> np.array:
         """
         Convert the prescribed emissions from the .ini file to kg/h
@@ -1533,9 +1549,9 @@ def delete_empty_folders(scratch_path="/scratch/snx3000"):
     Finds and prints empty directories on your personal scratch. If the user
     agrees, all directories found are deleted.
 
-    Parameters:
-    - scratch_path (str):
-        The path to search for empty directories. Default is your personal scratch.
+    Args:
+        scratch_path (str):
+            The path to search for empty directories. Default is your personal scratch.
     """
 
     personal_scratch_path = os.path.join(scratch_path, os.environ["USER"])

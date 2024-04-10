@@ -80,6 +80,7 @@ class Case():
         if not os.path.exists(case_setup_path):
             raise FileNotFoundError(f"Case '{self.case_name}' does not exist.")
 
+
     def create_case(self, overwrite: bool=False):
         """Create the case by creating a directory on 'scratch' and 
         copying the '{case_name}' file to the folder.
@@ -108,6 +109,7 @@ class Case():
     
         self.ini_path = ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
+
 
     def read_case(self, source: str):
         """Read a set up the case from 'source'.
@@ -211,7 +213,7 @@ class Initialisation():
             model_var_profile = np.zeros(kmax)
 
         return model_var_profile
-    
+
 
     def change_inflow_outflow(self, overwrite: bool=False):
         """Change the inflow and outflow in the group 'boundar' in the .ini

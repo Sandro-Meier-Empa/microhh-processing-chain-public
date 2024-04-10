@@ -1,15 +1,12 @@
-import glob
-import importlib
+import cartopy
 import matplotlib.figure
 import os
-import shutil
-import subprocess
+import scipy.stats
 import sys
 
 from pathlib import Path
 from typing import Union
 
-import netCDF4 as nc
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -19,9 +16,10 @@ sys.path.append(f'/users/{os.environ["USER"]}/microhh/python')
 import microhh_tools as mht
 
 sys.path.append(f'/users/{os.environ["USER"]}/processing_chain/src/')
+sys.path.append(os.path.join('/users', os.environ["USER"], 'ddeq', 'src'))
 import processing as proc
 import initialisation as init
-
+import ddeq as ddeq
 
 
 class Visualisation():
@@ -227,3 +225,134 @@ class Visualisation():
 
         return '\n'.join(text)
     
+
+def plot_ime_result(gas: str, data: xr.Dataset, winds: xr.Dataset,
+                    line_densities: xr.Dataset, curves: ddeq.plume_coords.Poly2D,
+                    source: str, domain: ddeq.misc.Domain=None,
+                    crs: cartopy._epsg._EPSGProjection=None,
+                    scaling: Union[int, float]=None,
+                    vmin: Union[int, float]=None,
+                    vmax: Union[int, float]=None):
+
+    if domain is None:
+        domain = ddeq.misc.Domain(
+                name='',
+                startlat=data.lat.min() - 0.2,
+                stoplat=data.lat.max() + 0.2,
+                startlon=data.lon.min() - 0.2,
+                stoplon=data.lon.max() + 0.2,
+        )
+
+    # define margins for the subplots
+    ax_left = 0.07
+    ax_right = 0.95
+    ax_bottom = 0.12
+    ax_top = 0.93
+
+    with plt.style.context({'font.size': 10}):
+        fig_scaling = 1.0
+        figsize= (13.94 * fig_scaling, 7.45 * fig_scaling)
+        aspect = figsize[0] / figsize[1] # used to ensure eq spacing in h and v direction
+
+        # create canvas for the subfigures
+        fig = plt.figure(figsize=figsize)
+        subfigs = fig.subfigures(1, 2, width_ratios=[2, 1])
+
+        vmin = None if vmin is None else vmin
+        vmax = None if vmax is None else vmax
+        scaling = 1.0 if scaling is None else scaling
+
+        # set titles
+        subfigs[0].suptitle('a')
+        subfigs[1].suptitle('b')
+
+        # plot satellite image(s)
+        axs_left = subfigs[0].add_subplot(111, projection=domain.proj)
+
+        axs_left.set_aspect('equal', adjustable='box')
+        axs_left.set_xlim(domain.startlon, domain.stoplon)
+        axs_left.set_ylim(domain.startlat, domain.stoplat)
+        ddeq.vis.add_lines(axs_left)
+
+        with xr.set_options(keep_attrs=True):
+            scaled_data = scaling * data[gas]
+
+        # plot map with detected plume
+        sat = ddeq.vis.show_detected_plumes(data, curves, scaled_data,
+                                            gas=gas,
+                                            add_polygons=True,
+                                            winds=winds,
+                                            domain=domain,
+                                            zoom_on=source,
+                                            do_zoom=False,
+                                            ax=axs_left, cax=None,
+                                            vmin=vmin, vmax=vmax,
+                                            crs=crs)
+            
+        # adjust margins
+        # subfigs[0].subplots_adjust(left=0.0,
+        #                            right=0.93,
+        #                            bottom=ax_bottom,
+        #                            top=ax_top)
+
+        # add retrieval information
+        text = add_ime_text(gas, data.sel(source=source), line_densities)
+        subfigs[1].text(0.0, 0.75, text, va='top', linespacing=1.1)
+
+        return fig
+
+
+def add_ime_text(gas: str, data: xr.Dataset,
+                 result: xr.Dataset, title:str=None) -> list:
+    """Add retrieval information
+
+    Args:
+        gas (_type_): _description_
+        data (_type_): _description_
+        result (_type_): _description_
+        title (_type_, optional): _description_. Defaults to None.
+
+    Returns:
+        _type_: _description_
+    """
+
+    time = pd.Timestamp(data.time.values)
+    plume_size = np.nansum(data.detected_plume)
+
+    text = []
+    detection_gas = data.attrs['trace_gas']
+
+    if title is not None:
+        text.append(title)
+
+    text.append('\nInstrument:')
+    text.append(f'• Time: {time.round(freq="S")}')
+    text.append(f'• Resolution: {np.sqrt(np.mean(data.pixel_area.values)):.1f} {data.pixel_area.attrs.get("units", "-")[:-1]}')
+
+    noise = data[gas].attrs['noise_level']
+    units = data[gas].attrs['units']
+    text.append(f'• {ddeq.vis.sub_numbers(gas)} noise: {noise:g} {units}')
+
+    text.append('')
+    text.append('Plume detection:')
+    text.append(f'• Trace gas: {ddeq.vis.sub_numbers(detection_gas)}')
+    text.append(f'• z-value: {data.attrs.get("probability for z-value", "-"):g}')
+    text.append(f'• Filter size: {data.attrs.get("filter_size", "-"):g}')
+    text.append(f'• Plume size: {plume_size:d} px')
+    text.append(f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}')
+
+    text.append('\nWind:')
+    text.append(f'• Mean wind: {np.mean(result.wind_speed):.1f} m s$^{{-1}}$, '
+                f'{scipy.stats.circmean(result.wind_direction, high=360):.0f}°')
+
+    text.append('\nEstimated emissions:')
+
+    true_emissions = result.strength.values[0]
+    estimated_emissions = result[f"{gas}_estimated_emissions"].values[0] * 3600
+    estimated_emissions_unc = result[f"{gas}_estimated_emissions_precision"].values[0] * 3600
+
+    text.append(f'• True {ddeq.vis.sub_numbers(gas)} emissions: {true_emissions:.3g} kg/h')
+    text.append(f'• Est. {ddeq.vis.sub_numbers(gas)} emissions: {estimated_emissions:.3g} ± {estimated_emissions_unc:.2g} kg/h')
+
+
+    return '\n'.join(text)
