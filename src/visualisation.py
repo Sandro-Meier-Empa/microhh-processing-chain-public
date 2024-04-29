@@ -16,19 +16,19 @@ sys.path.append(f'/users/{os.environ["USER"]}/microhh/python')
 import microhh_tools as mht
 
 sys.path.append(f'/users/{os.environ["USER"]}/processing_chain/src/')
-sys.path.append(os.path.join('/users', os.environ["USER"], 'ddeq', 'src'))
+sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 import processing as proc
 import initialisation as init
 import ddeq as ddeq
 
 
-class Visualisation():
+class Visualisation:
 
     wind_dims = {
-            "u"    : ["xh", "y", "z"],
-            "v"    : ["x", "yh", "z"],
-            "w"    : ["x", "y", "zh"],
-        }
+        "u": ["xh", "y", "z"],
+        "v": ["x", "yh", "z"],
+        "w": ["x", "y", "zh"],
+    }
 
     def __init__(self, case: init.Case, source: str):
         """Visualise the model output
@@ -40,8 +40,8 @@ class Visualisation():
                 Source from where the case should be read.
 
         """
-
-        case.read_case(source)
+        self.source = source
+        case.read_case(self.source)
 
         self.case = case
         self.case_name = case.case_name
@@ -52,11 +52,13 @@ class Visualisation():
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-
-    def plot_side_views(self, variable: str, timestep: int,
-                        fig_width: Union[int, float]=15,
-                        cbar_width: Union[int, float]=0.01
-                        ) -> matplotlib.figure.Figure:
+    def plot_side_views(
+        self,
+        variable: str,
+        timestep: int,
+        fig_width: Union[int, float] = 15,
+        cbar_width: Union[int, float] = 0.01,
+    ) -> matplotlib.figure.Figure:
         """Plot 3D Model output in a figure with 3 subplots.
             1. YZ-View (integrated along x axis)
             2. XY-View (integrated along z axis)
@@ -79,18 +81,22 @@ class Visualisation():
 
         variable = variable.upper()
 
-        post_processing = proc.PostProcessing(self.case)
+        post_processing = proc.PostProcessing(self.case, source=self.source)
 
         try:
             data = post_processing.open_3d_netCDF(f"{self.case_name}_output_vars")
         except:
             data = post_processing.open_3d_netCDF(variable)
 
-        xdim, ydim, zdim = self.wind_dims[variable] if variable in self.wind_dims.keys() else ["x", "y", "z"]
-        
+        xdim, ydim, zdim = (
+            self.wind_dims[variable]
+            if variable in self.wind_dims.keys()
+            else ["x", "y", "z"]
+        )
+
         if data.time.size > 1 and "time" in data.dims:
             data = data.isel(time=timestep)
-        
+
         x_max = data[xdim].max().values
         y_max = data[ydim].max().values
         z_max = data[zdim].max().values
@@ -104,15 +110,21 @@ class Visualisation():
             dd_xy = data.sum(dim=zdim)
             dd_xz = data.sum(dim=ydim)
 
-        aspect_ratio = (z_max + x_max)/(z_max + y_max)
+        aspect_ratio = (z_max + x_max) / (z_max + y_max)
         fig_height = fig_width / aspect_ratio
 
-        fig, axs = plt.subplots(2, 2, figsize=(fig_width, fig_height), 
-                                gridspec_kw={'width_ratios': [1, x_max/z_max], 
-                                            'height_ratios': [y_max/z_max, 1]})
+        fig, axs = plt.subplots(
+            2,
+            2,
+            figsize=(fig_width, fig_height),
+            gridspec_kw={
+                "width_ratios": [1, x_max / z_max],
+                "height_ratios": [y_max / z_max, 1],
+            },
+        )
 
         axs[1, 0].remove()
-    
+
         # Side view along X
 
         im = axs[0, 0].pcolormesh(dd_yz[zdim], dd_yz[ydim], dd_yz[variable].T)
@@ -134,30 +146,36 @@ class Visualisation():
         left_top = axs[0, 0].get_position()
 
         # Set the position and size of the colorbar
-        cbar_ax = fig.add_axes([left_top.xmax-cbar_width,
-                                right_bottom.ymin,
-                                cbar_width,
-                                right_bottom.ymax-right_bottom.ymin])
-        cb = fig.colorbar(im,
-                          cax=cbar_ax,
-                          label=f"{variable} "
-                          f"[{data[{variable}].attrs.get('units', '-')}]",
-                          ticklocation="left")
-        
-        text = self.add_text(data, timestep,
-                             xdim, ydim, zdim)
+        cbar_ax = fig.add_axes(
+            [
+                left_top.xmax - cbar_width,
+                right_bottom.ymin,
+                cbar_width,
+                right_bottom.ymax - right_bottom.ymin,
+            ]
+        )
+        cb = fig.colorbar(
+            im,
+            cax=cbar_ax,
+            label=f"{variable} " f"[{data[{variable}].attrs.get('units', '-')}]",
+            ticklocation="left",
+        )
 
-        fig.text(left_top.xmin,
-                right_bottom.ymax,
-                text,
-                horizontalalignment='left',
-                verticalalignment='top')
-        
+        text = self.add_text(data, timestep, xdim, ydim, zdim)
+
+        fig.text(
+            left_top.xmin,
+            right_bottom.ymax,
+            text,
+            horizontalalignment="left",
+            verticalalignment="top",
+        )
+
         return fig
 
-
-    def add_text(self, data: xr.Dataset, timestep: int,
-                 xdim: str, ydim: str, zdim: str) -> str:
+    def add_text(
+        self, data: xr.Dataset, timestep: int, xdim: str, ydim: str, zdim: str
+    ) -> str:
         """Format text information of the model resolution and wind properties
         for 'plot_side_views'
 
@@ -174,18 +192,16 @@ class Visualisation():
         text = []
 
         # Information about time
-        if pd.api.types.is_numeric_dtype(data['time']):
-            text.append(f"Timestep: {timestep}, "
-                        f"Time: {int(data['time'].values)} s")
-        elif pd.api.types.is_datetime64_any_dtype(data['time']):
-            formatted_time = data['time'].dt.strftime("%H:%M:%S %d.%m.%Y").values[0]
-            text.append(f"Timestep: {timestep}, "
-                        f"Time: {formatted_time}")
+        if pd.api.types.is_numeric_dtype(data["time"]):
+            text.append(f"Timestep: {timestep}, " f"Time: {int(data['time'].values)} s")
+        elif pd.api.types.is_datetime64_any_dtype(data["time"]):
+            formatted_time = data["time"].dt.strftime("%H:%M:%S %d.%m.%Y").values[0]
+            text.append(f"Timestep: {timestep}, " f"Time: {formatted_time}")
         else:
             text.append("Time: Unsupported data type")
 
         # Information about resolution
-        
+
         text.append(f"\nGrid resolution")
         text.append(f"x: {data[xdim].diff(xdim).mean().values:.1f} m")
         text.append(f"y: {data[ydim].diff(ydim).mean().values:.1f} m")
@@ -196,26 +212,26 @@ class Visualisation():
             text.append(f"\nMean wind")
             for wind_component in ["u", "v"]:
                 text.append(
-                    f"{wind_component}: "
-                    f"{data[wind_component].mean():.1f} m/s")
+                    f"{wind_component}: " f"{data[wind_component].mean():.1f} m/s"
+                )
         except:
             text.append("Wind data not found.")
 
         # Information about sources
-        post_processing = proc.PostProcessing(self.case)
+        post_processing = proc.PostProcessing(self.case, self.source)
         try:
             source_strength = post_processing.model_emissions_to_kg_per_h()
-            source_height = self.ini_file['source']['source_z0']
+            source_height = self.ini_file["source"]["source_z0"]
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append(f"\nSources")
-                formatted_strength = ', '.join(f'{x:.2f}' for x in source_strength)
-                formatted_height = ', '.join(f'{x:.2f}' for x in source_height)
+                formatted_strength = ", ".join(f"{x:.2f}" for x in source_strength)
+                formatted_height = ", ".join(f"{x:.2f}" for x in source_height)
             else:
                 # Single source
                 text.append(f"\nSource")
-                formatted_strength = f'{source_strength[0]:.2f}'
-                formatted_height = f'{source_height:.0f}'
+                formatted_strength = f"{source_strength[0]:.2f}"
+                formatted_height = f"{source_height:.0f}"
 
             text.append(f"source strength: {formatted_strength} kg/h")
             text.append(f"source height: {formatted_height} m")
@@ -223,36 +239,39 @@ class Visualisation():
         except RuntimeError:
             pass
 
-        return '\n'.join(text)
-    
+        return "\n".join(text)
 
-def plot_ime_result(gas: str, data: xr.Dataset, winds: xr.Dataset,
-                    line_densities: xr.Dataset, curves: ddeq.plume_coords.Poly2D,
-                    source: str, domain: ddeq.misc.Domain=None,
-                    crs: cartopy._epsg._EPSGProjection=None,
-                    scaling: Union[int, float]=None,
-                    vmin: Union[int, float]=None,
-                    vmax: Union[int, float]=None):
+
+def plot_ime_result(
+    gas: str,
+    data: xr.Dataset,
+    winds: xr.Dataset,
+    line_densities: xr.Dataset,
+    curves: ddeq.plume_coords.Poly2D,
+    source: str,
+    domain=None,
+    crs=None,
+    scaling: Union[int, float] = None,
+    vmin: Union[int, float] = None,
+    vmax: Union[int, float] = None,
+    title=None,
+):
 
     if domain is None:
         domain = ddeq.misc.Domain(
-                name='',
-                startlat=data.lat.min() - 0.2,
-                stoplat=data.lat.max() + 0.2,
-                startlon=data.lon.min() - 0.2,
-                stoplon=data.lon.max() + 0.2,
+            name="",
+            startlat=data.lat.min() - 0.2,
+            stoplat=data.lat.max() + 0.2,
+            startlon=data.lon.min() - 0.2,
+            stoplon=data.lon.max() + 0.2,
         )
 
-    # define margins for the subplots
-    ax_left = 0.07
-    ax_right = 0.95
-    ax_bottom = 0.12
-    ax_top = 0.93
-
-    with plt.style.context({'font.size': 10}):
+    with plt.style.context({"font.size": 10}):
         fig_scaling = 1.0
-        figsize= (13.94 * fig_scaling, 7.45 * fig_scaling)
-        aspect = figsize[0] / figsize[1] # used to ensure eq spacing in h and v direction
+        figsize = (13.94 * fig_scaling, 7.45 * fig_scaling)
+        aspect = (
+            figsize[0] / figsize[1]
+        )  # used to ensure eq spacing in h and v direction
 
         # create canvas for the subfigures
         fig = plt.figure(figsize=figsize)
@@ -263,13 +282,13 @@ def plot_ime_result(gas: str, data: xr.Dataset, winds: xr.Dataset,
         scaling = 1.0 if scaling is None else scaling
 
         # set titles
-        subfigs[0].suptitle('a')
-        subfigs[1].suptitle('b')
+        subfigs[0].suptitle("a")
+        subfigs[1].suptitle("b")
 
         # plot satellite image(s)
         axs_left = subfigs[0].add_subplot(111, projection=domain.proj)
 
-        axs_left.set_aspect('equal', adjustable='box')
+        axs_left.set_aspect("equal", adjustable="box")
         axs_left.set_xlim(domain.startlon, domain.stoplon)
         axs_left.set_ylim(domain.startlat, domain.stoplat)
         ddeq.vis.add_lines(axs_left)
@@ -278,17 +297,23 @@ def plot_ime_result(gas: str, data: xr.Dataset, winds: xr.Dataset,
             scaled_data = scaling * data[gas]
 
         # plot map with detected plume
-        sat = ddeq.vis.show_detected_plumes(data, curves, scaled_data,
-                                            gas=gas,
-                                            add_polygons=True,
-                                            winds=winds,
-                                            domain=domain,
-                                            zoom_on=source,
-                                            do_zoom=False,
-                                            ax=axs_left, cax=None,
-                                            vmin=vmin, vmax=vmax,
-                                            crs=crs)
-            
+        sat = ddeq.vis.show_detected_plumes(
+            data,
+            curves,
+            scaled_data,
+            gas=gas,
+            add_polygons=True,
+            winds=winds,
+            domain=domain,
+            zoom_on=source,
+            do_zoom=False,
+            ax=axs_left,
+            cax=None,
+            vmin=vmin,
+            vmax=vmax,
+            crs=crs,
+        )
+
         # adjust margins
         # subfigs[0].subplots_adjust(left=0.0,
         #                            right=0.93,
@@ -296,14 +321,15 @@ def plot_ime_result(gas: str, data: xr.Dataset, winds: xr.Dataset,
         #                            top=ax_top)
 
         # add retrieval information
-        text = add_ime_text(gas, data.sel(source=source), line_densities)
-        subfigs[1].text(0.0, 0.75, text, va='top', linespacing=1.1)
+        text = add_ime_text(gas, data.sel(source=source), line_densities, title=title)
+        subfigs[1].text(0.0, 0.75, text, va="top", linespacing=1.1)
 
         return fig
 
 
-def add_ime_text(gas: str, data: xr.Dataset,
-                 result: xr.Dataset, title:str=None) -> list:
+def add_ime_text(
+    gas: str, data: xr.Dataset, result: xr.Dataset, title: str = None
+) -> list:
     """Add retrieval information
 
     Args:
@@ -320,39 +346,49 @@ def add_ime_text(gas: str, data: xr.Dataset,
     plume_size = np.nansum(data.detected_plume)
 
     text = []
-    detection_gas = data.attrs['trace_gas']
+    detection_gas = data.attrs["trace_gas"]
 
     if title is not None:
         text.append(title)
 
-    text.append('\nInstrument:')
+    text.append("\nInstrument:")
     text.append(f'• Time: {time.round(freq="S")}')
-    text.append(f'• Resolution: {np.sqrt(np.mean(data.pixel_area.values)):.1f} {data.pixel_area.attrs.get("units", "-")[:-1]}')
+    text.append(
+        f'• Resolution: {np.sqrt(np.mean(data.pixel_area.values)):.1f} {data.pixel_area.attrs.get("units", "-")[:-1]}'
+    )
 
-    noise = data[gas].attrs['noise_level']
-    units = data[gas].attrs['units']
-    text.append(f'• {ddeq.vis.sub_numbers(gas)} noise: {noise:g} {units}')
+    noise = data[gas].attrs["noise_level"]
+    units = data[gas].attrs["units"]
+    text.append(f"• {ddeq.vis.sub_numbers(gas)} noise: {noise:g} {units}")
 
-    text.append('')
-    text.append('Plume detection:')
-    text.append(f'• Trace gas: {ddeq.vis.sub_numbers(detection_gas)}')
+    text.append("")
+    text.append("Plume detection:")
+    text.append(f"• Trace gas: {ddeq.vis.sub_numbers(detection_gas)}")
     text.append(f'• z-value: {data.attrs.get("probability for z-value", "-"):g}')
     text.append(f'• Filter size: {data.attrs.get("filter_size", "-"):g}')
-    text.append(f'• Plume size: {plume_size:d} px')
-    text.append(f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}')
+    text.append(f"• Plume size: {plume_size:d} px")
+    text.append(
+        f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}'
+    )
 
-    text.append('\nWind:')
-    text.append(f'• Mean wind: {np.mean(result.wind_speed):.1f} m s$^{{-1}}$, '
-                f'{scipy.stats.circmean(result.wind_direction, high=360):.0f}°')
+    text.append("\nWind:")
+    text.append(f"• Speed: {np.mean(result.wind_speed):.1f} m/s")
+    text.append(
+        f"• Direction: {scipy.stats.circmean(result.wind_direction, high=360):.0f}°"
+    )
 
-    text.append('\nEstimated emissions:')
+    text.append(f"\n{ddeq.vis.sub_numbers(gas)} emissions:")
 
-    true_emissions = result.strength.values[0]
     estimated_emissions = result[f"{gas}_estimated_emissions"].values[0] * 3600
-    estimated_emissions_unc = result[f"{gas}_estimated_emissions_precision"].values[0] * 3600
+    estimated_emissions_unc = (
+        result[f"{gas}_estimated_emissions_precision"].values[0] * 3600
+    )
 
-    text.append(f'• True {ddeq.vis.sub_numbers(gas)} emissions: {true_emissions:.3g} kg/h')
-    text.append(f'• Est. {ddeq.vis.sub_numbers(gas)} emissions: {estimated_emissions:.3g} ± {estimated_emissions_unc:.2g} kg/h')
+    if "strength" in result.data_vars:
+        true_emissions = result.strength.values[0]
+        text.append(f"• Reported: {true_emissions:.3g} kg/h")
+    text.append(
+        f"• Estimated: {estimated_emissions:.3g} ± {estimated_emissions_unc:.2g} kg/h"
+    )
 
-
-    return '\n'.join(text)
+    return "\n".join(text)
