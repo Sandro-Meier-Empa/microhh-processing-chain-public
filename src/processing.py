@@ -60,6 +60,9 @@ class PreProcessing:
         case: init.Case,
         processor: str,
         mpi: bool,
+        account: str = "em05",
+        mail_type: str = "ALL",
+        email: str = "sandro.meier@empa.ch",
         run_time: str = "00:30:00",
         nodes: int = 1,
         ntasks_per_core: int = 1,
@@ -99,9 +102,6 @@ class PreProcessing:
                 ['debug', 'normal', 'prepost', 'low']:
                 Queue to be used on daint.
         """
-
-        case.read_case("scratch")
-
         self.user = case.user
         self.case_name = case.case_name
         self.suffix = case.suffix
@@ -112,6 +112,9 @@ class PreProcessing:
         self.ini_file = case.ini_file
         self.processor = processor.lower()
         self.mpi = mpi
+        self.account = account
+        self.mail_type = mail_type
+        self.email = email
         self.run_time = run_time
         self.nodes = nodes
         self.ntasks_per_core = ntasks_per_core
@@ -122,7 +125,6 @@ class PreProcessing:
 
         self._check_build_exists()
         self._check_cscs_setup_valid()
-        self._check_ini_setup_valid()
 
     def _get_default_ntasks_per_node(self) -> int:
         """Determines the default number of tasks per node
@@ -142,6 +144,16 @@ class PreProcessing:
             )
         else:
             return 1
+
+    def _check_build_exists(self):
+        """Check if the selected model build exists.
+
+        Raises:
+            ValueError: Raise error if the model build does not exist.
+        """
+        # Check if build exists
+        if self.processor == "gpu" and self.mpi:
+            raise ValueError("MPI is not enabled for GPU accelerated version.")
 
     def _check_cscs_setup_valid(self):
         """Checks if the setup is valid to be run on daint based
@@ -164,15 +176,76 @@ class PreProcessing:
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
 
-    def _check_build_exists(self):
-        """Check if the selected model build exists.
+    def _parse_run_time(self, run_time: str) -> pd.Timedelta:
+        """Parse the run_time string and return a timedelta object
+
+        Args:
+            run_time (str):
+                Specify the job duration. Determines the queuing time.
+                Format: "HH:MM:SS".
 
         Raises:
-            ValueError: Raise error if the model build does not exist.
+            ValueError: Raise error if the format is not "HH:MM:SS".
+
+        Returns:
+            pd.Timedelta: Timedelta of the wall clock time.
         """
-        # Check if build exists
-        if self.processor == "gpu" and self.mpi:
-            raise ValueError("MPI is not enabled for GPU accelerated version.")
+
+        try:
+            return pd.to_timedelta(run_time)
+        except ValueError:
+            raise ValueError("Invalid run_time format. Use HH:MM:SS")
+
+    def run_simulation(
+        self,
+        start_jobs: bool = False,
+        wait: bool = False,
+    ):
+        """Prepare MicroHH for running a simulation and executes the simulation.
+        - Create or use the {case_name}_input.nc
+        - Copy the specified build of MicroHH to scratch
+        - Create bash script and execute it to run the model
+
+        Args:
+            start_jobs (bool, optional. Default: False):
+                Specify if the job should be started.
+            wait (bool, optional. Default: False):
+                Specify if the next job should only be submitted
+                after the previous one has stopped.
+
+        Raises:
+            FileNotFoundError: Raise error if the .ini file cannot be found on scatch.
+        """
+
+        # copy microHH to directory
+        self.copy_executable()
+
+        # check if all files are present
+        files_required = [
+            f"{self.case_name}_input.nc",
+            f"{self.case_name}.ini",
+            "microhh",
+        ]
+
+        for file_name in files_required:
+            file_path = Path(self.scratch_path, file_name)
+            if not file_path.exists():
+                raise FileNotFoundError(
+                    f"Required file '{file_name}' not found in '{self.scratch_path}'."
+                )
+
+        # Create bash script if it does not exist
+        if Path(self.scratch_path, "bash_script.sbash").exists():
+            self.job_file = Path(self.scratch_path, "bash_script.sbash")
+        else:
+            self.job_file = self.create_bash_script()
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
+
+        if start_jobs:
+            # Launch the job on daint
+            self.execute_bash_script(self.job_file, wait)
 
     def _check_ini_setup_valid(self):
         """
@@ -183,13 +256,17 @@ class PreProcessing:
             ValueError: If the specified grid and model segregation do not match in x direction or y direction.
             ValueError: If the segregation and number of nodes do not match.
         """
+        self._check_ini_content()
         self._adjust_mpi_settings()
-
         self._check_grid_match()
         self._check_nodes_match()
-
         self._check_source_position()
         self._check_buffer_height()
+
+    def _check_ini_content(self):
+        # check if the .ini file is not empty
+        if len(self.ini_file.groups) == 0:
+            raise ValueError(f"{self.case_name}.ini is empty.")
 
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
@@ -247,28 +324,18 @@ class PreProcessing:
                     f" with zsize={zsize}."
                 )
 
-    def _parse_run_time(self, run_time: str) -> pd.Timedelta:
-        """Parse the run_time string and return a timedelta object
+    def copy_executable(self):
+        # Copy microhh executable
+        processor = self.processor
+        version = "mpi" if self.mpi else "nompi"
 
-        Args:
-            run_time (str):
-                Specify the job duration. Determines the queuing time.
-                Format: "HH:MM:SS".
+        microhh_executable_path = os.path.join(
+            "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"
+        )
+        shutil.copy(microhh_executable_path, self.scratch_path)
 
-        Raises:
-            ValueError: Raise error if the format is not "HH:MM:SS".
-
-        Returns:
-            pd.Timedelta: Timedelta of the wall clock time.
-        """
-
-        try:
-            return pd.to_timedelta(run_time)
-        except ValueError:
-            raise ValueError("Invalid run_time format. Use HH:MM:SS")
-
-    def create_batch_script(self, start_jobs: bool = False, wait: bool = False):
-        """Create batch script to run a simulation.
+    def create_bash_script(self):
+        """Create bash script to run a simulation.
 
         Args:
             start_jobs (bool, optional. Default: False):
@@ -283,20 +350,15 @@ class PreProcessing:
 
         multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
         constraint = "mc" if self.processor == "cpu" else "gpu"
-        self.job_file = os.path.join(self.scratch_path, "bash_script.sbash")
-
-        if not os.path.exists(self.scratch_path):
-            raise FileNotFoundError(
-                f"Directory {self.scratch_path} does not exist yet."
-            )
+        job_file = Path(self.scratch_path, "bash_script.sbash")
 
         with open(self.job_file, "w") as bash_script:
             header = "#!/bin/bash -l \n\n"
 
             header += f"#SBATCH --job-name={self.case_path} \n"
-            header += "#SBATCH --account=em05\n"
-            header += "#SBATCH --mail-type=ALL\n"
-            header += "#SBATCH --mail-user=sandro.meier@empa.ch\n"
+            header += f"#SBATCH --account={self.account}\n"
+            header += f"#SBATCH --mail-type={self.mail_type}\n"
+            header += f"#SBATCH --mail-user={self.email}\n"
             header += f"#SBATCH --time={self.run_time}\n"
             header += f"#SBATCH --nodes={self.nodes}\n"
             header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
@@ -320,16 +382,14 @@ class PreProcessing:
 
             bash_script.write(header)
 
-        if start_jobs:
-            # Launch the job on daint
-            self.run_sim(self.job_file, wait)
+        return job_file
 
-    def run_sim(self, job_file: Path, wait: bool = True):
+    def execute_bash_script(self, job_file: Path, wait: bool = True):
         """Run a simulation using sbatch
 
         Args:
             job_file (Path):
-                Specify the path of the batch script which should be run.
+                Specify the path of the bash script which should be run.
             wait (bool, optional. Default: False):
                 Specify if the next job should only be submitted
                 after the previous one has stopped.
@@ -338,85 +398,17 @@ class PreProcessing:
         print(f"Starting {job_file=}")
         os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
 
-    def run_preprocessing(
-        self, method: str, start_jobs: bool = False, wait: bool = False
-    ):
-        """Prepare MicroHH for running a simulation and executes the simulation.
-        - Create or uses the {case_name}_input.nc
-        - Copy the specified build of MicroHH to scratch
-        - Create batch script and execute it to run the model
-
-        Args:
-            method (str) ['default', 'new']:
-                Specify if the {case_name}_input.nc file should be
-                generated by running the {case_name}_input.py file or
-                by using the initialsiation.Init class.
-            start_jobs (bool, optional. Default: False):
-                Specify if the job should be started.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-
-        Raises:
-            FileNotFoundError: Raise error if the .ini file cannot be found on scatch.
-        """
-
-        # Create nc file for initial conditions
-        nc_file_name = f"{self.case_name}_input.nc"
-
-        if method == "default":
-            # default: use {case_name}_input.py to create {case_name}_input.nc
-            case_path = os.path.join(
-                "/users", self.user, "microhh", "cases", self.case_name
-            )
-            py_input_files = list(Path(case_path).glob(f"{self.case_name}_input.py"))
-
-            # Check if there are any matching input files
-            if py_input_files:
-                # Run the Python script which creates the {case_name}_input.nc file on scratch
-                subprocess.run(
-                    ["python", str(py_input_files[0])], cwd=self.scratch_path
-                )
-            else:
-                print(f"No file '{self.case_name}_input.py' found in {case_path}.")
-
-        elif method == "new":
-            # default: use initialisation.Initialisation to create {case_name}_input.nc
-            file_path = os.path.join(self.scratch_path, nc_file_name)
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(
-                    f"No file '{nc_file_name}' found in {self.scratch_path}. \n"
-                    f"If you want to use a Python script "
-                    f"'{self.case_name}_input.py' to create the file, "
-                    f"use 'method=default'. \n"
-                    f"Otherwise, create '{nc_file_name} using "
-                    f"the class 'Initialisation'."
-                )
-        else:
-            raise ValueError("Invalid method name.")
-
-        # Copy microhh executable
-        processor = self.processor
-        version = "mpi" if self.mpi else "nompi"
-
-        microhh_executable_path = os.path.join(
-            "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"
-        )
-        shutil.copy(microhh_executable_path, self.scratch_path)
-
-        # Create bash script
-        self.create_batch_script(start_jobs, wait)
-
     def get_simulation_progress(self):
         """Print the progress of a simulation based on the saved binary output
         files of MicroHH"""
         folder_path = Path(self.scratch_path)
         current_timestep = 0
+        pattern = re.compile(r"time\.(\d+)")
 
         for file in folder_path.iterdir():
             if file.is_file():
                 # extract the numeric part from the filename using regex
-                match = re.search(r"\.(\d+)", file.name)
+                match = pattern.search(file.name)
                 if match:
                     # timestep to an integer
                     timestep = int(match.group(1))
@@ -432,25 +424,22 @@ class PreProcessing:
 
 
 class PostProcessing:
-    def __init__(self, case: init.Case, source: str = "scratch"):
+    def __init__(self, case: init.Case):
         """Class used for post-processing MicroHH cases and handling the output.
 
         Args:
             case (init.Case):
                 Case to post-process.
         """
-        case.read_case(source)
-
         self.user = case.user
         self.case_name = case.case_name
         self.suffix = case.suffix
         self.case_path = case.case_path
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
-        self.ini_path = case.ini_path
         self.ini_file = case.ini_file
 
-    def vars_to_list(self, vars):
+    def _vars_to_list(self, vars):
 
         if not isinstance(vars, list):
             vars = [vars]
@@ -515,7 +504,7 @@ class PostProcessing:
             end_time (int, optional. Default: None):
                 End time in s of the data.
         """
-        vars = self.vars_to_list(vars)
+        vars = self._vars_to_list(vars)
 
         if start_time is None:
             start_time = self.ini_file["time"]["starttime"]
@@ -636,7 +625,7 @@ class PostProcessing:
             # If the file exists, open and return it
             return xr.open_dataset(output_filename, decode_times=False)
 
-        vars = self.vars_to_list(vars)
+        vars = self._vars_to_list(vars)
         datasets = []
 
         for var in vars:
@@ -653,7 +642,10 @@ class PostProcessing:
             datasets.append(dataset)
 
         # Merge all datasets into one
-        combined_dataset = xr.merge(datasets)
+        combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
+
+        # Add attributes
+        combined_dataset = self._nc_assign_names_and_attributes(combined_dataset)
 
         # Save the combined dataset to a new NetCDF file
         if save:
@@ -1274,110 +1266,6 @@ class PostProcessing:
 
         return d
 
-    def estimate_emissions(
-        self,
-        data: xr.Dataset,
-        wind: xr.Dataset,
-        sources: xr.Dataset,
-        filter_size: Union[int, float],
-        q: float,
-        sigma: int,
-        background_dilation: int,
-        crs: ccrs.epsg,
-    ) -> Tuple[xr.Dataset, dict, dict]:
-        """Estimate CH4 emissions from a simulated source in MicroHH using
-        the Integrated Mass Enhancement (IME) method.
-
-        Args:
-            data (xr.Dataset):
-                Dataset containing the trace gas columns.
-            wind (xr.Dataset):
-                Dataset containing wind information.
-            sources (xr.Dataset):
-                Dataset containing information about the source.
-            filter_size (Union[int, float]):
-                Size of filter user for computing the locam mean in pixels.
-            q (float):
-                probability for threshold z(q) that a pixel is significantly
-                enhanced above the background used for the statistical z-test.
-            sigma (int):
-                Size of Gaussian kernel used for normalized convolution in pixels
-            background_dilation (int):
-                If not None add extra dilation of masked pixels using a disk with
-                given radius given by `extra_dilation`.
-            crs (ccrs.epsg):
-                Coordinate reference system for the source.
-
-        Raises:
-            ValueError: Raise error if the wind dataset contains multiple time steps
-
-        Returns:
-            data (xr.Dataset):
-                Dataset containing the trace gas columns and additional variables
-                used for plume detection and quantification.
-            curves (dict):
-                Dictionary with ddeq.plume_coords.Poly2D curves fitted to
-                all detected plumes.
-            results (dict):
-                Dictionary with xr.Datasets containing the estimated emissions
-                and auxiliary variables for all detected sources.
-        """
-
-        if "time" in wind.dims:
-            raise ValueError(
-                "Wind dataset contains multiple time steps. " "Select one time step."
-            )
-
-        data = ddeq.dplume.detect_plumes(
-            data,
-            sources,
-            variable="CH4",
-            variable_std="CH4_std",
-            filter_type="gaussian",
-            q=q,
-            filter_size=filter_size,
-            background=np.zeros_like(data["CH4"]),
-        )
-
-        data, curves = ddeq.plume_coords.compute_plume_line_and_coords(
-            data, crs, radius=2, radius_units="px", plume_area="area", do_coords=True
-        )
-
-        # convert from ppmv m to kg/m2
-        dims = data["CH4"].dims
-        attrs = {"units": "kg m-2"}
-        ch4_mass = ucat.convert_points(data["CH4"], "ppmv", "kg/m3", molar_mass="CH4")
-        data["CH4_mass"] = xr.DataArray(ch4_mass, dims=dims, attrs=attrs)
-        data["CH4_mass"].attrs["noise_level"] = ucat.convert_points(
-            np.nanmean(data["CH4_std"]), "ppmv", "kg/m3", molar_mass="CH4"
-        )
-
-        # normalized convolution (sigma px)
-        data = ddeq.background.estimate(
-            data,
-            "CH4",
-            sigma=sigma,
-            mask_hits=False,
-            extra_dilation=background_dilation,
-        )
-        mass_bg = ucat.convert_points(
-            data.CH4_estimated_background, "ppmv", "kg/m3", molar_mass="CH4"
-        )
-        data["CH4_minus_estimated_background_mass"] = xr.DataArray(
-            data.CH4_mass - mass_bg, dims=data.CH4.dims
-        )
-        data["CH4_minus_estimated_background_mass"].attrs["units"] = "kg m-2"
-
-        # estimate emissions
-        L_max = np.max(data.xp.values[data.detected_plume]) + 0.5 * np.sqrt(
-            np.mean(data.pixel_area)
-        )
-        results = ddeq.ime.estimate_emissions(
-            data, wind, sources, curves, L_max=L_max, gas="CH4", min_pixel_number=1
-        )
-
-        return data, curves, results
-
     def model_emissions_to_kg_per_h(self) -> np.array:
         """
         Convert the prescribed emissions from the .ini file to kg/h
@@ -1414,7 +1302,7 @@ class PostProcessing:
             FileExistsError: Raise error if the folder
             already exists and 'overwrite=False'.
         """
-        vars = self.vars_to_list(vars)
+        vars = self._vars_to_list(vars)
 
         # Handle target path
         if not os.path.exists(self.store_path):
@@ -1429,6 +1317,8 @@ class PostProcessing:
             "*" + self.case_name + ".ini",
             "*" + self.case_name + "_input.nc",
             "slurm-*.out",
+            "bash_script.sbash",
+            "microhh",
         ]
         for pattern in file_patterns:
             for file in glob.glob(os.path.join(self.scratch_path, pattern)):
@@ -1637,22 +1527,11 @@ def delete_empty_folders(scratch_path="/scratch/snx3000"):
     if count > 0:
         print(list_folders.stdout)
 
-        ask_delete = input("Should these folders be deleted? (y/n)")
-        while ask_delete not in [
-            "yes",
-            "YES",
-            "Yes",
-            "y",
-            "Y",
-            "no",
-            "NO",
-            "No",
-            "n",
-            "N",
-        ]:
-            ask_delete = input("Enter 'y' (delete) or 'n' (don't delete).")
+        ask_delete = input("Should these folders be deleted? (y/n)").lower()
+        while ask_delete not in ["yes", "y", "no", "n"]:
+            ask_delete = input("Enter 'y' (delete) or 'n' (don't delete).").lower()
 
-        if ask_delete in ["yes", "YES", "Yes", "y", "Y"]:
+        if ask_delete in ["yes", "y"]:
             delete_folders = subprocess.run(
                 delete_command, capture_output=True, text=True
             )

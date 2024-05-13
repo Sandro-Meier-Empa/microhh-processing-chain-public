@@ -41,7 +41,15 @@ gas_mass = {
 
 class Case:
 
-    def __init__(self, case_name: str, suffix: str, scratch_path: str, store_path: str):
+    def __init__(
+        self,
+        case_name: str,
+        suffix: str,
+        scratch_path: str,
+        store_path: str,
+        overwrite: bool = False,
+        method: str = "new",
+    ):
         """Define a case for MicroHH.
         Can be used for...
             ...initialising the model (module 'Initialisation')
@@ -70,21 +78,53 @@ class Case:
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
         self.scratch_path = os.path.join(scratch_path, self.user, self.case_path)
         self.store_path = os.path.join(store_path, self.case_path)
-        self.ini_path = None
-        self.ini_file = None
+        self.method = method
 
-        # check if case is set up
+        # check if method is correct
+        if method not in ["default", "new"]:
+            raise ValueError(f"{method} is not available. Use 'default' or 'new'.")
+
+        # check if the case is set up in the directory 'microhh/cases/'
+        if method == "default":
+            self.check_case_setup()
+
+        self.handle_case(overwrite)
+
+    def check_case_setup(self):
+        """Check if the case is set up.
+
+        Raises:
+            FileNotFoundError: If the case does not exist or required files are missing.
+        """
         case_setup_path = os.path.join(
             "/users", self.user, "microhh", "cases", self.case_name
         )
         if not os.path.exists(case_setup_path):
             raise FileNotFoundError(f"Case '{self.case_name}' does not exist.")
 
-    def create_case(self, overwrite: bool = False):
+        # Check for the existence of {case_name}_input.py and {case_name}.ini files
+        input_py_path = os.path.join(case_setup_path, f"{self.case_name}_input.py")
+        ini_file_path = os.path.join(case_setup_path, f"{self.case_name}.ini")
+
+        if not os.path.exists(input_py_path):
+            raise FileNotFoundError(
+                f"{self.case_name}_input.py does not exist in the case directory."
+            )
+
+        if not os.path.exists(ini_file_path):
+            raise FileNotFoundError(
+                f"{self.case_name}.ini does not exist in the case directory."
+            )
+
+    def handle_case(self, overwrite: bool = False):
         """Create the case by creating a directory on 'scratch' and
         copying the '{case_name}' file to the folder.
 
         Args:
+            method (str) ['default', 'new']:
+                Specify if the {case_name}.ini file should be
+                generated copied from 'microhh/cases/{case_name}/' or if it is
+                newly generated using the function modify_ini
             overwrite (bool, optional. Default: False):
                 Specify if an existing folder and content should be overwritten.
 
@@ -92,67 +132,45 @@ class Case:
             FileExistsError: Raise error if the folder exists and
             'overwrite=False'.
         """
-        ini_path = self._construct_ini_path(self.scratch_path)
 
+        # set up directory on scratch
         if not os.path.exists(self.scratch_path):
             print(f"Creating {self.scratch_path}")
-        elif overwrite:
-            shutil.rmtree(self.scratch_path)
-            print(f"Overwriting {self.scratch_path}")
-        else:
-            raise FileExistsError(
-                f"Case {self.scratch_path} already exists. "
-                f"Choose new suffix or set 'overwrite=True'."
-            )
+            os.makedirs(self.scratch_path)
 
+        if overwrite:
+            self.create_case()
+        else:
+            self.read_case()
+
+    def create_case(self):
+        shutil.rmtree(self.scratch_path)
+        print(f"Overwriting {self.scratch_path}")
         os.makedirs(self.scratch_path)
-        shutil.copy(
-            os.path.join(
-                "/users",
-                self.user,
-                "microhh",
-                "cases",
-                self.case_name,
-                f"{self.case_name}.ini",
-            ),
-            ini_path,
-        )
 
-        self.ini_path = ini_path
+        self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
+        self.ini_file = None
+
+    def read_case(self):
+        self.ini_path = self.get_file_location(file=".ini")
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def read_case(self, source: str):
-        """Read a set up the case from 'source'.
+    def get_file_location(self, file):
+        file_store_path = Path(self.store_path) / f"{self.case_name}{file}"
+        file_scratch_path = Path(self.scratch_path) / f"{self.case_name}{file}"
 
-        Args:
-            source (str) ['scratch', 'store']:
-                Source from where the case should be read.
-
-        Raises:
-            ValueError: Raise error if 'source' is invalid.
-            FileNotFoundError: Raise error if the .ini file was
-            not found on 'source'.
-        """
-        if source == "scratch":
-            source_path = self.scratch_path
-        elif source == "store":
-            source_path = self.store_path
+        if file_store_path.exists():
+            file_path = file_store_path
+            print(f"Reading {self.case_path}{file} from store.")
+        elif file_scratch_path.exists():
+            file_path = file_scratch_path
+            print(f"Reading {self.case_path}{file} from scratch.")
         else:
-            raise ValueError(
-                f"Invalid source: '{source}'. " f"Use 'scratch' or 'store'."
+            FileNotFoundError(
+                f"{self.case_name}{file} does not exist on scratch or store."
             )
 
-        ini_path = self._construct_ini_path(source_path)
-
-        if not os.path.exists(ini_path):
-            raise FileNotFoundError(f"File {ini_path} could not be found.")
-
-        self.ini_path = ini_path
-        self.ini_file = mht.Read_namelist(self.ini_path)
-
-    def _construct_ini_path(self, base_path: str) -> str:
-        """Construct the full path to the .ini file."""
-        return os.path.join(base_path, f"{self.case_name}.ini")
+        return file_path
 
 
 class Initialisation:
@@ -164,10 +182,13 @@ class Initialisation:
         Args:
             case (Case):
                 Case which should be initialised.
+            method (str) ['default', 'new']:
+                Specify if the {case_name}_input.nc file should be
+                generated by running the {case_name}_input.py file or
+                by using the function 'write_netcdf_input' in
+                'LS2D/examples/microhh/microhh_ls2d_tools.py'
+            mode (str) ['run', 'rerun']
         """
-
-        case.read_case("scratch")
-
         self.user = case.user
         self.case_name = case.case_name
         self.suffix = case.suffix
@@ -176,8 +197,92 @@ class Initialisation:
         self.store_path = case.store_path
         self.ini_path = case.ini_path
         self.ini_file = case.ini_file
-        self.vars = {}
-        self.dims = {}
+
+    def initialise(self, method: str = "new"):
+        self.method = method
+
+        self.provide_ini()
+        self.provide_initial()
+
+    def initialise_restart(self, reuse_bash_script=True):
+
+        # List of files to keep
+        files_to_keep = [
+            f"{self.case_name}.ini",
+            f"{self.case_name}_input.nc",
+            "microhh",
+        ]
+
+        if reuse_bash_script:
+            files_to_keep.append("bash_script.sbash")
+        else:
+            self.create_batch_script()
+
+        # delete existing files except {case_name}.ini, {case_name}_input.nc and executable
+        for file_path in self.scratch_path.iterdir():
+            if file_path.name not in files_to_keep:
+                file_path.unlink()
+                print(f"Deleted {file_path}")
+
+    def initialise_rerun(
+        self,
+        case_to_rerun,
+        reuse_bash_script: bool = True,
+    ):
+        # Re-run simulation based on bash_script.sbash, {case_name}.ini and {case_name}_input.nc.
+
+        # List of files to copy
+        files_to_copy = [
+            f"{self.case_name}.ini",
+            f"{self.case_name}_input.nc",
+            "microhh",
+        ]
+
+        if reuse_bash_script:
+            files_to_copy.append("bash_script.sbash")
+        else:
+            self.create_batch_script()
+
+        # copy files from store to scratch
+        for file_name in files_to_copy:
+            for file in glob.glob(os.path.join(case_to_rerun.store_path, file_name)):
+                shutil.copy(file, self.scratch_path)
+                print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
+
+    def provide_ini(self):
+
+        # default: copy .ini file from 'microhh/cases/'
+        if self.method == "default":
+            case_path = Path("/users", self.user, "microhh", "cases", self.case_name)
+            ini_file_path = case_path / f"{self.case_name}.ini"
+
+            if ini_file_path.exists():
+                # Copy the existing file to the scratch path
+                shutil.copy(str(ini_file_path), str(self.scratch_path))
+
+        # new: fill .ini file with TODO
+        if self.method == "new":
+            # Create an empty file in the scratch path
+            self.ini_path.touch()
+
+        self.ini_file = mht.Read_namelist(self.ini_path)
+
+    def provide_initial(self):
+        # default: use {case_name}_input.py to create {case_name}_input.nc
+        if self.method == "default":
+            py_script_path = Path(
+                "/users",
+                self.user,
+                "microhh",
+                "cases",
+                self.case_name,
+                f"{self.case_name}_input.py",
+            )
+
+            if py_script_path.exists():
+                subprocess.run(["python", str(py_script_path)], cwd=self.scratch_path)
+            else:
+                print(f"{py_script_path} not found.")
 
     def interpolate_to_model_profile(
         self,
@@ -200,8 +305,6 @@ class Initialisation:
             np.array: Values interpolated to the height levels of
             the MicroHH model.
         """
-
-        kmax = self.ini_file["grid"]["ktot"]
         self.model_profile = grid.z
 
         if variable_profile is not None:
@@ -215,121 +318,15 @@ class Initialisation:
 
             # Handle the case where variable_profile is a single value
             if np.isscalar(variable_profile):
-                model_var_profile = np.full(kmax, variable_profile)
+                model_var_profile = np.full(len(self.model_profile), variable_profile)
             else:
                 model_var_profile = np.interp(
                     self.model_profile, input_profile, variable_profile
                 )
         else:
-            model_var_profile = np.zeros(kmax)
+            model_var_profile = np.zeros(len(self.model_profile))
 
         return model_var_profile
-
-    def change_inflow_outflow(self, overwrite: bool = False):
-        """Change the inflow and outflow in the group 'boundar' in the .ini
-        file dynamically based on the wind direction.
-
-        Args:
-            overwrite (bool, optional. Default: False):
-                Specify if the .ini file should be overwritten.
-
-        Raises:
-            ValueError: Raise error if the file would be changed but
-            'overwrite=False'
-        """
-        save_ini = False
-
-        # Define direction values based on mean wind components (u, v)
-        direction_mapping = {
-            (0, 0): {
-                "west": "outflow",
-                "north": "outflow",
-                "east": "outflow",
-                "south": "outflow",
-            },
-            (1, 0): {
-                "west": "inflow",
-                "north": "outflow",
-                "east": "outflow",
-                "south": "outflow",
-            },
-            (1, 1): {
-                "west": "inflow",
-                "north": "outflow",
-                "east": "outflow",
-                "south": "inflow",
-            },
-            (0, 1): {
-                "west": "outflow",
-                "north": "outflow",
-                "east": "outflow",
-                "south": "inflow",
-            },
-            (-1, 1): {
-                "west": "outflow",
-                "north": "outflow",
-                "east": "inflow",
-                "south": "inflow",
-            },
-            (-1, 0): {
-                "west": "outflow",
-                "north": "outflow",
-                "east": "inflow",
-                "south": "outflow",
-            },
-            (-1, -1): {
-                "west": "outflow",
-                "north": "inflow",
-                "east": "inflow",
-                "south": "outflow",
-            },
-            (0, -1): {
-                "west": "outflow",
-                "north": "inflow",
-                "east": "outflow",
-                "south": "outflow",
-            },
-            (1, -1): {
-                "west": "inflow",
-                "north": "inflow",
-                "east": "outflow",
-                "south": "outflow",
-            },
-        }
-
-        wind_means = {}
-        for wind in ["u", "v"]:
-            if wind in self.ini_file["force"]["lslist"].split(","):
-                wind_means[wind] = np.nanmean(self.vars[f"{wind}_ls"]["data"])
-            else:
-                wind_means[wind] = np.nanmean(self.vars[wind]["data"])
-
-        u_mean = wind_means["u"]
-        v_mean = wind_means["v"]
-
-        # Determine direction values based on mean wind components
-        direction_values = direction_mapping.get(
-            (np.sign(u_mean), np.sign(v_mean)), None
-        )
-
-        if direction_values is None:
-            raise ValueError("Invalid wind direction.")
-
-        # Set direction values in the INI file
-        for direction, value in direction_values.items():
-            if self.ini_file["boundary"][f"flow_direction[{direction}]"] != value:
-                print(direction, value)
-                self.ini_file.set_value(
-                    group="boundary",
-                    variable=f"flow_direction[{direction}]",
-                    value=value,
-                )
-                save_ini = True
-
-        # Save changes to the INI file
-        if save_ini:
-            self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
-            print(f"Modifying {self.ini_path}")
 
     def modify_ini(self, settings: dict, overwrite: bool = True):
         """Modify the .ini file of a case on scratch.
@@ -351,7 +348,7 @@ class Initialisation:
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
 
-def read_initial_cond(case: Case, source: str) -> xr.Dataset:
+def read_initial_cond(case: Case) -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
     of a model run ({case_name}_input.nc).
 
@@ -368,14 +365,8 @@ def read_initial_cond(case: Case, source: str) -> xr.Dataset:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    if source == "scratch":
-        source_path = case.scratch_path
-    elif source == "store":
-        source_path = case.store_path
-    else:
-        raise ValueError(f"Invalid source: '{source}'. " f"Use 'scratch' or 'store'.")
+    fname = case.get_file_location(file="_input.nc")
 
-    fname = os.path.join(source_path, f"{case.case_name}_input.nc")
     groups = [""] + list(nc.Dataset(fname).groups.keys())
     merged_dataset = xr.Dataset()
     for group in groups:

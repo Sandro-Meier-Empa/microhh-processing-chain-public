@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Union
 
+import netCDF4 as nc
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -30,7 +31,7 @@ class Visualisation:
         "w": ["x", "y", "zh"],
     }
 
-    def __init__(self, case: init.Case, source: str):
+    def __init__(self, case: init.Case):
         """Visualise the model output
 
         Args:
@@ -40,17 +41,79 @@ class Visualisation:
                 Source from where the case should be read.
 
         """
-        self.source = source
-        case.read_case(self.source)
-
         self.case = case
         self.case_name = case.case_name
         self.suffix = case.suffix
         self.case_path = case.case_path
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
-        self.ini_path = case.ini_path
-        self.ini_file = mht.Read_namelist(self.ini_path)
+
+        self.post = proc.PostProcessing(self.case)
+
+    def plot_initial_conditions(self, case: init.Case, ncols=4):
+        """Plot the initial conditions in separate plots for the different groups.
+
+        Args:
+            case (init.Case): _description_
+            ncols (int, optional): _description_. Defaults to 4.
+        """
+
+        fname = case.get_file_location(file="_input.nc")
+
+        groups = list(nc.Dataset(fname).groups.keys())
+
+        # loop over all groups to get the dimensions of all variables
+        for group in groups:
+            data_group = xr.open_dataset(fname, group=group, decode_times=False)
+            dims = []
+            for var in data_group.data_vars:
+                dims.append(data_group[var].dims)
+
+            # collect all variables within one group which share the dimension
+            for sub_dims in list(set(dims)):
+                vars = []
+                for var in data_group.data_vars:
+                    if data_group[var].dims == sub_dims:
+                        vars.append(var)
+
+                fig, axs = plt.subplots(
+                    ncols=ncols,
+                    nrows=np.ceil(len(vars) / ncols).astype(int),
+                    sharey=True,
+                    layout="constrained",
+                )
+
+                fig.suptitle(f"{group=}")
+
+                for i, ax in enumerate(axs.flat):
+                    if i < len(vars):
+                        if len(sub_dims) == 0:
+                            ax.plot(
+                                np.full(
+                                    len(data_group["z"]), data_group[vars[i]].values
+                                ),
+                                data_group["z"],
+                            )
+                        elif len(sub_dims) == 1 and "z" in sub_dims:
+                            ax.plot(data_group[vars[i]], data_group["z"])
+                        elif len(sub_dims) == 1 and "time_surface" in sub_dims:
+                            ax.plot(data_group["time_surface"], data_group[vars[i]])
+                        elif len(sub_dims) == 2:
+                            ax.pcolormesh(
+                                data_group[sub_dims[0]],
+                                data_group[sub_dims[1]],
+                                data_group[vars[i]].T,
+                            )
+                        ax.set_title(vars[i])
+                    else:
+                        ax.axis("off")
+
+                if "z" in sub_dims:
+                    fig.supylabel("Height [m]")
+                if any("time" in s for s in sub_dims):
+                    fig.supxlabel("Time [s]")
+
+                plt.show()
 
     def plot_side_views(
         self,
@@ -81,12 +144,10 @@ class Visualisation:
 
         variable = variable.upper()
 
-        post_processing = proc.PostProcessing(self.case, source=self.source)
-
         try:
-            data = post_processing.open_3d_netCDF(f"{self.case_name}_output_vars")
+            data = self.post.open_3d_netCDF(f"{self.case_name}_output_vars")
         except:
-            data = post_processing.open_3d_netCDF(variable)
+            data = self.post.open_3d_netCDF(variable)
 
         xdim, ydim, zdim = (
             self.wind_dims[variable]
@@ -218,10 +279,9 @@ class Visualisation:
             text.append("Wind data not found.")
 
         # Information about sources
-        post_processing = proc.PostProcessing(self.case, self.source)
         try:
-            source_strength = post_processing.model_emissions_to_kg_per_h()
-            source_height = self.ini_file["source"]["source_z0"]
+            source_strength = self.post.model_emissions_to_kg_per_h()
+            source_height = self.post.ini_file["source"]["source_z0"]
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append(f"\nSources")
@@ -269,9 +329,6 @@ def plot_ime_result(
     with plt.style.context({"font.size": 10}):
         fig_scaling = 1.0
         figsize = (13.94 * fig_scaling, 7.45 * fig_scaling)
-        aspect = (
-            figsize[0] / figsize[1]
-        )  # used to ensure eq spacing in h and v direction
 
         # create canvas for the subfigures
         fig = plt.figure(figsize=figsize)
@@ -302,7 +359,7 @@ def plot_ime_result(
             curves,
             scaled_data,
             gas=gas,
-            add_polygons=True,
+            add_polygons=False,
             winds=winds,
             domain=domain,
             zoom_on=source,
