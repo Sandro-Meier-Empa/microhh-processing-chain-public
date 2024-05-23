@@ -6,6 +6,9 @@ import sys
 
 from pathlib import Path
 from typing import Union
+from matplotlib.lines import Line2D
+from matplotlib import cm
+from matplotlib.colors import Normalize
 
 import netCDF4 as nc
 import pandas as pd
@@ -114,6 +117,89 @@ class Visualisation:
                     fig.supxlabel("Time [s]")
 
                 plt.show()
+
+    def plot_prognostic_variables(
+        self,
+        data=None,
+        variables=["u", "v", "thl", "qt"],
+        n_lines=5,
+        colorful=True,
+        time_format="h",
+    ):
+        # define factor for time format
+        if time_format == "s":
+            time_factor = 1
+        elif time_format == "min":
+            time_factor = 60
+        elif time_format == "h":
+            time_factor = 60**2
+        else:
+            raise ValueError(
+                f"Time format {time_format} is not supported. Use 's', 'min' or 'h' instead."
+            )
+        # read in simulated data
+        if data is None:
+            post_processing = proc.PostProcessing(self.case)
+            data = post_processing.combine_nc_files(["u", "v", "w", "thl", "ch4"])
+
+        # read in initial conditions
+        data_initial = init.read_initial_cond(self.case)
+
+        fig, ax = plt.subplots(ncols=len(variables), sharey=True)
+
+        # define step size for plot
+        t_step = int(data.time.size / n_lines)
+        x_step = int(data.x.size / n_lines)
+        y_step = int(data.y.size / n_lines)
+
+        # Normalize the time values to range [0, 1] for colormap
+        norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
+
+        # Create a ScalarMappable and set the colormap
+        sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
+        sm.set_array([])  # Only needed for the colorbar to work
+
+        # plot simulated values
+        for t in np.arange(data.time.size, step=t_step):
+            color_sim = (
+                cm.viridis(norm(data.time[t] / time_factor)) if colorful else "gray"
+            )
+            color_init = "C3" if colorful else "C0"
+
+            # loop over x dimension
+            for x in np.arange(
+                int(data.x.min().item()), int(data.x.max().item()), x_step
+            ):
+                # loop over y dimension
+                for y in np.arange(
+                    int(data.y.min().item()), int(data.y.max().item()), y_step
+                ):
+                    subset = data.isel(time=t, x=x, y=y)
+                    for c, component in enumerate(variables):
+                        ax[c].plot(subset[component], subset.z, color=color_sim)
+
+        # plot initial conditions
+        for c, component in enumerate(variables):
+            ax[c].plot(
+                data_initial[component],
+                data_initial.z,
+                label="prescribed",
+                color=color_init,
+            )
+            ax[c].set_xlabel(f"{component} [{data[component].attrs['units']}]")
+
+        ax[0].set_ylabel("Height [m]")
+
+        if colorful:
+            # create colorbar
+            cbar = fig.colorbar(sm, ax=ax)
+            cbar.set_label(f"Time [{time_format}]")
+            ax[-1].legend(loc="upper right")
+        else:
+            # create legend manually
+            lines = [Line2D([0], [0], color=c) for c in [color_init, color_sim]]
+            labels = ["initial", "simulated"]
+            ax[-1].legend(lines, labels, loc="upper right")
 
     def plot_side_views(
         self,

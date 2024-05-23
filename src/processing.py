@@ -109,7 +109,7 @@ class PreProcessing:
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
         self.ini_path = case.ini_path
-        self.ini_file = case.ini_file
+        self.ini_file = mht.Read_namelist(self.ini_path)
         self.processor = processor.lower()
         self.mpi = mpi
         self.account = account
@@ -352,7 +352,7 @@ class PreProcessing:
         constraint = "mc" if self.processor == "cpu" else "gpu"
         job_file = Path(self.scratch_path, "bash_script.sbash")
 
-        with open(self.job_file, "w") as bash_script:
+        with open(job_file, "w") as bash_script:
             header = "#!/bin/bash -l \n\n"
 
             header += f"#SBATCH --job-name={self.case_path} \n"
@@ -437,7 +437,8 @@ class PostProcessing:
         self.case_path = case.case_path
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
-        self.ini_file = case.ini_file
+        self.ini_path = case.ini_path
+        self.ini_file = mht.Read_namelist(self.ini_path)
 
     def _vars_to_list(self, vars):
 
@@ -547,7 +548,7 @@ class PostProcessing:
         variables.update(
             {
                 "thl": ("liquid water potential temperature", "K"),
-                "qt": ("total specific humidity", "kg kg-1"),
+                "qt": ("total water mixing ratio", "kg kg-1"),
                 "u": ("zonal wind component", "m s-1"),
                 "v": ("meridional wind component", "m s-1"),
                 "w": ("vertical wind component", "m s-1"),
@@ -1316,6 +1317,8 @@ class PostProcessing:
         file_patterns = [
             "*" + self.case_name + ".ini",
             "*" + self.case_name + "_input.nc",
+            "*" + self.case_name + ".out",
+            "*" + self.case_name + ".default.*.nc",
             "slurm-*.out",
             "bash_script.sbash",
             "microhh",
@@ -1431,6 +1434,35 @@ class PostProcessing:
 
 
 ############# other functions #############
+
+
+def calculate_tke(self, data=None):
+    if data is None:
+        data = self.combine_nc_files(["u", "v", "w", "thl", "ch4"])
+
+    if not any(var in data.data_vars for var in data.data_vars):
+        raise ValueError("Data does not contain all wind components.")
+
+    # compute temporal deviation for each wind component
+    for wind_component in ["u", "v", "w"]:
+        data[f"{wind_component}_std"] = data[wind_component] - data[
+            wind_component
+        ].mean(dim="time")
+        data[f"{wind_component}_std"].attrs["units"] = data[wind_component].attrs[
+            "units"
+        ]
+        data[f"{wind_component}_std"].attrs[
+            "description"
+        ] = f"deviation of {wind_component} wind speed from mean"
+
+    # compute TKE
+    data["TKE"] = 0.5 * (
+        data["u_std"] ** 2 + data["v_std"] ** 2 + data["w_std"] ** 2
+    ).mean(dim="time")
+    data[f"{wind_component}_std"].attrs["units"] = "m2 s-2"
+    data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
+
+    return data
 
 
 def jobs_in_queue(

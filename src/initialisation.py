@@ -137,23 +137,15 @@ class Case:
         if not os.path.exists(self.scratch_path):
             print(f"Creating {self.scratch_path}")
             os.makedirs(self.scratch_path)
-
-        if overwrite:
-            self.create_case()
+            self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
         else:
-            self.read_case()
-
-    def create_case(self):
-        shutil.rmtree(self.scratch_path)
-        print(f"Overwriting {self.scratch_path}")
-        os.makedirs(self.scratch_path)
-
-        self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
-        self.ini_file = None
-
-    def read_case(self):
-        self.ini_path = self.get_file_location(file=".ini")
-        self.ini_file = mht.Read_namelist(self.ini_path)
+            if overwrite:
+                shutil.rmtree(self.scratch_path)
+                print(f"Overwriting {self.scratch_path}")
+                os.makedirs(self.scratch_path)
+                self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
+            else:
+                self.ini_path = self.get_file_location(file=".ini")
 
     def get_file_location(self, file):
         file_store_path = Path(self.store_path) / f"{self.case_name}{file}"
@@ -196,7 +188,6 @@ class Initialisation:
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
         self.ini_path = case.ini_path
-        self.ini_file = case.ini_file
 
     def initialise(self, method: str = "new"):
         self.method = method
@@ -260,7 +251,7 @@ class Initialisation:
                 # Copy the existing file to the scratch path
                 shutil.copy(str(ini_file_path), str(self.scratch_path))
 
-        # new: fill .ini file with TODO
+        # new: fill .ini file using LS2D package
         if self.method == "new":
             # Create an empty file in the scratch path
             self.ini_path.touch()
@@ -366,7 +357,31 @@ def read_initial_cond(case: Case) -> xr.Dataset:
     """
 
     fname = case.get_file_location(file="_input.nc")
+    return _combine_nc_groups(fname)
 
+
+def read_statistics(case: Case) -> xr.Dataset:
+    """Read the netCDF file containing the initial conditions
+    of a model run ({case_name}_input.nc).
+
+    Args:
+        case (Case):
+            Case for which the initial conditions should be read.
+        source (str) ['scratch', 'store']:
+            Source from which the initial conditions should be read from.
+
+    Raises:
+        ValueError: Raise error if 'source' is invalid.
+
+    Returns:
+        xr.Dataset: netCDF of initial conditions.
+    """
+
+    fname = case.get_file_location(file=".default.0000000.nc")
+    return _combine_nc_groups(fname)
+
+
+def _combine_nc_groups(fname):
     groups = [""] + list(nc.Dataset(fname).groups.keys())
     merged_dataset = xr.Dataset()
     for group in groups:
