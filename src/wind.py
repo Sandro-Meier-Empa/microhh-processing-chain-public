@@ -1,8 +1,311 @@
 import numpy as np
+import os
+import scipy
+import sys
+import ucat
+import xarray as xr
 from scipy.optimize import fsolve
 from typing import Union
 
+sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
+import processing as proc
+import ddeq as ddeq
+import initialisation as init
 
+
+########### Class to handle simulated wind fields from MicroHH ###############
+
+
+class WindProcessing:
+    def __init__(self, case: init.Case):
+        """Class used for post-processing MicroHH cases and handling the output.
+
+        Args:
+            case (init.Case):
+                Case to post-process.
+        """
+        self.post = proc.PostProcessing(self.case)
+        self.store_path = case.store_path
+
+    def create_wind_dataset(
+        self,
+        case,
+        source: str,
+        sources: xr.Dataset,
+        radius: int,
+        method: str,
+        save: bool = True,
+    ) -> xr.Dataset:
+        """Create a dataset containing the wind information around a source
+        which is used for estimating emissions in 'ddeq'.
+
+        Args:
+            source (str):
+                Source for which the wind dataset should be created.
+            sources (xr.Dataset):
+                Dataset with source information
+            radius (int):
+                Number of pixels around the source which should be considered
+                for calculating wind properties.
+            method (str):
+                Method of how the wind should be vertically integrated.
+                "mean" "median", or "concentration_weighted"
+            save (bool, optional. Default: True):
+                Specify if the dataset should be saved to store.
+
+        Raises:
+            e: Raise an error if the datasets of the wind components u and v
+            could not be found or processed.
+
+        Returns:
+            xr.Dataset: Dataset containg the wind information around a source.
+        """
+        wind_vars = self._get_wind_vars(method)
+
+        # load wind.nc if it exists
+        wind_nc_path = os.path.join(self.store_path, "wind.nc")
+        if os.path.exists(wind_nc_path):
+            print("Reading wind from store.")
+            return xr.open_dataset(wind_nc_path)
+
+        wind_data = self._process_wind_data(wind_vars, case=case)
+
+        selected_source = sources.sel(source=source)
+        wind_data_subset = self._select_pixels_around_source(
+            wind_data, selected_source, radius
+        )
+        wind_data_subset = self.vertically_integrate_wind(wind_data_subset, method)
+
+        # compute wind speed and direction
+        wind_data_subset["speed"] = np.sqrt(
+            wind_data_subset.u**2 + wind_data_subset.v**2
+        )
+        wind_data_subset["direction"] = ddeq.wind.calculate_wind_direction(
+            wind_data_subset.u, wind_data_subset.v
+        )
+
+        # combine in new dataset
+        wind_src = xr.Dataset(
+            coords={
+                "source": (["source"], np.array([source], dtype=object)),
+                "time": (["time"], wind_data_subset.time.values),
+            },
+            data_vars={
+                "lon": (["source"], [selected_source.lon_o.values]),
+                "lat": (["source"], [selected_source.lat_o.values]),
+                "U": (
+                    ["source", "time"],
+                    [wind_data_subset["u"].median(dim=["x", "y"]).values],
+                    {"units": "m s-1"},
+                ),
+                "V": (
+                    ["source", "time"],
+                    [wind_data_subset["v"].median(dim=["x", "y"]).values],
+                    {"units": "m s-1"},
+                ),
+                "speed": (
+                    ["source", "time"],
+                    [wind_data_subset["speed"].median(dim=["x", "y"]).values],
+                    {"units": "m s-1"},
+                ),
+                "speed_precision": (
+                    ["source", "time"],
+                    [wind_data_subset["speed"].std(dim=["x", "y"]).values],
+                    {"units": "m s-1"},
+                ),
+                "direction": (
+                    ["source", "time"],
+                    [
+                        self._circular_mean(
+                            wind_data_subset.direction,
+                            axes=[
+                                list(wind_data_subset.dims).index("y"),
+                                list(wind_data_subset.dims).index("x"),
+                            ],
+                        )
+                    ],
+                    {"units": "°"},
+                ),
+                "direction_precision": (
+                    ["source", "time"],
+                    [
+                        self._circular_std(
+                            wind_data_subset.direction,
+                            axes=[
+                                list(wind_data_subset.dims).index("y"),
+                                list(wind_data_subset.dims).index("x"),
+                            ],
+                        )
+                    ],
+                    {"units": "°"},
+                ),
+            },
+            attrs={
+                "radius around source": f"{radius} pixels",
+                "method": f"{method.replace('_', ' ')} vertically integrated wind speed",
+            },
+        )
+
+        if save:
+            wind_nc_path = os.path.join(case.store_path, "wind.nc")
+            wind_src.to_netcdf(wind_nc_path)
+
+        return wind_src
+
+    def _get_wind_vars(method: str):
+        if method in ["mean", "median"]:
+            return ["u", "v"]
+        elif method == "concentration_weighted":
+            return ["u", "v", "ch4"]
+        else:
+            raise NotImplementedError(f"Method {method} is not implemented.")
+
+    def _process_wind_data(self, wind_vars: list) -> xr.Dataset:
+        missing_vars = [
+            var
+            for var in wind_vars
+            if not os.path.exists(os.path.join(self.store_path, f"{var}.nc"))
+        ]
+
+        if missing_vars:
+            self.post.run_postprocessing(missing_vars)
+
+        wind_data = self.post.combine_nc_files(wind_vars, save=False)
+
+        return wind_data[wind_vars]
+
+    def _select_pixels_around_source(
+        wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
+    ) -> xr.Dataset:
+        source_x0 = selected_source.source_x0.values
+        source_y0 = selected_source.source_y0.values
+
+        x_res = wind_data.x.diff(dim="x").median()
+        y_res = wind_data.y.diff(dim="y").median()
+
+        wind_data_src = wind_data.where(
+            (wind_data.x > source_x0 - x_res / 2 - radius)
+            & (wind_data.x <= source_x0 + x_res / 2 + radius)
+            & (wind_data.y > source_y0 - y_res / 2 - radius)
+            & (wind_data.y <= source_y0 + y_res / 2 + radius),
+            drop=True,
+        )
+
+        return wind_data_src
+
+    def vertically_integrate_wind(
+        self, wind_data: xr.Dataset, method: str
+    ) -> xr.Dataset:
+        """Vertically integrate 3D wind fields.
+
+        Args:
+            wind_data (xr.Dataset):
+                3D wind dataset
+            method (str):
+                Method of how the wind should be vertically integrated.
+                "mean" "median", or "concentration_weighted"
+
+        Raises:
+            NotImplementedError: Raise an error if an invalid method is provided.
+
+        Returns:
+            xr.Dataset: Vertically integrated wind dataset.
+        """
+        if method in ["mean", "median"]:
+            return self.unweighted_mean_wind(wind_data, method)
+        elif method == "concentration_weighted":
+            return self.concentration_weighted_mean_wind(wind_data)
+        else:
+            # FIXME: implement other ways of vertical averaging
+            raise NotImplementedError
+
+    def unweighted_mean_wind(data, method):
+        if method == "mean":
+            return data.mean(dim="z")
+        elif method == "median":
+            return data.median(dim="z")
+        else:
+            raise NotImplementedError
+
+    def concentration_weighted_mean_wind(
+        self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
+    ) -> xr.Dataset:
+
+        wind_components = ["u", "v"]
+
+        # calculate weight profile
+        data = self.calculate_weight_profile(data, gas, mixing_ratio_threshold)
+
+        for wind_component in wind_components:
+            data[wind_component] = data[f"{gas}_weight"] * data[wind_component]
+
+        data = data.integrate(coord="z")
+
+        return data[wind_components]
+
+    def calculate_weight_profile(
+        self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
+    ):
+        """_summary_
+
+        Args:
+            data (_type_): _description_
+            gas (str, optional): _description_. Defaults to "ch4".
+            threshold (float, optional): in mol mol-1. Defaults to None.
+
+        Raises:
+            ValueError: _description_
+            ValueError: _description_
+
+        Returns:
+            _type_: _description_
+        """
+        if gas not in data.data_vars:
+            raise KeyError(
+                f"No variable named '{gas}'. Variables on the dataset include {data.data_vars}"
+            )
+
+        # get current unit of gas
+        units = data[gas].attrs.get("units", None)
+        quantity, _ = ucat._unit2quantity(units)
+
+        # convert gas mixing ratios to concentrations to make it pressure dependent
+        if quantity not in ["cm", "cM", "cn"]:
+            # add pressure which is needed to convert mass mixing ratios to concentraions
+            data = self.post.add_pressure(data)
+            # FIXME
+
+        # calculate threshold. Default is 1 ppb
+        mixing_ratio_threshold = (
+            1e-9 if mixing_ratio_threshold is None else mixing_ratio_threshold
+        )
+        threshold = ucat.convert_points(
+            mixing_ratio_threshold, "mol mol-1", units, molar_mass=gas.upper()
+        )
+
+        # filter out values with low gas concentration to avoid erroneous weights
+        data = data.where(data[gas].integrate(coord="z") > threshold)
+
+        # create weight profile
+        data[f"{gas}_weight"] = data[f"{gas}"] / data[f"{gas}"].integrate(coord="z")
+        data[f"{gas}_weight"].attrs["units"] = "-"
+        data[f"{gas}_weight"].attrs[
+            "long_name"
+        ] = f"normalised {gas} concentration profile"
+        data[f"{gas}_weight"].attrs["threshold"] = f"{mixing_ratio_threshold} mol mol-1"
+
+        return data
+
+    def _circular_mean(a, axes):
+        """Calculate circular mean, e.g. of wind direction"""
+        return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
+
+    def _circular_std(a, axes):
+        """Calculate circular standard deviation, e.g. of wind direction"""
+        return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
+
+
+##################### Functions to calculate a wind profile #####################
 def wind_profile(
     z: Union[int, float, list, np.ndarray],
     z0: Union[int, float],

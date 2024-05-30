@@ -120,12 +120,14 @@ class Visualisation:
 
     def plot_prognostic_variables(
         self,
-        data=None,
-        variables=["u", "v", "thl", "qt"],
-        n_lines=5,
-        colorful=True,
-        time_format="h",
+        data: xr.Dataset = None,
+        variables: list = ["u", "v", "thl", "qt"],
+        n_lines: int = 5,
+        colorful: bool = True,
+        time_format: str = "h",
     ):
+        variables = proc.vars_to_list(variables)
+
         # define factor for time format
         if time_format == "s":
             time_factor = 1
@@ -200,6 +202,8 @@ class Visualisation:
             lines = [Line2D([0], [0], color=c) for c in [color_init, color_sim]]
             labels = ["initial", "simulated"]
             ax[-1].legend(lines, labels, loc="upper right")
+
+        return fig, ax
 
     def plot_side_views(
         self,
@@ -514,7 +518,7 @@ def add_ime_text(
         f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}'
     )
 
-    text.append("\nWind:")
+    text.append("\nMean wind:")
     text.append(f"• Speed: {np.mean(result.wind_speed):.1f} m/s")
     text.append(
         f"• Direction: {scipy.stats.circmean(result.wind_direction, high=360):.0f}°"
@@ -535,3 +539,47 @@ def add_ime_text(
     )
 
     return "\n".join(text)
+
+
+def plot_gas_weight(data: xr.Dataset, gas: str = "ch4"):
+
+    if "time" in data.sizes:
+        raise ValueError("Select only one time step.")
+
+    fig, ax = plt.subplots(2, 1)
+
+    # First subplot for pcolormesh
+    cax = ax[0].pcolormesh(
+        data[gas].integrate(coord="z").where(data[f"{gas}_weight"].integrate(coord="z"))
+    )
+    ax[0].set_aspect("equal")
+    ax[0].set_xlabel("x [m]")
+    ax[0].set_ylabel("y [m]")
+
+    fig.colorbar(
+        cax,
+        ax=ax[0],
+        label=f"{gas.upper()} " f"[{data[{gas}].attrs.get('units', '-')}]",
+    )
+
+    # Calculate statistics
+    weight = f"{gas}_weight"
+    gas_median = data[weight].median(dim=["x", "y"])
+    gas_min = data[weight].min(dim=["x", "y"])
+    gas_max = data[weight].max(dim=["x", "y"])
+
+    # Plot weight profile with min-max range
+    ax[1].plot(gas_median, data.z, label="Mean")  # Plotting the mean
+    ax[1].fill_betweenx(
+        data.z, gas_min, gas_max, label="value range", color="gray", alpha=0.5
+    )
+
+    ax[1].set_xlabel("Weight [-]")
+    ax[1].set_ylabel("Height [m]")
+    ax[1].legend()
+
+    fig.suptitle(
+        f"Weight profile for {gas} with threshold {data[weight].attrs.get('threshold', '-')}"
+    )
+    plt.tight_layout()
+    plt.show()

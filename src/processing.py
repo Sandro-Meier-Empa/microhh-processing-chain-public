@@ -431,6 +431,7 @@ class PostProcessing:
             case (init.Case):
                 Case to post-process.
         """
+        self.case = case
         self.user = case.user
         self.case_name = case.case_name
         self.suffix = case.suffix
@@ -440,16 +441,94 @@ class PostProcessing:
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def _vars_to_list(self, vars):
+    def parse_slurm_output(self, slurm_source: str) -> pd.DataFrame:
+        """Parse the output of the 'slurm.out' script to get the job information.
 
-        if not isinstance(vars, list):
-            vars = [vars]
+        Args:
+            slurm_source (str) ['scratch', 'store']:
+                Specify the source from where the 'slurm.out' script should be read.
 
-        return vars
+        Raises:
+            ValueError: Raise error if 'slurm_source' is invalid.
+            FileNotFoundError: Raise error if the 'slurm.out' cannot be found.
+
+        Returns:
+            pd.DataFrame: Data frame containing the job information.
+        """
+        counter = 0
+        job_info = False
+        headers = []
+        values = []
+
+        if slurm_source == "scratch":
+            source_path = self.scratch_path
+        elif slurm_source == "store":
+            source_path = self.store_path
+        else:
+            raise ValueError(
+                f"Invalid source: '{slurm_source}'. Use 'scratch' or 'store'."
+            )
+
+        out_files = list(Path(source_path).glob("slurm-*.out*"))
+
+        if not out_files:
+            raise FileNotFoundError(f"No slurm output script found in {source_path}")
+
+        for out_file in out_files:
+            with open(out_file, "r") as f:
+                for line in f:
+                    # use the lines after "job information"
+                    if "Job information" in line:
+                        counter = 0
+                        job_info = True
+                        continue
+
+                    if counter == 1 and job_info:  # first line defines the header
+                        header = line
+                    elif (
+                        counter == 2 and job_info
+                    ):  # second line defines the length of the content
+                        separator = line
+                        sep_len = [len(i) for i in separator.split()]
+                    elif counter == 3 and job_info:  # third line defines the value
+                        value = line
+                    elif counter == 4 and job_info:  # reset for next job info
+                        job_info = False
+                        startIndex = 0
+
+                        # parse header and values
+                        for l in sep_len:
+                            headers.append(header[startIndex : startIndex + l].strip())
+                            values.append(value[startIndex : startIndex + l].strip())
+                            startIndex += l + 1
+                            df = pd.DataFrame([values], columns=headers)
+
+                    counter += 1
+
+        # Format columns
+        timedelta_cols = ["Elapsed", "Time limit"]
+        datetime_cols = ["Submit", "Eligible", "Start", "End"]
+        df[timedelta_cols] = df[timedelta_cols].apply(pd.to_timedelta)
+        df[datetime_cols] = df[datetime_cols].apply(pd.to_datetime)
+
+        # Extracting integer part and unit part from usage and memory
+        df[["Energy", "Energy unit"]] = df["Energy"].str.split(expand=True)
+        df["Energy"] = df["Energy"].astype(float)
+
+        try:  # only available for simulations on GPU
+            df["Execution time"] = df["Execution time"].apply(pd.to_timedelta)
+
+            df[["Usage", "Usage unit"]] = df["Usage"].str.split(expand=True)
+            df[["Max mem", "Max mem unit"]] = df["Max mem"].str.split(expand=True)
+            df[["Usage", "Max mem"]] = df[["Usage", "Max mem"]].astype(float)
+        except:
+            pass
+
+        return df
 
     def run_postprocessing(
         self,
-        vars,
+        vars: Union[str, list],
         overwrite: bool = False,
         precision: str = "double",
         start_time=None,
@@ -483,7 +562,7 @@ class PostProcessing:
 
     def create_3d_output(
         self,
-        vars,
+        vars: Union[str, list],
         overwrite: bool = False,
         precision: str = "double",
         start_time=None,
@@ -505,7 +584,7 @@ class PostProcessing:
             end_time (int, optional. Default: None):
                 End time in s of the data.
         """
-        vars = self._vars_to_list(vars)
+        vars = vars_to_list(vars)
 
         if start_time is None:
             start_time = self.ini_file["time"]["starttime"]
@@ -535,7 +614,86 @@ class PostProcessing:
             cwd=os.path.join("/users", self.user, "microhh", "python"),
         )
 
-    def _nc_assign_names_and_attributes(self, data):
+
+
+    def move_to_store(self, vars: Union[str, list], overwrite: bool):
+        """Move files used for running MicroHH to store for reproducibility.
+
+        Args:
+            overwrite (bool, optional):
+                Specify if existing files on 'store' should be overwritten.
+
+        Raises:
+            FileExistsError: Raise error if the folder
+            already exists and 'overwrite=False'.
+        """
+        vars = vars_to_list(vars)
+
+        # Handle target path
+        if not os.path.exists(self.store_path):
+            os.makedirs(self.store_path)
+        elif overwrite:
+            shutil.rmtree(self.store_path)
+            print(f"Overwriting {self.store_path}.")
+            os.makedirs(self.store_path)
+
+        # Copy files for reproducibility
+        file_patterns = [
+            "*" + self.case_name + ".ini",
+            "*" + self.case_name + "_input.nc",
+            "*" + self.case_name + ".out",
+            "*" + self.case_name + ".default.*.nc",
+            "slurm-*.out",
+            "bash_script.sbash",
+            "microhh",
+        ]
+        for pattern in file_patterns:
+            for file in glob.glob(os.path.join(self.scratch_path, pattern)):
+                dest_file = os.path.join(self.store_path, os.path.basename(file))
+                if not os.path.exists(dest_file) or overwrite:
+                    shutil.copy(file, self.store_path)
+                    print(f"Successfully copied '{file}' to '{self.store_path}'.")
+                else:
+                    print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
+
+        # Copy 3D .nc files of variables
+        for var in vars:
+            var_file = os.path.join(self.scratch_path, f"{var}.nc")
+            if os.path.exists(var_file):
+                dest_file = os.path.join(self.store_path, os.path.basename(var_file))
+                if not os.path.exists(dest_file) or overwrite:
+                    shutil.copy(var_file, self.store_path)
+                    print(f"Successfully copied '{var_file}' to '{self.store_path}'.")
+                else:
+                    print(
+                        f"'{var_file}' already exists in '{self.store_path}'. Skipping."
+                    )
+            else:
+                print(f"'{var_file}' does not exist.")
+
+    def open_3d_netCDF(self, variable: str) -> xr.Dataset:
+        """Open 3D output netCDF file of 'variable' from model output.
+
+        Args:
+            variable (str):
+                Variable name of dataset to open.
+
+        Returns:
+            xr.Dataset: 3D netCDF file from model output.
+        """
+
+        fname = f"{self.store_path}/{variable.lower()}.nc"
+        try:
+            data = xr.open_dataset(fname)
+        except ValueError:
+            data = xr.open_dataset(fname, decode_times=False)
+
+        data = self._nc_assign_names_and_attributes(data)
+        data = self._capitalise_variable_names(data)
+
+        return data
+
+    def _nc_assign_names_and_attributes(self, data: xr.Dataset) -> xr.Dataset:
         """Assign long_name and unit attributes to variables in a .nc file.
 
         Args:
@@ -563,6 +721,92 @@ class PostProcessing:
                 data[var].attrs.update({"long_name": long_name, "units": unit})
 
         return data
+
+    def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
+        """Capitalize variable names in an xr.Dataset if they match
+        keys in the gas_mass dictionary.
+
+        Args:
+            dataset (xr.Dataset): The xarray dataset to process.
+
+        Returns:
+            xr.Dataset: The dataset with variable names capitalized if they match
+            keys in the gas_mass dictionary.
+        """
+        for var_name in list(dataset.variables):
+            new_var_name = self._capitalise_gas_key(var_name)
+            if new_var_name != var_name:
+                dataset = dataset.rename({var_name: new_var_name})
+        return dataset
+
+    def _capitalise_gas_key(self, variable_name: str) -> str:
+        """Capitalise gases to make them consistent with 'ddeq'"""
+        for key in gas_mass.keys():
+            if key in variable_name:
+                return key.upper()
+        return variable_name
+
+    def handle_prognostic_variables(
+        self, vars: Union[str, list], overwrite: bool = False, save: bool = True
+    ) -> xr.Dataset:
+        """Combine .nc files of different variables to one file.
+
+        Args:
+            vars (Union[str, list]):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+            overwrite (bool. Default: False):
+                Indicate if an existing file should be overwritten.
+            save (bool. Default: True):
+                Indicate if the creates file should be saved.
+
+        Returns:
+            xr.Dataset: Dataset with combined variables.
+        """
+        output_filename = os.path.join(
+            self.store_path, f"{self.case_name}_output_vars.nc"
+        )
+
+        # Check if the output file already exists
+        if os.path.exists(output_filename) and not overwrite:
+            # If the file exists, open and return it
+            return xr.open_dataset(output_filename, decode_times=False)
+
+        # combine the prognostic variables into one dataset
+        combined_dataset = self.combine_prognostic_variables(None, vars)
+
+        # Save the combined dataset to a new NetCDF file
+        if save:
+            combined_dataset.to_netcdf(output_filename)
+
+        return combined_dataset
+
+    def combine_prognostic_variables(
+        self, data: xr.Dataset, vars: Union[str, list]
+    ) -> xr.Dataset:
+        vars = vars_to_list(vars)
+        datasets = [] if data is None else [data]
+
+        for var in vars:
+            nc_file_path = os.path.join(self.store_path, f"{var}.nc")
+
+            try:
+                dataset = xr.open_dataset(nc_file_path)
+            except ValueError:
+                dataset = xr.open_dataset(nc_file_path, decode_times=False)
+
+            # homogenise dimensions
+            dataset = self.interpolate_to_grid_midpoint(dataset)
+
+            datasets.append(dataset)
+
+        # Merge all datasets into one
+        combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
+
+        # Add attributes
+        combined_dataset = self._nc_assign_names_and_attributes(combined_dataset)
+
+        return combined_dataset
 
     def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset) -> xr.Dataset:
         """Interpolate variables at grid edges '_h' to the middle of the grid.
@@ -600,135 +844,6 @@ class PostProcessing:
 
         return None
 
-    def combine_nc_files(
-        self, vars: Union[str, list], overwrite: bool = False, save: bool = True
-    ) -> xr.Dataset:
-        """Combine .nc files of different variables to one file.
-
-        Args:
-            vars (Union[str, list]):
-                Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
-            overwrite (bool. Default: False):
-                Indicate if an existing file should be overwritten.
-            save (bool. Default: True):
-                Indicate if the creates file should be saved.
-
-        Returns:
-            xr.Dataset: Dataset with combined variables.
-        """
-        output_filename = os.path.join(
-            self.store_path, f"{self.case_name}_output_vars.nc"
-        )
-
-        # Check if the output file already exists
-        if os.path.exists(output_filename) and not overwrite:
-            # If the file exists, open and return it
-            return xr.open_dataset(output_filename, decode_times=False)
-
-        vars = self._vars_to_list(vars)
-        datasets = []
-
-        for var in vars:
-            nc_file_path = os.path.join(self.store_path, f"{var}.nc")
-
-            try:
-                dataset = xr.open_dataset(nc_file_path)
-            except ValueError:
-                dataset = xr.open_dataset(nc_file_path, decode_times=False)
-
-            # homogenise dimensions
-            dataset = self.interpolate_to_grid_midpoint(dataset)
-
-            datasets.append(dataset)
-
-        # Merge all datasets into one
-        combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
-
-        # Add attributes
-        combined_dataset = self._nc_assign_names_and_attributes(combined_dataset)
-
-        # Save the combined dataset to a new NetCDF file
-        if save:
-            combined_dataset.to_netcdf(output_filename)
-
-            for dataset in datasets:
-                dataset.close()
-
-        return combined_dataset
-
-    def open_3d_netCDF(self, variable: str) -> xr.Dataset:
-        """Open 3D output netCDF file of 'variable' from model output.
-
-        Args:
-            variable (str):
-                Variable name of dataset to open.
-
-        Returns:
-            xr.Dataset: 3D netCDF file from model output.
-        """
-
-        fname = f"{self.store_path}/{variable.lower()}.nc"
-        try:
-            data = xr.open_dataset(fname)
-        except ValueError:
-            data = xr.open_dataset(fname, decode_times=False)
-
-        data = self._nc_assign_names_and_attributes(data)
-        data = self._capitalise_variable_names(data)
-
-        return data
-
-    def _format_column_unit(self, to_unit: str) -> str:
-        """Format unit of columns to have a consistent notation, e.g.
-        m s-1, kg s-1 etc.
-
-        Args:
-            to_unit (str): Unit which should be formatted
-
-        Returns:
-            str: Formatted unit
-        """
-
-        if "/" in to_unit:
-            n, d = map(str.strip, to_unit.split("/"))
-            if d[-1].isdigit():
-                d = "-".join([d[:-1], d[-1]])
-
-            formatted_unit = " ".join([n, d])
-
-        else:
-            formatted_unit = to_unit
-
-        return formatted_unit
-
-    def _format_volume_unit(self, to_unit: str) -> str:
-        """Determine the corresponding volumetric unit if a target column unit is given.
-        Assumes that the vertical dimension is in units m.
-
-        Args:
-            to_unit (str): Target unit of the column.
-
-        Raises:
-            ValueError: Raise error if the unit could not be parsed.
-
-        Returns:
-            str: Formatted column unit
-        """
-
-        # vertical integration assumes units to be in m
-        if " " in to_unit:
-            n, d = to_unit.split()
-            if d == "m":
-                formatted_unit = n
-            if d == "m-2":
-                formatted_unit = " ".join([n, "m-3"])
-
-            return formatted_unit
-
-        else:
-            raise ValueError(f"{to_unit} is a unit not supported")
-
     def convert_to_columns(self, variable: str, to_unit: str) -> xr.Dataset:
         """Convert 3D MicroHH model output to vertically integrated columns.
         Assumes that the vertical dimension is in units m.
@@ -755,7 +870,7 @@ class PostProcessing:
                 data[variable],
                 data[variable].attrs.get("units", None),
                 new_var_unit,
-                molar_mass=variable.upper(),
+                molar_mass=variable,
             ),
         )
 
@@ -763,12 +878,63 @@ class PostProcessing:
         df_column = data.integrate(coord="z")
 
         # adjust units due to integration
-        df_column[variable].attrs["units"] = self._format_column_unit(to_unit)
+        df_column[variable].attrs["units"] = self._format_units(to_unit)
         df_column[variable].attrs[
             "description"
         ] = f"vertically integrated {variable} columns"
 
         return df_column
+
+    def _format_volume_unit(self, to_unit: str) -> str:
+        """Determine the corresponding volumetric unit if a target column unit is given.
+        Assumes that the vertical dimension is in units m.
+
+        Args:
+            to_unit (str): Target unit of the column.
+
+        Raises:
+            ValueError: Raise error if the unit could not be parsed.
+
+        Returns:
+            str: Formatted column unit
+        """
+
+        if " " in to_unit:
+            n, d = to_unit.split()
+        elif "/" in to_unit:
+            n, d = map(str.strip, to_unit.split("/"))
+            if d == "m":
+                formatted_unit = n
+            if d == "m-2":
+                formatted_unit = " ".join([n, "m-3"])
+
+            return formatted_unit
+
+        else:
+            raise ValueError(f"{to_unit} is a unit not supported")
+
+    def _format_units(self, to_unit: str) -> str:
+        """Format unit of columns to have a consistent notation, e.g.
+        m s-1, kg s-1 etc.
+
+        Args:
+            to_unit (str): Unit which should be formatted
+
+        Returns:
+            str: Formatted unit
+        """
+
+        if "/" in to_unit:
+            n, d = map(str.strip, to_unit.split("/"))
+            if d[-1].isdigit():
+                d = "-".join([d[:-1], d[-1]])
+
+            formatted_unit = " ".join([n, d])
+
+        else:
+            formatted_unit = to_unit
+
+        return formatted_unit
 
     def add_gaussian_noise(self, data: xr.Dataset, var: str, std: float) -> xr.Dataset:
         """
@@ -921,167 +1087,6 @@ class PostProcessing:
 
         return sources
 
-    def create_wind_dataset(
-        self, source: str, sources: xr.Dataset, radius: int, save: bool = True
-    ) -> xr.Dataset:
-        """Create a dataset containing the wind information around a source
-        which is used for estimating emissions in 'ddeq'.
-
-        Args:
-            source (str):
-                Source for which the wind dataset should be created.
-            sources (xr.Dataset):
-                Dataset with source information
-            radius (int):
-                Number of pixels around the source which should be considered
-                for calculating wind properties.
-            save (bool, optional. Default: True):
-                Specify if the dataset should be saved to store.
-
-        Raises:
-            e: Raise an error if the datasets of the wind components u and v
-            could not be found or processed.
-
-        Returns:
-            xr.Dataset: Dataset containg the wind information around a source.
-        """
-
-        vars = ["u", "v"]
-
-        wind_nc_path = os.path.join(self.store_path, "wind.nc")
-        if os.path.exists(wind_nc_path):
-            wind_src = xr.open_dataset(wind_nc_path)
-        else:
-            try:
-                self.run_postprocessing(vars)
-                wind_data = self.combine_nc_files(vars, save=False)
-            except Exception as e:
-                raise e
-
-            wind_data["speed"] = np.sqrt(wind_data.u**2 + wind_data.v**2)
-            wind_data["direction"] = ddeq.wind.calculate_wind_direction(
-                wind_data.u, wind_data.v
-            )
-
-            selected_source = sources.sel(source=source)
-            source_x0 = selected_source.source_x0.values
-            source_y0 = selected_source.source_y0.values
-
-            x_res = wind_data.x.diff(dim="x").median()
-            y_res = wind_data.y.diff(dim="y").median()
-
-            wind_data_subset = wind_data.where(
-                (wind_data.x > source_x0 - x_res / 2 - radius)
-                & (wind_data.x <= source_x0 + x_res / 2 + radius)
-                & (wind_data.y > source_y0 - y_res / 2 - radius)
-                & (wind_data.y <= source_y0 + y_res / 2 + radius),
-                drop=True,
-            )
-
-            wind_data_subset = self.vertically_integrate_wind(
-                wind_data_subset, method="mean"
-            )
-
-            wind_data_subset["u_median"] = wind_data_subset.u.median(dim=["x", "y"])
-            wind_data_subset["v_median"] = wind_data_subset.v.median(dim=["x", "y"])
-            wind_data_subset["speed_median"] = wind_data_subset.speed.median(
-                dim=["x", "y"]
-            )
-            wind_data_subset["speed_std"] = wind_data_subset.speed.std(dim=["x", "y"])
-            wind_data_subset["direction_mean"] = self._circular_mean(
-                wind_data_subset.direction,
-                axes=[
-                    list(wind_data_subset.dims).index("y"),
-                    list(wind_data_subset.dims).index("x"),
-                ],
-            )
-            wind_data_subset["direction_std"] = self._circular_std(
-                wind_data_subset.direction,
-                axes=[
-                    list(wind_data_subset.dims).index("y"),
-                    list(wind_data_subset.dims).index("x"),
-                ],
-            )
-
-            wind_src = xr.Dataset(
-                coords={
-                    "source": (["source"], np.array([source], dtype=object)),
-                    "time": (["time"], wind_data_subset.time.values),
-                },
-                data_vars={
-                    "lon": (["source"], [selected_source.lon_o.values]),
-                    "lat": (["source"], [selected_source.lat_o.values]),
-                    "U": (
-                        ["source", "time"],
-                        [wind_data_subset.u_median.values],
-                        {"units": "m s-1"},
-                    ),
-                    "V": (
-                        ["source", "time"],
-                        [wind_data_subset.v_median.values],
-                        {"units": "m s-1"},
-                    ),
-                    "speed": (
-                        ["source", "time"],
-                        [wind_data_subset.speed_median.values],
-                        {"units": "m s-1"},
-                    ),
-                    "speed_precision": (
-                        ["source", "time"],
-                        [wind_data_subset.speed_std.values],
-                        {"units": "m s-1"},
-                    ),
-                    "direction": (
-                        ["source", "time"],
-                        [wind_data_subset.direction_mean.values],
-                        {"units": "°"},
-                    ),
-                    "direction_precision": (
-                        ["source", "time"],
-                        [wind_data_subset.direction_std.values],
-                        {"units": "°"},
-                    ),
-                },
-                attrs=dict(radius=f"{radius} pixels around determined source pixel"),
-            )
-
-            if save:
-                wind_nc_path = os.path.join(self.store_path, "wind.nc")
-                wind_src.to_netcdf(wind_nc_path)
-
-        return wind_src
-
-    def _circular_mean(self, a, axes):
-        """Calculate circular mean, e.g. of wind direction"""
-        return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
-
-    def _circular_std(self, a, axes):
-        """Calculate circular standard deviation, e.g. of wind direction"""
-        return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
-
-    def vertically_integrate_wind(
-        self, wind_data: xr.Dataset, method: str
-    ) -> xr.Dataset:
-        """Vertically integrate 3D wind fields.
-
-        Args:
-            wind_data (xr.Dataset):
-                3D wind dataset
-            method (str):
-                Method of how the wind should be vertically integrated.
-
-        Raises:
-            NotImplementedError: Raise an error if an invalid method is provided.
-
-        Returns:
-            xr.Dataset: Vertically integrated wind dataset.
-        """
-        if method == "mean":
-            return wind_data.mean(dim="z")
-        else:
-            # FIXME: implement other ways of vertical averaging
-            raise NotImplementedError
-
     def convert_microhh_grid_to_coords(
         self,
         data: xr.Dataset,
@@ -1171,30 +1176,6 @@ class PostProcessing:
 
         return data
 
-    def _capitalise_gas_key(self, variable_name):
-        """Capitalise gases to make them consistent with 'ddeq'"""
-        for key in gas_mass.keys():
-            if key in variable_name:
-                return key.upper()
-        return variable_name
-
-    def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
-        """Capitalize variable names in an xr.Dataset if they match
-        keys in the gas_mass dictionary.
-
-        Args:
-            dataset (xr.Dataset): The xarray dataset to process.
-
-        Returns:
-            xr.Dataset: The dataset with variable names capitalized if they match
-            keys in the gas_mass dictionary.
-        """
-        for var_name in list(dataset.variables):
-            new_var_name = self._capitalise_gas_key(var_name)
-            if new_var_name != var_name:
-                dataset = dataset.rename({var_name: new_var_name})
-        return dataset
-
     def convert_microhh_timestep_to_date(
         self,
         data: xr.Dataset,
@@ -1248,26 +1229,31 @@ class PostProcessing:
 
         return data
 
-    def add_corners(self, d, var=("lon", "lat"), dims=("nrows", "nobs")):
+    def add_corners(
+        self,
+        data: xr.Dataset,
+        var: Tuple = ("lon", "lat"),
+        dims: Tuple = ("nrows", "nobs"),
+    ) -> xr.Dataset:
         """
         Add corner coordinates for 'var'.
         """
-        ic = np.arange(d[dims[1]].size + 1) - 0.5
-        jc = np.arange(d[dims[0]].size + 1) - 0.5
+        ic = np.arange(data[dims[1]].size + 1) - 0.5
+        jc = np.arange(data[dims[0]].size + 1) - 0.5
 
-        bbox = [-0.5, d[dims[0]].size, -0.5, d[dims[1]].size]
+        bbox = [-0.5, data[dims[0]].size, -0.5, data[dims[1]].size]
 
         for name in var:
             interpolator = scipy.interpolate.RectBivariateSpline(
-                d[dims[0]], d[dims[1]], d[name], kx=1, ky=1, bbox=bbox
+                data[dims[0]], data[dims[1]], data[name], kx=1, ky=1, bbox=bbox
             )
             xc = interpolator(jc, ic)
             xc = np.moveaxis([xc[:-1, :-1], xc[:-1, 1:], xc[1:, 1:], xc[1:, :-1]], 0, 2)
-            d[f"{name}c"] = xr.DataArray(xc, dims=dims + ("corners",))
+            data[f"{name}c"] = xr.DataArray(xc, dims=dims + ("corners",))
 
-        return d
+        return data
 
-    def model_emissions_to_kg_per_h(self) -> np.array:
+    def model_emissions_to_kg_per_h(self) -> np.ndarray:
         """
         Convert the prescribed emissions from the .ini file to kg/h
 
@@ -1292,178 +1278,102 @@ class PostProcessing:
 
         return strength
 
-    def move_to_store(self, vars, overwrite: bool):
-        """Move files used for running MicroHH to store for reproducibility.
+    def convert_to_concentration(self, data: xr.Dataset, gas: str="ch4", new_var_unit: str="kg m-3") -> xr.Dataset:
+        required_prognostic_vars = [gas, "thl"]
 
-        Args:
-            overwrite (bool, optional):
-                Specify if existing files on 'store' should be overwritten.
+        # check if all required prognostic variables are in the dataset
+        for var in required_prognostic_vars:
+            if var not in data.data_vars:
+                data = self.combine_prognostic_variables(data, var)
 
-        Raises:
-            FileExistsError: Raise error if the folder
-            already exists and 'overwrite=False'.
-        """
-        vars = self._vars_to_list(vars)
+        # check if pressure is in the dataset
+        if "phydro" not in data.data_vars:
+            data = self.add_statistics_variable(data, "phydro")
 
-        # Handle target path
-        if not os.path.exists(self.store_path):
-            os.makedirs(self.store_path)
-        elif overwrite:
-            shutil.rmtree(self.store_path)
-            print(f"Overwriting {self.store_path}.")
-            os.makedirs(self.store_path)
+        data[gas] = ucat.convert_points(
+            data[gas],
+            data[gas].attrs.get("units", None),
+            new_var_unit,
+            molar_mass=gas.upper(),
+            p=data.phydro,
+            T=data.thl,
+        )
+        data[gas].attrs["units"] = new_var_unit
 
-        # Copy files for reproducibility
-        file_patterns = [
-            "*" + self.case_name + ".ini",
-            "*" + self.case_name + "_input.nc",
-            "*" + self.case_name + ".out",
-            "*" + self.case_name + ".default.*.nc",
-            "slurm-*.out",
-            "bash_script.sbash",
-            "microhh",
-        ]
-        for pattern in file_patterns:
-            for file in glob.glob(os.path.join(self.scratch_path, pattern)):
-                dest_file = os.path.join(self.store_path, os.path.basename(file))
-                if not os.path.exists(dest_file) or overwrite:
-                    shutil.copy(file, self.store_path)
-                    print(f"Successfully copied '{file}' to '{self.store_path}'.")
-                else:
-                    print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
+        return data
 
-        # Copy 3D .nc files of variables
-        for var in vars:
-            var_file = os.path.join(self.scratch_path, f"{var}.nc")
-            if os.path.exists(var_file):
-                dest_file = os.path.join(self.store_path, os.path.basename(var_file))
-                if not os.path.exists(dest_file) or overwrite:
-                    shutil.copy(var_file, self.store_path)
-                    print(f"Successfully copied '{var_file}' to '{self.store_path}'.")
-                else:
-                    print(
-                        f"'{var_file}' already exists in '{self.store_path}'. Skipping."
-                    )
-            else:
-                print(f"'{var_file}' does not exist.")
+    def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
+        # read in statistics file
+        stats = init.read_statistics(self.case)
 
-    def parse_slurm_output(self, slurm_source: str) -> pd.DataFrame:
-        """Parse the output of the 'slurm.out' script to get the job information.
+        # check if variable is in statistics file
+        if variable not in stats.data_vars:
+            raise KeyError(f"No variable named '{variable}'.")
 
-        Args:
-            slurm_source (str) ['scratch', 'store']:
-                Specify the source from where the 'slurm.out' script should be read.
+        # check if target file has the necessary dimensions:
+        for dim in stats.sizes:
+            if dim not in data.dims or dim not in data.coords:
+                data = data.assign_coords({dim: stats[dim]})
 
-        Raises:
-            ValueError: Raise error if 'slurm_source' is invalid.
-            FileNotFoundError: Raise error if the 'slurm.out' cannot be found.
-
-        Returns:
-            pd.DataFrame: Data frame containing the job information.
-        """
-        counter = 0
-        job_info = False
-        headers = []
-        values = []
-
-        if slurm_source == "scratch":
-            source_path = self.scratch_path
-        elif slurm_source == "store":
-            source_path = self.store_path
-        else:
-            raise ValueError(
-                f"Invalid source: '{slurm_source}'. Use 'scratch' or 'store'."
+        if "time" in stats[variable].dims and "z" in stats[variable].dims:
+            variable_values = np.tile(
+                stats[variable].values[:, :, np.newaxis, np.newaxis],
+                (1, 1, data.y.size, data.x.size),
+            )
+            data[variable] = (
+                ("time", "z", "y", "x"),
+                variable_values,
+                stats[variable].attrs,
+            )
+        if "time" in stats[variable].dims and "zh" in stats[variable].dims:
+            variable_values = np.tile(
+                stats[variable].values[:, :, np.newaxis, np.newaxis],
+                (1, 1, data.y.size, data.x.size),
+            )
+            data[variable] = (
+                ("time", "zh", "y", "x"),
+                variable_values,
+                stats[variable].attrs,
             )
 
-        out_files = list(Path(source_path).glob("slurm-*.out*"))
+        return data
 
-        if not out_files:
-            raise FileNotFoundError(f"No slurm output script found in {source_path}")
+    def calculate_tke(self, data: xr.Dataset) -> xr.Dataset:
+        wind_components = ["u", "v", "w"]
 
-        for out_file in out_files:
-            with open(out_file, "r") as f:
-                for line in f:
-                    # use the lines after "job information"
-                    if "Job information" in line:
-                        counter = 0
-                        job_info = True
-                        continue
+        for var in wind_components:
+            if var not in data.data_vars:
+                data = self.combine_prognostic_variables(data, var)
 
-                    if counter == 1 and job_info:  # first line defines the header
-                        header = line
-                    elif (
-                        counter == 2 and job_info
-                    ):  # second line defines the length of the content
-                        separator = line
-                        sep_len = [len(i) for i in separator.split()]
-                    elif counter == 3 and job_info:  # third line defines the value
-                        value = line
-                    elif counter == 4 and job_info:  # reset for next job info
-                        job_info = False
-                        startIndex = 0
+        # compute temporal deviation for each wind component
+        for wind_component in wind_components:
+            data[f"{wind_component}_std"] = data[wind_component] - data[
+                wind_component
+            ].mean(dim="time")
+            data[f"{wind_component}_std"].attrs["units"] = data[wind_component].attrs[
+                "units"
+            ]
+            data[f"{wind_component}_std"].attrs[
+                "description"
+            ] = f"deviation of {wind_component} wind speed from mean"
 
-                        # parse header and values
-                        for l in sep_len:
-                            headers.append(header[startIndex : startIndex + l].strip())
-                            values.append(value[startIndex : startIndex + l].strip())
-                            startIndex += l + 1
-                            df = pd.DataFrame([values], columns=headers)
+        # compute TKE
+        data["TKE"] = 0.5 * (
+            data["u_std"] ** 2 + data["v_std"] ** 2 + data["w_std"] ** 2
+        ).mean(dim="time")
+        data[f"{wind_component}_std"].attrs["units"] = "m2 s-2"
+        data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
 
-                    counter += 1
-
-        # Format columns
-        timedelta_cols = ["Elapsed", "Time limit"]
-        datetime_cols = ["Submit", "Eligible", "Start", "End"]
-        df[timedelta_cols] = df[timedelta_cols].apply(pd.to_timedelta)
-        df[datetime_cols] = df[datetime_cols].apply(pd.to_datetime)
-
-        # Extracting integer part and unit part from usage and memory
-        df[["Energy", "Energy unit"]] = df["Energy"].str.split(expand=True)
-        df["Energy"] = df["Energy"].astype(float)
-
-        try:  # only available for simulations on GPU
-            df["Execution time"] = df["Execution time"].apply(pd.to_timedelta)
-
-            df[["Usage", "Usage unit"]] = df["Usage"].str.split(expand=True)
-            df[["Max mem", "Max mem unit"]] = df["Max mem"].str.split(expand=True)
-            df[["Usage", "Max mem"]] = df[["Usage", "Max mem"]].astype(float)
-        except:
-            pass
-
-        return df
+        return data
 
 
 ############# other functions #############
+def vars_to_list(self, var: str) -> list:
 
+    if not isinstance(var, list):
+        var = [var]
 
-def calculate_tke(self, data=None):
-    if data is None:
-        data = self.combine_nc_files(["u", "v", "w", "thl", "ch4"])
-
-    if not any(var in data.data_vars for var in data.data_vars):
-        raise ValueError("Data does not contain all wind components.")
-
-    # compute temporal deviation for each wind component
-    for wind_component in ["u", "v", "w"]:
-        data[f"{wind_component}_std"] = data[wind_component] - data[
-            wind_component
-        ].mean(dim="time")
-        data[f"{wind_component}_std"].attrs["units"] = data[wind_component].attrs[
-            "units"
-        ]
-        data[f"{wind_component}_std"].attrs[
-            "description"
-        ] = f"deviation of {wind_component} wind speed from mean"
-
-    # compute TKE
-    data["TKE"] = 0.5 * (
-        data["u_std"] ** 2 + data["v_std"] ** 2 + data["w_std"] ** 2
-    ).mean(dim="time")
-    data[f"{wind_component}_std"].attrs["units"] = "m2 s-2"
-    data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
-
-    return data
-
+    return var
 
 def jobs_in_queue(
     omit: list = [
@@ -1527,7 +1437,6 @@ def jobs_in_queue(
     headers = data[0].split("|")
     rows = [x for x in data[1:] if x]
 
-    # Create the DataFrame
     df = pd.DataFrame([row.split("|") for row in rows], columns=headers)
 
     # remove omitted columns
