@@ -275,50 +275,6 @@ class Initialisation:
             else:
                 print(f"{py_script_path} not found.")
 
-    def interpolate_to_model_profile(
-        self,
-        grid: ls2d.grid,
-        variable_profile: Union[list, np.array] = None,
-        input_profile: Union[list, np.array] = None,
-    ):
-        """Interpolate a given vertical profile to the height levels of
-        the MicroHH model.
-
-        Args:
-            grid: TODO
-            variable_profile (Union[list, np.array], optional. Default: None):
-                Value of the variable at these heights. If not specified,
-                the variable is set to 0.
-            input_profile (Union[list, np.array], optional. Default: None):
-                Original height levels of the data.
-
-        Returns:
-            np.array: Values interpolated to the height levels of
-            the MicroHH model.
-        """
-        self.model_profile = grid.z
-
-        if variable_profile is not None:
-            # Convert variable_profile to a NumPy array if it's a list
-            if isinstance(variable_profile, list):
-                variable_profile = np.array(variable_profile)
-
-            # Convert input_profile to a NumPy array if it's a list
-            if isinstance(input_profile, list):
-                input_profile = np.array(input_profile)
-
-            # Handle the case where variable_profile is a single value
-            if np.isscalar(variable_profile):
-                model_var_profile = np.full(len(self.model_profile), variable_profile)
-            else:
-                model_var_profile = np.interp(
-                    self.model_profile, input_profile, variable_profile
-                )
-        else:
-            model_var_profile = np.zeros(len(self.model_profile))
-
-        return model_var_profile
-
     def modify_ini(self, settings: dict, overwrite: bool = True):
         """Modify the .ini file of a case on scratch.
 
@@ -337,6 +293,50 @@ class Initialisation:
                     self.ini_file.set_value(group=group, variable=variable, value=value)
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
+
+
+def interpolate_to_model_profile(
+    grid: ls2d.grid,
+    variable_profile: Union[list, np.array] = None,
+    input_profile: Union[list, np.array] = None,
+):
+    """Interpolate a given vertical profile to the height levels of
+    the MicroHH model.
+
+    Args:
+        grid: TODO
+        variable_profile (Union[list, np.array], optional. Default: None):
+            Value of the variable at these heights. If not specified,
+            the variable is set to 0.
+        input_profile (Union[list, np.array], optional. Default: None):
+            Original height levels of the data.
+
+    Returns:
+        np.array: Values interpolated to the height levels of
+        the MicroHH model.
+    """
+    model_profile = grid.z
+
+    if variable_profile is not None:
+        # Convert variable_profile to a NumPy array if it's a list
+        if isinstance(variable_profile, list):
+            variable_profile = np.array(variable_profile)
+
+        # Convert input_profile to a NumPy array if it's a list
+        if isinstance(input_profile, list):
+            input_profile = np.array(input_profile)
+
+        # Handle the case where variable_profile is a single value
+        if np.isscalar(variable_profile):
+            model_var_profile = np.full(len(model_profile), variable_profile)
+        else:
+            model_var_profile = np.interp(
+                model_profile, input_profile, variable_profile
+            )
+    else:
+        model_var_profile = np.zeros(len(model_profile))
+
+    return model_var_profile
 
 
 def read_initial_cond(case: Case) -> xr.Dataset:

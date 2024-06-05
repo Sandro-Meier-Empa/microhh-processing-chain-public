@@ -129,10 +129,28 @@ def estimate_emissions(
         np.mean(data.pixel_area)
     )
     results = ddeq.ime.estimate_emissions(
-        data, wind, sources, curves, L_max=L_max, gas="CH4", min_pixel_number=1
+        data,
+        wind,
+        sources,
+        curves,
+        L_max=L_max,
+        gas="CH4",
+        min_pixel_number=1,
+        allowed_upstream_detected=10,
     )
 
     return data, curves, results
+
+
+def compute_effective_wind_speed(
+    data: xr.Dataset, true_emissions: Union[int, float]
+) -> xr.Dataset:
+    data["effective_wind_speed"] = (
+        true_emissions * data.L_max
+    ) / data.integrated_CH4_mass
+    data["effective_wind_speed"].attrs["units"] = "m s-1"
+
+    return data
 
 
 def radial_ime(

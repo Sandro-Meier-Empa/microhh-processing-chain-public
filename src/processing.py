@@ -261,6 +261,7 @@ class PreProcessing:
         self._check_grid_match()
         self._check_nodes_match()
         self._check_source_position()
+        self._check_source_sigma()
         self._check_buffer_height()
 
     def _check_ini_content(self):
@@ -313,6 +314,12 @@ class PreProcessing:
                         f"{coord}-positioning conflicts with the domain size."
                     )
 
+    def _check_source_sigma(self):
+        if "source" in self.ini_file.groups:
+            for coord in ["x", "y", "z"]:
+                if self.ini_file["source"][f"sigma_{coord}"] == 0:
+                    raise ValueError(f"'sigma_{coord}' cannot be 0.")
+
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
         if "buffer" in self.ini_file.groups:
@@ -336,6 +343,7 @@ class PreProcessing:
 
     def create_bash_script(self):
         """Create bash script to run a simulation.
+        For more info, see https://slurm.schedmd.com/sbatch.html
 
         Args:
             start_jobs (bool, optional. Default: False):
@@ -419,7 +427,7 @@ class PreProcessing:
         progress_percentage = current_timestep / max_timestep * 100
 
         print(
-            f"Simulation progress: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
+            f"Simulation progress of {self.case_path}: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
         )
 
 
@@ -613,8 +621,6 @@ class PostProcessing:
             shell=True,
             cwd=os.path.join("/users", self.user, "microhh", "python"),
         )
-
-
 
     def move_to_store(self, vars: Union[str, list], overwrite: bool):
         """Move files used for running MicroHH to store for reproducibility.
@@ -844,7 +850,9 @@ class PostProcessing:
 
         return None
 
-    def convert_to_columns(self, variable: str, to_unit: str) -> xr.Dataset:
+    def convert_to_columns(
+        self, variable: str, to_unit: str, default_p_and_t: bool = True
+    ) -> xr.Dataset:
         """Convert 3D MicroHH model output to vertically integrated columns.
         Assumes that the vertical dimension is in units m.
 
@@ -864,15 +872,19 @@ class PostProcessing:
 
         # convert to correct volumentric unit first.
         # default MicroHH output is mol mol-1
-        data[variable] = (
-            data[variable].dims,
-            ucat.convert_points(
-                data[variable],
-                data[variable].attrs.get("units", None),
-                new_var_unit,
-                molar_mass=variable,
-            ),
-        )
+        # use default pressure and temperature for computational efficiency
+        if default_p_and_t:
+            data[variable] = (
+                data[variable].dims,
+                ucat.convert_points(
+                    data[variable],
+                    data[variable].attrs.get("units", None),
+                    new_var_unit,
+                    molar_mass=variable,
+                ),
+            )
+        else:
+            data = self.convert_to_concentration(data, variable, new_var_unit)
 
         # integrate vertically
         df_column = data.integrate(coord="z")
@@ -900,18 +912,20 @@ class PostProcessing:
         """
 
         if " " in to_unit:
-            n, d = to_unit.split()
+            n, d = map(str.strip, to_unit.split())
         elif "/" in to_unit:
             n, d = map(str.strip, to_unit.split("/"))
-            if d == "m":
-                formatted_unit = n
-            if d == "m-2":
-                formatted_unit = " ".join([n, "m-3"])
-
-            return formatted_unit
-
         else:
             raise ValueError(f"{to_unit} is a unit not supported")
+
+        if d == "m":
+            formatted_unit = n
+        elif d == "m-2":
+            formatted_unit = " ".join([n, "m-3"])
+        else:
+            raise ValueError(f"{to_unit} is a unit not supported")
+
+        return formatted_unit
 
     def _format_units(self, to_unit: str) -> str:
         """Format unit of columns to have a consistent notation, e.g.
@@ -1065,6 +1079,10 @@ class PostProcessing:
                 ["source"],
                 np.array(to_list(self.ini_file["source"]["source_y0"]), dtype=float),
             ),
+            "source_z0": (
+                ["source"],
+                np.array(to_list(self.ini_file["source"]["source_z0"]), dtype=float),
+            ),
             "type": (["source"], np.full(nr_sources, "power plant", dtype=object)),
             "label": (["source"], np.array(to_list(source_labels), dtype=object)),
             "radius": (["source"], np.array(to_list(source_radius), dtype=float)),
@@ -1079,7 +1097,7 @@ class PostProcessing:
         sources.radius.attrs["units"] = "km"
         sources.strength.attrs["units"] = "kg h-1"
 
-        for dim in ["x", "y"]:
+        for dim in ["x", "y", "z"]:
             sources[f"source_{dim}0"].attrs["units"] = "m"
             sources[f"source_{dim}0"].attrs[
                 "description"
@@ -1278,18 +1296,25 @@ class PostProcessing:
 
         return strength
 
-    def convert_to_concentration(self, data: xr.Dataset, gas: str="ch4", new_var_unit: str="kg m-3") -> xr.Dataset:
+    def convert_to_concentration(
+        self, data: xr.Dataset, gas: str = "ch4", new_var_unit: str = "kg m-3"
+    ) -> xr.Dataset:
         required_prognostic_vars = [gas, "thl"]
 
         # check if all required prognostic variables are in the dataset
         for var in required_prognostic_vars:
             if var not in data.data_vars:
+                print(f"Adding '{var}' to the dataset.")
                 data = self.combine_prognostic_variables(data, var)
 
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
+            print(f"Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
+        print(
+            f"Converting {gas} mixing ratios to concentrations. This might take a while."
+        )
         data[gas] = ucat.convert_points(
             data[gas],
             data[gas].attrs.get("units", None),
@@ -1368,12 +1393,13 @@ class PostProcessing:
 
 
 ############# other functions #############
-def vars_to_list(self, var: str) -> list:
+def vars_to_list(var: str) -> list:
 
     if not isinstance(var, list):
         var = [var]
 
     return var
+
 
 def jobs_in_queue(
     omit: list = [

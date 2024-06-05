@@ -142,7 +142,9 @@ class Visualisation:
         # read in simulated data
         if data is None:
             post_processing = proc.PostProcessing(self.case)
-            data = post_processing.combine_nc_files(["u", "v", "w", "thl", "ch4"])
+            data = post_processing.handle_prognostic_variables(
+                ["u", "v", "w", "thl", "ch4"]
+            )
 
         # read in initial conditions
         data_initial = init.read_initial_cond(self.case)
@@ -541,25 +543,55 @@ def add_ime_text(
     return "\n".join(text)
 
 
-def plot_gas_weight(data: xr.Dataset, gas: str = "ch4"):
+def plot_gas_weight(
+    data: xr.Dataset, gas: str = "ch4", fig_width: Union[int, float] = 15
+):
 
     if "time" in data.sizes:
         raise ValueError("Select only one time step.")
 
-    fig, ax = plt.subplots(2, 1)
+    if f"{gas}_weight" not in data.data_vars:
+        raise KeyError(
+            f"'{gas}_weight' is not available in dataset. Use 'calculate_weight_profile' from module 'wind' first."
+        )
+
+    x_max = data["x"].max().values
+    y_max = data["y"].max().values
+    aspect_ratio = int(x_max / y_max) + 1
+
+    fig_height = fig_width / aspect_ratio
+
+    fig, ax = plt.subplots(
+        nrows=1,
+        ncols=2,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={
+            "width_ratios": [4, 1],
+        },
+    )
 
     # First subplot for pcolormesh
     cax = ax[0].pcolormesh(
-        data[gas].integrate(coord="z").where(data[f"{gas}_weight"].integrate(coord="z"))
+        data.x,
+        data.y,
+        data[gas]
+        .integrate(coord="z")
+        .where(data[f"{gas}_weight"].integrate(coord="z")),
     )
     ax[0].set_aspect("equal")
     ax[0].set_xlabel("x [m]")
     ax[0].set_ylabel("y [m]")
+    weight = f"{gas}_weight"
+    ax[0].legend(
+        [],
+        [],
+        title=f"{gas.upper()} column > {data[weight].attrs.get('threshold', '-')}",
+    )
 
     fig.colorbar(
         cax,
         ax=ax[0],
-        label=f"{gas.upper()} " f"[{data[{gas}].attrs.get('units', '-')}]",
+        label=f"{gas.upper()} [{data[gas].attrs.get('units', '-')}]",
     )
 
     # Calculate statistics
@@ -569,7 +601,7 @@ def plot_gas_weight(data: xr.Dataset, gas: str = "ch4"):
     gas_max = data[weight].max(dim=["x", "y"])
 
     # Plot weight profile with min-max range
-    ax[1].plot(gas_median, data.z, label="Mean")  # Plotting the mean
+    ax[1].plot(gas_median, data.z, label="mean")  # Plotting the mean
     ax[1].fill_betweenx(
         data.z, gas_min, gas_max, label="value range", color="gray", alpha=0.5
     )
@@ -578,8 +610,5 @@ def plot_gas_weight(data: xr.Dataset, gas: str = "ch4"):
     ax[1].set_ylabel("Height [m]")
     ax[1].legend()
 
-    fig.suptitle(
-        f"Weight profile for {gas} with threshold {data[weight].attrs.get('threshold', '-')}"
-    )
     plt.tight_layout()
     plt.show()

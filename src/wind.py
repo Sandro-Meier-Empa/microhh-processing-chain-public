@@ -24,16 +24,17 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        self.post = proc.PostProcessing(self.case)
+        self.post = proc.PostProcessing(case)
         self.store_path = case.store_path
 
     def create_wind_dataset(
         self,
-        case,
         source: str,
         sources: xr.Dataset,
         radius: int,
         method: str,
+        gas: str = None,
+        height: Union[int, float] = None,
         save: bool = True,
     ) -> xr.Dataset:
         """Create a dataset containing the wind information around a source
@@ -47,9 +48,11 @@ class WindProcessing:
             radius (int):
                 Number of pixels around the source which should be considered
                 for calculating wind properties.
+            gas (str):
+                Gas to be used for the vertical weighting of wind speed fields.
             method (str):
                 Method of how the wind should be vertically integrated.
-                "mean" "median", or "concentration_weighted"
+                "mean" "median", "height" or "concentration_weighted"
             save (bool, optional. Default: True):
                 Specify if the dataset should be saved to store.
 
@@ -68,13 +71,15 @@ class WindProcessing:
             print("Reading wind from store.")
             return xr.open_dataset(wind_nc_path)
 
-        wind_data = self._process_wind_data(wind_vars, case=case)
+        wind_data = self._process_wind_data(wind_vars)
 
         selected_source = sources.sel(source=source)
         wind_data_subset = self._select_pixels_around_source(
             wind_data, selected_source, radius
         )
-        wind_data_subset = self.vertically_integrate_wind(wind_data_subset, method)
+        wind_data_subset = self.vertically_integrate_wind(
+            wind_data_subset, method, gas, height
+        )
 
         # compute wind speed and direction
         wind_data_subset["speed"] = np.sqrt(
@@ -83,6 +88,13 @@ class WindProcessing:
         wind_data_subset["direction"] = ddeq.wind.calculate_wind_direction(
             wind_data_subset.u, wind_data_subset.v
         )
+
+        method_description = {
+            "mean": "vertical mean of wind speed",
+            "median": "vertical median of wind speed",
+            "height": f"{height} m wind speed",
+            "concentration_weighted": f"{gas} concentration weighted wind speed",
+        }
 
         # combine in new dataset
         wind_src = xr.Dataset(
@@ -142,18 +154,18 @@ class WindProcessing:
             },
             attrs={
                 "radius around source": f"{radius} pixels",
-                "method": f"{method.replace('_', ' ')} vertically integrated wind speed",
+                "method": method_description[method],
             },
         )
 
         if save:
-            wind_nc_path = os.path.join(case.store_path, "wind.nc")
+            wind_nc_path = os.path.join(self.store_path, "wind.nc")
             wind_src.to_netcdf(wind_nc_path)
 
         return wind_src
 
-    def _get_wind_vars(method: str):
-        if method in ["mean", "median"]:
+    def _get_wind_vars(self, method: str):
+        if method in ["mean", "median", "height"]:
             return ["u", "v"]
         elif method == "concentration_weighted":
             return ["u", "v", "ch4"]
@@ -170,12 +182,12 @@ class WindProcessing:
         if missing_vars:
             self.post.run_postprocessing(missing_vars)
 
-        wind_data = self.post.combine_nc_files(wind_vars, save=False)
+        wind_data = self.post.handle_prognostic_variables(wind_vars, save=False)
 
         return wind_data[wind_vars]
 
     def _select_pixels_around_source(
-        wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
+        self, wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
     ) -> xr.Dataset:
         source_x0 = selected_source.source_x0.values
         source_y0 = selected_source.source_y0.values
@@ -194,7 +206,11 @@ class WindProcessing:
         return wind_data_src
 
     def vertically_integrate_wind(
-        self, wind_data: xr.Dataset, method: str
+        self,
+        wind_data: xr.Dataset,
+        method: str,
+        gas: str = None,
+        height: Union[int, float] = None,
     ) -> xr.Dataset:
         """Vertically integrate 3D wind fields.
 
@@ -203,7 +219,7 @@ class WindProcessing:
                 3D wind dataset
             method (str):
                 Method of how the wind should be vertically integrated.
-                "mean" "median", or "concentration_weighted"
+                "mean" "median", "height" or "concentration_weighted"
 
         Raises:
             NotImplementedError: Raise an error if an invalid method is provided.
@@ -213,19 +229,39 @@ class WindProcessing:
         """
         if method in ["mean", "median"]:
             return self.unweighted_mean_wind(wind_data, method)
+        elif method == "height":
+            return self.wind_at_height(wind_data, height)
         elif method == "concentration_weighted":
-            return self.concentration_weighted_mean_wind(wind_data)
+            return self.concentration_weighted_mean_wind(wind_data, gas)
         else:
-            # FIXME: implement other ways of vertical averaging
             raise NotImplementedError
 
-    def unweighted_mean_wind(data, method):
+    def unweighted_mean_wind(self, data, method):
         if method == "mean":
             return data.mean(dim="z")
         elif method == "median":
             return data.median(dim="z")
         else:
             raise NotImplementedError
+
+    def wind_at_height(
+        self,
+        data: xr.Dataset,
+        height: Union[int, float],
+    ):
+        if height is None:
+            raise ValueError("Height must be an integer or float, not 'None'.")
+
+        # calculate the mean vertical resolution
+        z_resolution = data.z.diff("z").mean().item()
+
+        # determine the lower and upper bounds
+        lower_bound = height - z_resolution / 2
+        upper_bound = height + z_resolution / 2
+
+        data_subset = data.sel(z=slice(lower_bound, upper_bound))
+
+        return data_subset.mean(dim="z")
 
     def concentration_weighted_mean_wind(
         self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
@@ -262,7 +298,7 @@ class WindProcessing:
         """
         if gas not in data.data_vars:
             raise KeyError(
-                f"No variable named '{gas}'. Variables on the dataset include {data.data_vars}"
+                f"No variable named '{gas}'. Variables on the dataset include {list(data.data_vars)}"
             )
 
         # get current unit of gas
@@ -272,8 +308,8 @@ class WindProcessing:
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
             # add pressure which is needed to convert mass mixing ratios to concentraions
-            data = self.post.add_pressure(data)
-            # FIXME
+            data = self.post.add_statistics_variable(data, "phydro")
+            data = self.post.convert_to_concentration(data, gas, new_var_unit="kg m-3")
 
         # calculate threshold. Default is 1 ppb
         mixing_ratio_threshold = (
@@ -296,17 +332,67 @@ class WindProcessing:
 
         return data
 
-    def _circular_mean(a, axes):
+    def _circular_mean(self, a, axes):
         """Calculate circular mean, e.g. of wind direction"""
         return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
 
-    def _circular_std(a, axes):
+    def _circular_std(self, a, axes):
         """Calculate circular standard deviation, e.g. of wind direction"""
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
 
 ##################### Functions to calculate a wind profile #####################
-def wind_profile(
+def wind_profile_from_given_wind(
+    grid,
+    wind_speed,
+    height,
+    surface_roughness,
+    thl,
+    qt,
+    sensible_heat_flux,
+    threshold=None,
+):
+
+    u_star = compute_u_star(
+        wind_speed, height, surface_roughness, thl, qt, H=sensible_heat_flux
+    )
+
+    wind_profile = get_wind_profile(
+        z=grid.z,
+        z0=surface_roughness,
+        u_star=u_star,
+        t=thl,
+        q=qt,
+        H=sensible_heat_flux,
+    )
+
+    # check if wind speed at height deviates too much from given value
+    z_resolution = np.mean(np.diff(grid.z))
+    lower_bound = height - z_resolution / 2
+    upper_bound = height + z_resolution / 2
+
+    # Ucreate a mask based on whether grid.z is within the bounds
+    mask = np.where(
+        (grid.z >= lower_bound) & (grid.z <= upper_bound),
+        1,
+        0,
+    ).astype(bool)
+
+    actual_wind_speed = np.mean(wind_profile[mask])
+
+    if np.abs(wind_speed - actual_wind_speed) > threshold:
+        print(
+            f"Wind speed at {height} m ({actual_wind_speed:.2f} m/s) deviates too much from prescribed wind speed ({wind_speed} m/s).\n"
+            "Returning vertically homogenous wind profile."
+        )
+        wind_profile = init.interpolate_to_model_profile(
+            grid=grid, variable_profile=wind_speed
+        )
+
+    return wind_profile
+
+
+def get_wind_profile(
     z: Union[int, float, list, np.ndarray],
     z0: Union[int, float],
     u_star: Union[int, float],
@@ -382,6 +468,8 @@ def wind_profile(
     uz = (u_star / kappa) * (
         np.log((z - displacement_height) / z0) - stability_correction
     )
+
+    uz = replace_by_majority_sign(uz)
 
     return uz
 
@@ -532,7 +620,7 @@ def solve_wind_profile(
     Returns:
     np.ndarray: Difference between calculated and measured wind speed.
     """
-    return wind_profile(z, z0, u_star, t, q, H, H_turb) - wind_speed
+    return get_wind_profile(z, z0, u_star, t, q, H, H_turb) - wind_speed
 
 
 def compute_u_star(
@@ -592,3 +680,23 @@ def compute_u_star_stable(
     u_star = (wind_speed * kappa) / np.log(z / z0)
 
     return u_star
+
+
+def replace_by_majority_sign(arr):
+    # Determine the signs of each element (-1 for negative, 1 for positive, 0 for zero)
+    signs = np.sign(arr).astype(int)
+
+    # Count the occurrences of each sign
+    counts = np.bincount(signs + 1)  # +1 to shift range from [-1, 0, 1] to [0, 1, 2]
+
+    # Determine the majority sign
+    majority_sign_index = np.argmax(counts)  # 0 -> -1, 1 -> 0, 2 -> 1
+    majority_sign = majority_sign_index - 1  # shift back to original range
+
+    # Create a mask for values with the majority sign
+    majority_mask = signs == majority_sign
+
+    # Replace values with different sign than the majority with 0
+    arr[~majority_mask] = 0
+
+    return arr
