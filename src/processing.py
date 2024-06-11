@@ -27,6 +27,7 @@ sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 
 import microhh_tools as mht
 import initialisation as init
+import wind as wind_proc
 import ddeq as ddeq
 
 # molar mass (g/mol)
@@ -44,63 +45,13 @@ gas_mass = {
 
 
 class PreProcessing:
-
-    # define number of cores used on daint multicore (cpu) and hybrid (gpu)
-    PROCESSOR_VERSIONS = {"cpu": 36, "gpu": 12}
-
-    PARTITION_CONDITIONS = {
-        "debug": {"time_limit": 30 * 60, "max_nodes": 10},
-        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
-        "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
-        "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
-    }
-
-    def __init__(
-        self,
-        case: init.Case,
-        processor: str,
-        mpi: bool,
-        account: str = "em05",
-        mail_type: str = "ALL",
-        email: str = "sandro.meier@empa.ch",
-        run_time: str = "00:30:00",
-        nodes: int = 1,
-        ntasks_per_core: int = 1,
-        ntasks_per_node: int = None,
-        cpus_per_task: int = 1,
-        large_memory: bool = False,
-        partition: str = "debug",
-    ):
+    def __init__(self, case: init.Case, daint_setup: init.DaintSetup):
         """Class used for pre-processing and running MicroHH cases
 
         Args:
             case (init.Case):
                 Case to pre-process and run.
-            processor (str) ['cpu', 'gpu']:
-                Processor version to be used to run the model.
-            mpi (bool):
-                Indicates if mpi should be enabled.
-            run_time (str, optional. Default: "00:30:00"):
-                Specify the job duration. Determines the queuing time.
-                Format: "HH:MM:SS".
-            nodes (int, optional. Default: 1):
-                Number of nodes to use for running MicroHH.
-            ntasks_per_core (int, optional. Default: 1):
-                Number of tasks per core. If > 1, hyperthreading is turned on.
-            ntasks_per_node (int, optional):
-                Number of tasks per node.
-                If not specified, the default for 'cpu' is set to
-                36 and 12 for 'gpu'. If 'mpi = False', it is set to 1.
-            cpus_per_task (int, optional. Default: 1):
-                Number of cpus per task.
-                Specify the number of cpus per task.
-                Defines the number of OpenMP threads per MPI rank.
-                The maximum value depends on the number of tasks per node.
-            large_memory (bool, optional. Defaults False):
-                Specifies if nodes with large memory should be used.
-            partition (str, optional. Default: 'debug')
-                ['debug', 'normal', 'prepost', 'low']:
-                Queue to be used on daint.
+
         """
         self.user = case.user
         self.case_name = case.case_name
@@ -110,42 +61,12 @@ class PreProcessing:
         self.store_path = case.store_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
-        self.processor = processor.lower()
-        self.mpi = mpi
-        self.account = account
-        self.mail_type = mail_type
-        self.email = email
-        self.run_time = run_time
-        self.nodes = nodes
-        self.ntasks_per_core = ntasks_per_core
-        self.cpus_per_task = cpus_per_task
-        self.large_memory = large_memory
-        self.partition = partition
-        self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
+        self.processor = daint_setup.processor
+        self.daint_setup = daint_setup
 
-        self._check_build_exists()
-        self._check_cscs_setup_valid()
+        self._check_microhh_build_exists()
 
-    def _get_default_ntasks_per_node(self) -> int:
-        """Determines the default number of tasks per node
-        if not specified in __init__
-
-        Returns:
-            ntasks_per_node (int):
-                Number of tasks per node to be used.
-                Set to 36 for 'cpu' and 12 for 'gpu' on daint.
-                If 'mpi' is disabled, the tasks per node are set to 1.
-        """
-        if self.mpi:
-            return (
-                self.PROCESSOR_VERSIONS[self.processor] * self.ntasks_per_core
-                if self.processor in self.PROCESSOR_VERSIONS
-                else 1
-            )
-        else:
-            return 1
-
-    def _check_build_exists(self):
+    def _check_microhh_build_exists(self):
         """Check if the selected model build exists.
 
         Raises:
@@ -154,47 +75,6 @@ class PreProcessing:
         # Check if build exists
         if self.processor == "gpu" and self.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
-
-    def _check_cscs_setup_valid(self):
-        """Checks if the setup is valid to be run on daint based
-        on the selected queue, wall time and number of nodes.
-
-        Raises:
-            ValueError: Raise error if the wall time is
-                too long for the selected queue.
-            ValueError: Raise error if the number of nodes is
-                too large for the selected queue.
-        """
-        # Check if CSCS setup is valid
-        run_time_delta = self._parse_run_time(self.run_time)
-        conditions = self.PARTITION_CONDITIONS.get(self.partition, {})
-        if (
-            conditions.get("time_limit")
-            and run_time_delta.total_seconds() > conditions["time_limit"]
-        ):
-            raise ValueError("Invalid time limit for the selected partition.")
-        if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
-            raise ValueError("Invalid number of nodes for the selected partition.")
-
-    def _parse_run_time(self, run_time: str) -> pd.Timedelta:
-        """Parse the run_time string and return a timedelta object
-
-        Args:
-            run_time (str):
-                Specify the job duration. Determines the queuing time.
-                Format: "HH:MM:SS".
-
-        Raises:
-            ValueError: Raise error if the format is not "HH:MM:SS".
-
-        Returns:
-            pd.Timedelta: Timedelta of the wall clock time.
-        """
-
-        try:
-            return pd.to_timedelta(run_time)
-        except ValueError:
-            raise ValueError("Invalid run_time format. Use HH:MM:SS")
 
     def run_simulation(
         self,
@@ -227,25 +107,34 @@ class PreProcessing:
             "microhh",
         ]
 
-        for file_name in files_required:
-            file_path = Path(self.scratch_path, file_name)
+        for filename in files_required:
+            file_path = Path(self.scratch_path, filename)
             if not file_path.exists():
                 raise FileNotFoundError(
-                    f"Required file '{file_name}' not found in '{self.scratch_path}'."
+                    f"Required file '{filename}' not found in '{self.scratch_path}'."
                 )
 
         # Create bash script if it does not exist
-        if Path(self.scratch_path, "bash_script.sbash").exists():
-            self.job_file = Path(self.scratch_path, "bash_script.sbash")
+        job_file = Path(self.scratch_path, "run_microhh.sbash")
+        if not job_file.exists():
+            job_file = self.daint_setup.create_bash_script(
+                commands=[
+                    f"srun {self.scratch_path}/microhh init {self.case_name}",
+                    f"srun {self.scratch_path}/microhh run {self.case_name}",
+                ],
+                file_path=job_file,
+                job_name=self.case_path,
+                scratch_path=self.scratch_path,
+            )
         else:
-            self.job_file = self.create_bash_script()
+            print(f"Reading existing bash script {job_file}")
 
         # check if the .ini setup is valid
         self._check_ini_setup_valid()
 
         if start_jobs:
             # Launch the job on daint
-            self.execute_bash_script(self.job_file, wait)
+            self.daint_setup.execute_bash_script(job_file, wait)
 
     def _check_ini_setup_valid(self):
         """
@@ -272,7 +161,7 @@ class PreProcessing:
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
         if (
-            not self.mpi
+            not self.daint_setup.mpi
             and not self.ini_file["master"]["npx"] == 1
             and not self.ini_file["master"]["npy"] == 1
         ):
@@ -294,9 +183,9 @@ class PreProcessing:
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
         expected_nodes = self.ini_file["master"]["npx"] * self.ini_file["master"]["npy"]
-        if expected_nodes != self.ntasks_per_node:
+        if expected_nodes != self.daint_setup.ntasks_per_node:
             raise ValueError(
-                f"Task per node ({self.ntasks_per_node}) does "
+                f"Task per node ({self.daint_setup.ntasks_per_node}) does "
                 f"not match the expected value."
             )
 
@@ -334,101 +223,12 @@ class PreProcessing:
     def copy_executable(self):
         # Copy microhh executable
         processor = self.processor
-        version = "mpi" if self.mpi else "nompi"
+        version = "mpi" if self.daint_setup.mpi else "nompi"
 
         microhh_executable_path = os.path.join(
             "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"
         )
         shutil.copy(microhh_executable_path, self.scratch_path)
-
-    def create_bash_script(self):
-        """Create bash script to run a simulation.
-        For more info, see https://slurm.schedmd.com/sbatch.html
-
-        Args:
-            start_jobs (bool, optional. Default: False):
-                Specify if the job should be started.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-
-        Raises:
-            FileNotFoundError: Raise error if the path on scratch does not exist.
-        """
-
-        multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
-        constraint = "mc" if self.processor == "cpu" else "gpu"
-        job_file = Path(self.scratch_path, "bash_script.sbash")
-
-        with open(job_file, "w") as bash_script:
-            header = "#!/bin/bash -l \n\n"
-
-            header += f"#SBATCH --job-name={self.case_path} \n"
-            header += f"#SBATCH --account={self.account}\n"
-            header += f"#SBATCH --mail-type={self.mail_type}\n"
-            header += f"#SBATCH --mail-user={self.email}\n"
-            header += f"#SBATCH --time={self.run_time}\n"
-            header += f"#SBATCH --nodes={self.nodes}\n"
-            header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
-            header += f"#SBATCH --ntasks-per-node={self.ntasks_per_node}\n"
-            header += f"#SBATCH --cpus-per-task={self.cpus_per_task}\n"
-            if self.large_memory:
-                header += "#SBATCH --mem=120GB"
-            header += f"#SBATCH --partition={self.partition} \n"
-            header += f"#SBATCH --constraint={constraint}\n"
-            header += f"#SBATCH --hint={multithread}\n"
-            header += f"#SBATCH --chdir={str(self.scratch_path)}\n\n"
-
-            header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
-            if self.processor == "gpu":
-                header += "export CRAY_CUDA_MPS=1\n\n"
-            else:
-                header += "\n"
-
-            header += f"srun {self.scratch_path}/microhh init {self.case_name}\n"
-            header += f"srun {self.scratch_path}/microhh run {self.case_name}"
-
-            bash_script.write(header)
-
-        return job_file
-
-    def execute_bash_script(self, job_file: Path, wait: bool = True):
-        """Run a simulation using sbatch
-
-        Args:
-            job_file (Path):
-                Specify the path of the bash script which should be run.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-        """
-
-        print(f"Starting {job_file=}")
-        os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
-
-    def get_simulation_progress(self):
-        """Print the progress of a simulation based on the saved binary output
-        files of MicroHH"""
-        folder_path = Path(self.scratch_path)
-        current_timestep = 0
-        pattern = re.compile(r"time\.(\d+)")
-
-        for file in folder_path.iterdir():
-            if file.is_file():
-                # extract the numeric part from the filename using regex
-                match = pattern.search(file.name)
-                if match:
-                    # timestep to an integer
-                    timestep = int(match.group(1))
-                    current_timestep = max(current_timestep, timestep)
-
-        # get max simulation time specified in .ini file
-        max_timestep = int(self.ini_file["time"]["endtime"])
-        progress_percentage = current_timestep / max_timestep * 100
-
-        print(
-            f"Simulation progress of {self.case_path}: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
-        )
 
 
 class PostProcessing:
@@ -534,13 +334,48 @@ class PostProcessing:
 
         return df
 
+    @staticmethod
+    def submit_postprocessing(
+        cases: Union[str, list],
+        daint_setup,
+        scratch_path,
+        py_file_path: str,
+        start_jobs: bool = True,
+    ):
+
+        cases = object_to_list(cases)
+
+        # create commands for bash script
+        commands = f"srun python {py_file_path} --case-names {' '.join(cases)}"
+
+        # submit bash script to run post processing in parallel on daint
+        job_file = Path(scratch_path, "post_processing.sbash")
+        if not job_file.exists():
+            job_file = daint_setup.create_bash_script(
+                commands=commands,
+                file_path=job_file,
+                job_name=f"post-processing-{len(cases)}-cases",
+                scratch_path=scratch_path,
+            )
+        else:
+            print(f"Reading existing bash script {job_file}")
+
+        if start_jobs:
+            # Launch the job on daint
+            daint_setup.execute_bash_script(job_file, wait=False)
+
     def run_postprocessing(
         self,
-        vars: Union[str, list],
-        overwrite: bool = False,
+        gas: str,
         precision: str = "double",
         start_time=None,
         end_time=None,
+        to_unit: str = "kg m-2",
+        default_p_and_t: bool = False,
+        method: str = "height",
+        height: Union[int, float] = None,
+        overwrite: bool = False,
+        save: bool = True,
     ):
         """Run all post-processing steps.
 
@@ -558,6 +393,9 @@ class PostProcessing:
             end_time (int, optional. Default: None):
                 End time in s of the data.
         """
+        vars = ["u", "v", "thl", gas]
+
+        print(f"########## START PROCESSING OF {self.case_path} ##########")
 
         self.create_3d_output(
             vars=vars,
@@ -566,7 +404,22 @@ class PostProcessing:
             start_time=start_time,
             end_time=end_time,
         )
-        self.move_to_store(vars=vars, overwrite=overwrite)
+        gas_2D = self.convert_to_columns(
+            variable=gas,
+            to_unit=to_unit,
+            default_p_and_t=default_p_and_t,
+            save=save,
+            overwrite=overwrite,
+        )
+        wind_proc = wind_proc.WindProcessing(self.case)
+        wind_2D = wind_proc.create_2D_wind(
+            method=method,
+            gas=gas,
+            height=height,
+            save=save,
+            overwrite=overwrite,
+        )
+        print(f"########## FINISH PROCESSING OF {self.case_path} ##########")
 
     def create_3d_output(
         self,
@@ -592,7 +445,8 @@ class PostProcessing:
             end_time (int, optional. Default: None):
                 End time in s of the data.
         """
-        vars = vars_to_list(vars)
+        vars = object_to_list(vars)
+        vars_to_process = vars.copy()
 
         if start_time is None:
             start_time = self.ini_file["time"]["starttime"]
@@ -608,21 +462,29 @@ class PostProcessing:
                     os.remove(nc_file_path)
                     print(f"Overwriting {nc_file_path}")
                 else:
-                    return
+                    vars_to_process.remove(var)
 
-        post_command = (
-            f"python 3d_to_nc.py -d {self.scratch_path} "
-            f"-f {self.case_name}.ini -v {' '.join(vars)} "
-            f"-p {precision} -t0 {start_time} -t1 {end_time} "
-            f"-tstep {sample_time}"
-        )
-        subprocess.run(
-            post_command,
-            shell=True,
-            cwd=os.path.join("/users", self.user, "microhh", "python"),
-        )
+        # only process missing variables
+        if vars_to_process:
+            post_command = (
+                f"python 3d_to_nc.py -d {self.scratch_path} "
+                f"-f {self.case_name}.ini -v {' '.join(vars_to_process)} "
+                f"-p {precision} -t0 {start_time} -t1 {end_time} "
+                f"-tstep {sample_time}"
+            )
+            subprocess.run(
+                post_command,
+                shell=True,
+                cwd=os.path.join("/users", self.user, "microhh", "python"),
+            )
 
-    def move_to_store(self, vars: Union[str, list], overwrite: bool):
+    def move_to_store(
+        self,
+        overwrite: bool = False,
+        move_var_files: bool = False,
+        vars: Union[str, list] = None,
+        move_processed_files: bool = True,
+    ):
         """Move files used for running MicroHH to store for reproducibility.
 
         Args:
@@ -633,7 +495,6 @@ class PostProcessing:
             FileExistsError: Raise error if the folder
             already exists and 'overwrite=False'.
         """
-        vars = vars_to_list(vars)
 
         # Handle target path
         if not os.path.exists(self.store_path):
@@ -654,30 +515,29 @@ class PostProcessing:
             "microhh",
         ]
         for pattern in file_patterns:
-            for file in glob.glob(os.path.join(self.scratch_path, pattern)):
-                dest_file = os.path.join(self.store_path, os.path.basename(file))
-                if not os.path.exists(dest_file) or overwrite:
-                    shutil.copy(file, self.store_path)
-                    print(f"Successfully copied '{file}' to '{self.store_path}'.")
-                else:
-                    print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
+            self.move_pattern_to_store(pattern, overwrite)
 
-        # Copy 3D .nc files of variables
-        for var in vars:
-            var_file = os.path.join(self.scratch_path, f"{var}.nc")
-            if os.path.exists(var_file):
-                dest_file = os.path.join(self.store_path, os.path.basename(var_file))
-                if not os.path.exists(dest_file) or overwrite:
-                    shutil.copy(var_file, self.store_path)
-                    print(f"Successfully copied '{var_file}' to '{self.store_path}'.")
-                else:
-                    print(
-                        f"'{var_file}' already exists in '{self.store_path}'. Skipping."
-                    )
+        if move_var_files:
+            vars = object_to_list(vars)
+            for var in vars:
+                pattern = f"{var}.nc"
+                self.move_pattern_to_store(pattern, overwrite)
+
+        if move_processed_files:
+            for pattern in ["*_2D.nc"]:
+                self.move_pattern_to_store(pattern, overwrite)
+
+    def move_pattern_to_store(self, pattern: str, overwrite: bool):
+
+        for file in glob.glob(os.path.join(self.scratch_path, pattern)):
+            dest_file = os.path.join(self.store_path, os.path.basename(file))
+            if not os.path.exists(dest_file) or overwrite:
+                shutil.copy(file, self.store_path)
+                print(f"Successfully copied '{file}' to '{self.store_path}'.")
             else:
-                print(f"'{var_file}' does not exist.")
+                print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
 
-    def open_3d_netCDF(self, variable: str) -> xr.Dataset:
+    def open_3d_prognostic_variable(self, variable: str) -> xr.Dataset:
         """Open 3D output netCDF file of 'variable' from model output.
 
         Args:
@@ -687,15 +547,24 @@ class PostProcessing:
         Returns:
             xr.Dataset: 3D netCDF file from model output.
         """
-
-        fname = f"{self.store_path}/{variable.lower()}.nc"
         try:
-            data = xr.open_dataset(fname)
-        except ValueError:
-            data = xr.open_dataset(fname, decode_times=False)
+            filename = self.case.get_file_location(f"{variable.lower()}.nc")
+        except FileNotFoundError:
+            self.create_3d_output(vars=variable.lower())
+            filename = os.path.join(self.scratch_path, f"{variable.lower()}.nc")
+
+        data = self.open_microhh_nc(filename)
 
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
+
+        return data
+
+    def open_microhh_nc(self, filename):
+        try:
+            data = xr.open_dataset(filename)
+        except ValueError:
+            data = xr.open_dataset(filename, decode_times=False)
 
         return data
 
@@ -722,8 +591,8 @@ class PostProcessing:
 
         # Assign attributes to variables
         for var in data.variables:
-            if var in variables:
-                long_name, unit = variables[var]
+            if var.lower() in variables:
+                long_name, unit = variables[var.lower()]
                 data[var].attrs.update({"long_name": long_name, "units": unit})
 
         return data
@@ -753,7 +622,11 @@ class PostProcessing:
         return variable_name
 
     def handle_prognostic_variables(
-        self, vars: Union[str, list], overwrite: bool = False, save: bool = True
+        self,
+        vars: Union[str, list],
+        filename: str,
+        overwrite: bool = False,
+        save: bool = True,
     ) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
 
@@ -769,14 +642,12 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
-        output_filename = os.path.join(
-            self.store_path, f"{self.case_name}_output_vars.nc"
-        )
+        output_filename = os.path.join(self.store_path, f"{filename}.nc")
 
         # Check if the output file already exists
         if os.path.exists(output_filename) and not overwrite:
             # If the file exists, open and return it
-            return xr.open_dataset(output_filename, decode_times=False)
+            return self.open_microhh_nc(output_filename)
 
         # combine the prognostic variables into one dataset
         combined_dataset = self.combine_prognostic_variables(None, vars)
@@ -790,16 +661,11 @@ class PostProcessing:
     def combine_prognostic_variables(
         self, data: xr.Dataset, vars: Union[str, list]
     ) -> xr.Dataset:
-        vars = vars_to_list(vars)
+        vars = object_to_list(vars)
         datasets = [] if data is None else [data]
 
         for var in vars:
-            nc_file_path = os.path.join(self.store_path, f"{var}.nc")
-
-            try:
-                dataset = xr.open_dataset(nc_file_path)
-            except ValueError:
-                dataset = xr.open_dataset(nc_file_path, decode_times=False)
+            dataset = self.open_3d_prognostic_variable(var)
 
             # homogenise dimensions
             dataset = self.interpolate_to_grid_midpoint(dataset)
@@ -808,9 +674,6 @@ class PostProcessing:
 
         # Merge all datasets into one
         combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
-
-        # Add attributes
-        combined_dataset = self._nc_assign_names_and_attributes(combined_dataset)
 
         return combined_dataset
 
@@ -851,7 +714,12 @@ class PostProcessing:
         return None
 
     def convert_to_columns(
-        self, variable: str, to_unit: str, default_p_and_t: bool = True
+        self,
+        variable: str,
+        to_unit: str,
+        default_p_and_t: bool = True,
+        save: bool = True,
+        overwrite: bool = False,
     ) -> xr.Dataset:
         """Convert 3D MicroHH model output to vertically integrated columns.
         Assumes that the vertical dimension is in units m.
@@ -863,8 +731,20 @@ class PostProcessing:
         Returns:
             xr.Dataset: Vertically integrated trace gas dataset.
         """
-        data = self.open_3d_netCDF(variable.lower())
-        data = self._nc_assign_names_and_attributes(data)
+
+        # read in file if it exists:
+        gas_column_nc_path = os.path.join(
+            self.scratch_path, f"{variable.lower()}_2D.nc"
+        )
+        if os.path.exists(gas_column_nc_path):
+            if overwrite:
+                os.remove(gas_column_nc_path)
+                print(f"Overwriting {gas_column_nc_path}")
+            else:
+                print(f"Reading '{variable.lower()}_2D.nc' from scratch.")
+                return self.open_microhh_nc(gas_column_nc_path)
+
+        data = self.open_3d_prognostic_variable(variable.lower())
 
         new_var_unit = self._format_volume_unit(to_unit)
 
@@ -887,15 +767,21 @@ class PostProcessing:
             data = self.convert_to_concentration(data, variable, new_var_unit)
 
         # integrate vertically
-        df_column = data.integrate(coord="z")
+        data_2D = data.integrate(coord="z")
 
         # adjust units due to integration
-        df_column[variable].attrs["units"] = self._format_units(to_unit)
-        df_column[variable].attrs[
+        data_2D[variable].attrs["units"] = self._format_units(to_unit)
+        data_2D[variable].attrs[
             "description"
         ] = f"vertically integrated {variable} columns"
 
-        return df_column
+        # remove other variables
+        data_2D = data_2D[variable]
+
+        if save:
+            data_2D.to_netcdf(gas_column_nc_path)
+
+        return data_2D
 
     def _format_volume_unit(self, to_unit: str) -> str:
         """Determine the corresponding volumetric unit if a target column unit is given.
@@ -1393,8 +1279,9 @@ class PostProcessing:
 
 
 ############# other functions #############
-def vars_to_list(var: str) -> list:
-
+def object_to_list(var: str) -> list:
+    if var is None:
+        raise ValueError(f"{var} should be of type 'str' or 'list', not 'None'")
     if not isinstance(var, list):
         var = [var]
 
@@ -1403,6 +1290,7 @@ def vars_to_list(var: str) -> list:
 
 def jobs_in_queue(
     omit: list = [
+        "TRES_PER_NODE",
         "MIN_CPUS",
         "MIN_TMP_DISK",
         "GROUP",
@@ -1432,7 +1320,8 @@ def jobs_in_queue(
         "LICENSES",
         "CORE_SPEC",
         "SCHEDNODES",
-    ]
+    ],
+    add_progress: bool = True,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 
@@ -1465,10 +1354,71 @@ def jobs_in_queue(
 
     df = pd.DataFrame([row.split("|") for row in rows], columns=headers)
 
+    # add simulation progress
+    if add_progress:
+        df = add_progress_to_df(df)
+
     # remove omitted columns
     df = df.drop(columns=omit)
 
     return df
+
+
+def add_progress_to_df(df):
+    progress_percentages = []
+
+    for case_path in df["NAME"]:
+        parts = case_path.split(".", 1)
+        case_name = parts[0]
+        case_suffix = parts[1] if len(parts) > 1 else ""
+        # create case
+        case = init.Case(
+            case_name=case_name,
+            suffix=case_suffix,
+            scratch_path="/scratch/snx3000",
+            store_path="/store/empa/em05/smeier/microhh_output",
+            overwrite=False,
+        )
+        current_timestep, max_timestep = get_simulation_progress(case)
+        progress_percentage = current_timestep / max_timestep * 100
+        progress_percentages.append(int(progress_percentage))
+
+    df["PROGRESS (%)"] = progress_percentages
+
+    return df
+
+
+def print_simulation_progress(case):
+    """Print the progress of a simulation based on the saved binary output
+    files of MicroHH"""
+
+    current_timestep, max_timestep = get_simulation_progress(case)
+    progress_percentage = current_timestep / max_timestep * 100
+
+    print(
+        f"Simulation progress of {case.case_path}: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
+    )
+
+
+def get_simulation_progress(case):
+    folder_path = Path(case.scratch_path)
+    current_timestep = 0
+    pattern = re.compile(r"time\.(\d+)")
+
+    for file in folder_path.iterdir():
+        if file.is_file():
+            # extract the numeric part from the filename using regex
+            match = pattern.search(file.name)
+            if match:
+                # timestep to an integer
+                timestep = int(match.group(1))
+                current_timestep = max(current_timestep, timestep)
+
+    # get max simulation time specified in .ini file
+    ini_file = mht.Read_namelist(case.ini_path)
+    max_timestep = int(ini_file["time"]["endtime"])
+
+    return current_timestep, max_timestep
 
 
 def delete_empty_folders(scratch_path="/scratch/snx3000"):

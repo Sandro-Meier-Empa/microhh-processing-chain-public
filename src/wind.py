@@ -8,12 +8,11 @@ from scipy.optimize import fsolve
 from typing import Union
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-import processing as proc
 import ddeq as ddeq
 import initialisation as init
 
 
-########### Class to handle simulated wind fields from MicroHH ###############
+##################### Functions to calculate a wind profile #####################
 
 
 class WindProcessing:
@@ -24,7 +23,10 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
+        import processing as proc
+
         self.post = proc.PostProcessing(case)
+        self.scratch_path = case.scratch_path
         self.store_path = case.store_path
 
     def create_wind_dataset(
@@ -36,6 +38,7 @@ class WindProcessing:
         gas: str = None,
         height: Union[int, float] = None,
         save: bool = True,
+        overwrite: bool = False,
     ) -> xr.Dataset:
         """Create a dataset containing the wind information around a source
         which is used for estimating emissions in 'ddeq'.
@@ -63,38 +66,12 @@ class WindProcessing:
         Returns:
             xr.Dataset: Dataset containg the wind information around a source.
         """
-        wind_vars = self._get_wind_vars(method)
-
-        # load wind.nc if it exists
-        wind_nc_path = os.path.join(self.store_path, "wind.nc")
-        if os.path.exists(wind_nc_path):
-            print("Reading wind from store.")
-            return xr.open_dataset(wind_nc_path)
-
-        wind_data = self._process_wind_data(wind_vars)
+        wind_data = self.create_2D_wind(method, gas, height, save, overwrite)
 
         selected_source = sources.sel(source=source)
         wind_data_subset = self._select_pixels_around_source(
             wind_data, selected_source, radius
         )
-        wind_data_subset = self.vertically_integrate_wind(
-            wind_data_subset, method, gas, height
-        )
-
-        # compute wind speed and direction
-        wind_data_subset["speed"] = np.sqrt(
-            wind_data_subset.u**2 + wind_data_subset.v**2
-        )
-        wind_data_subset["direction"] = ddeq.wind.calculate_wind_direction(
-            wind_data_subset.u, wind_data_subset.v
-        )
-
-        method_description = {
-            "mean": "vertical mean of wind speed",
-            "median": "vertical median of wind speed",
-            "height": f"{height} m wind speed",
-            "concentration_weighted": f"{gas} concentration weighted wind speed",
-        }
 
         # combine in new dataset
         wind_src = xr.Dataset(
@@ -154,15 +131,62 @@ class WindProcessing:
             },
             attrs={
                 "radius around source": f"{radius} pixels",
-                "method": method_description[method],
             },
         )
 
-        if save:
-            wind_nc_path = os.path.join(self.store_path, "wind.nc")
-            wind_src.to_netcdf(wind_nc_path)
-
         return wind_src
+
+    def create_2D_wind(
+        self,
+        method: str,
+        gas: str = None,
+        height: Union[int, float] = None,
+        save: bool = True,
+        overwrite: bool = False,
+    ):
+        wind_vars = self._get_wind_vars(method)
+
+        # load wind.nc if it exists
+        wind_nc_path = os.path.join(self.scratch_path, "wind_2D.nc")
+        if os.path.exists(wind_nc_path):
+            if overwrite:
+                os.remove(wind_nc_path)
+                print(f"Overwriting {wind_nc_path}")
+            else:
+                print("Reading 'wind_2D.nc' from scratch.")
+                return self.post.open_microhh_nc(wind_nc_path)
+
+        self._check_wind_integration(method, gas, height)
+
+        wind_data = self._process_wind_data(wind_vars)
+
+        wind_data = self.vertically_integrate_wind(wind_data, method, gas, height)
+
+        # compute wind speed and direction
+        wind_data["speed"] = np.sqrt(wind_data.u**2 + wind_data.v**2)
+        wind_data["direction"] = ddeq.wind.calculate_wind_direction(
+            wind_data.u, wind_data.v
+        )
+        wind_data["speed"].attrs["units"] = "m s-1"
+        wind_data["direction"].attrs["units"] = "°"
+
+        method_description = {
+            "mean": "vertical mean of wind speed",
+            "median": "vertical median of wind speed",
+            "height": f"{height} m wind speed",
+            "concentration_weighted": f"{gas} concentration weighted wind speed",
+        }
+
+        attributes = {
+            "method": method_description[method],
+        }
+
+        wind_data.attrs.update(attributes)
+
+        if save:
+            wind_data.to_netcdf(wind_nc_path)
+
+        return wind_data
 
     def _get_wind_vars(self, method: str):
         if method in ["mean", "median", "height"]:
@@ -172,19 +196,20 @@ class WindProcessing:
         else:
             raise NotImplementedError(f"Method {method} is not implemented.")
 
+    def _check_wind_integration(self, method, gas, height):
+        if method not in ["mean", "median", "height", "concentration_weighted"]:
+            raise ValueError(
+                f"'method' must be 'mean', 'median', 'height' or 'concentration_weighted', not {method}."
+            )
+        if method == "height" and height is None:
+            raise ValueError("Height must be an integer or float, not 'None'.")
+        if method == "concentration_weighted" and gas is None:
+            raise ValueError("'gas' must be a string, not 'None'.")
+
     def _process_wind_data(self, wind_vars: list) -> xr.Dataset:
-        missing_vars = [
-            var
-            for var in wind_vars
-            if not os.path.exists(os.path.join(self.store_path, f"{var}.nc"))
-        ]
+        wind_data = self.post.combine_prognostic_variables(None, wind_vars)
 
-        if missing_vars:
-            self.post.run_postprocessing(missing_vars)
-
-        wind_data = self.post.handle_prognostic_variables(wind_vars, save=False)
-
-        return wind_data[wind_vars]
+        return wind_data
 
     def _select_pixels_around_source(
         self, wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
@@ -341,7 +366,6 @@ class WindProcessing:
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
 
-##################### Functions to calculate a wind profile #####################
 def wind_profile_from_given_wind(
     grid,
     wind_speed,
