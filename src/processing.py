@@ -1,6 +1,4 @@
-import glob
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -12,21 +10,16 @@ import warnings
 from pathlib import Path
 from typing import Union, Tuple
 
-
-import cartopy.crs as ccrs
-import netCDF4 as nc
 import pandas as pd
 import xarray as xr
-import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(
-    os.path.join("/users", os.environ["USER"], "microhh", "processing_chain", "src")
-)
+sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 
 import microhh_tools as mht
+import cscs as cscs
 import initialisation as init
 import wind as wind_proc
 import ddeq as ddeq
@@ -46,7 +39,7 @@ gas_mass = {
 
 
 class PreProcessing:
-    def __init__(self, case: init.Case, daint_setup: init.DaintSetup):
+    def __init__(self, case: init.Case, daint_setup: cscs.DaintSetup):
         """Class used for pre-processing and running MicroHH cases
 
         Args:
@@ -124,8 +117,8 @@ class PreProcessing:
                     f"srun {self.scratch_path}/microhh init {self.case_name}",
                     f"srun {self.scratch_path}/microhh run {self.case_name}",
                 ],
-                file_path=job_file,
                 job_name=self.case_path,
+                file_path=job_file,
                 scratch_path=self.scratch_path,
             )
         else:
@@ -249,7 +242,7 @@ class PreProcessing:
         processor = self.processor
         version = "mpi" if self.daint_setup.mpi else "nompi"
 
-        microhh_executable_path = os.path.join(
+        microhh_executable_path = Path(
             "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"
         )
         shutil.copy(microhh_executable_path, self.scratch_path)
@@ -361,8 +354,8 @@ class PostProcessing:
     @staticmethod
     def submit_postprocessing(
         cases: Union[str, list],
-        daint_setup,
-        scratch_path,
+        daint_setup: cscs.DaintSetup,
+        scratch_path: str,
         py_file_path: str,
         start_jobs: bool = True,
     ):
@@ -377,8 +370,8 @@ class PostProcessing:
         if not job_file.exists():
             job_file = daint_setup.create_bash_script(
                 commands=commands,
-                file_path=job_file,
                 job_name=f"post-processing-{len(cases)}-cases",
+                file_path=job_file,
                 scratch_path=scratch_path,
             )
         else:
@@ -479,9 +472,9 @@ class PostProcessing:
         sample_time = self.ini_file["time"]["savetime"]
 
         for var in vars:
-            nc_file_path = os.path.join(self.scratch_path, f"{var}.nc")
+            nc_file_path = Path(self.scratch_path, f"{var}.nc")
 
-            if os.path.exists(nc_file_path):
+            if nc_file_path.exists():
                 if overwrite:
                     os.remove(nc_file_path)
                     print(f"Overwriting {nc_file_path}")
@@ -499,7 +492,7 @@ class PostProcessing:
             subprocess.run(
                 post_command,
                 shell=True,
-                cwd=os.path.join("/users", self.user, "microhh", "python"),
+                cwd=Path("/users", self.user, "microhh", "python"),
             )
 
     def move_to_store(
@@ -521,12 +514,12 @@ class PostProcessing:
         """
 
         # Handle target path
-        if not os.path.exists(self.store_path):
-            os.makedirs(self.store_path)
+        if self.store_path.exists():
+            self.store_path.mkdir(parents=True, exist_ok=True)
         elif overwrite:
             shutil.rmtree(self.store_path)
             print(f"Overwriting {self.store_path}.")
-            os.makedirs(self.store_path)
+            self.store_path.mkdir(parents=True)
 
         # Copy files for reproducibility
         file_patterns = [
@@ -553,9 +546,9 @@ class PostProcessing:
 
     def move_pattern_to_store(self, pattern: str, overwrite: bool):
 
-        for file in glob.glob(os.path.join(self.scratch_path, pattern)):
-            dest_file = os.path.join(self.store_path, os.path.basename(file))
-            if not os.path.exists(dest_file) or overwrite:
+        for file in self.scratch_path.glob(pattern):
+            dest_file = self.store_path / file.name
+            if not dest_file.exists() or overwrite:
                 shutil.copy(file, self.store_path)
                 print(f"Successfully copied '{file}' to '{self.store_path}'.")
             else:
@@ -572,23 +565,23 @@ class PostProcessing:
             xr.Dataset: 3D netCDF file from model output.
         """
         try:
-            filename = self.case.get_file_location(f"{variable.lower()}.nc")
+            file_path = self.case.get_file_location(file_name=f"{variable.lower()}.nc")
         except FileNotFoundError:
             self.create_3d_output(vars=variable.lower())
-            filename = os.path.join(self.scratch_path, f"{variable.lower()}.nc")
+            file_path = Path(self.scratch_path, f"{variable.lower()}.nc")
 
-        data = self.open_microhh_nc(filename)
+        data = self.open_microhh_nc(file_path)
 
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
 
         return data
 
-    def open_microhh_nc(self, filename):
+    def open_microhh_nc(self, file_path):
         try:
-            data = xr.open_dataset(filename)
+            data = xr.open_dataset(file_path)
         except ValueError:
-            data = xr.open_dataset(filename, decode_times=False)
+            data = xr.open_dataset(file_path, decode_times=False)
 
         return data
 
@@ -666,10 +659,10 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
-        output_filename = os.path.join(self.store_path, f"{filename}.nc")
+        output_filename = Path(self.store_path, f"{filename}.nc")
 
         # Check if the output file already exists
-        if os.path.exists(output_filename) and not overwrite:
+        if output_filename.exists() and not overwrite:
             # If the file exists, open and return it
             return self.open_microhh_nc(output_filename)
 
@@ -757,10 +750,8 @@ class PostProcessing:
         """
 
         # read in file if it exists:
-        gas_column_nc_path = os.path.join(
-            self.scratch_path, f"{variable.lower()}_2D.nc"
-        )
-        if os.path.exists(gas_column_nc_path):
+        gas_column_nc_path = Path(self.scratch_path, f"{variable.lower()}_2D.nc")
+        if gas_column_nc_path.exists():
             if overwrite:
                 os.remove(gas_column_nc_path)
                 print(f"Overwriting {gas_column_nc_path}")
@@ -1160,8 +1151,8 @@ class PostProcessing:
     def add_corners(
         self,
         data: xr.Dataset,
-        var: Tuple = ("lon", "lat"),
-        dims: Tuple = ("nrows", "nobs"),
+        var: Tuple[str, str] = ("lon", "lat"),
+        dims: Tuple[str, str] = ("nrows", "nobs"),
     ) -> xr.Dataset:
         """
         Add corner coordinates for 'var'.
@@ -1310,175 +1301,3 @@ def object_to_list(var: str) -> list:
         var = [var]
 
     return var
-
-
-def jobs_in_queue(
-    omit: list = [
-        "TRES_PER_NODE",
-        "MIN_CPUS",
-        "MIN_TMP_DISK",
-        "GROUP",
-        "OVER_SUBSCRIBE",
-        "COMMENT",
-        "MIN_MEMORY",
-        "REQ_NODES",
-        "COMMAND",
-        "PRIORITY",
-        "QOS",
-        "ST",
-        "RESERVATION",
-        "WCKEY",
-        "EXC_NODES",
-        "NICE",
-        "S:C:T",
-        "EXEC_HOST",
-        "DEPENDENCY",
-        "ARRAY_JOB_ID",
-        "SOCKETS_PER_NODE",
-        "CORES_PER_SOCKET",
-        "THREADS_PER_CORE",
-        "ARRAY_TASK_ID",
-        "CONTIGUOUS",
-        "NODELIST(REASON)",
-        "UID",
-        "LICENSES",
-        "CORE_SPEC",
-        "SCHEDNODES",
-    ],
-    add_progress: bool = True,
-) -> pd.DataFrame:
-    """Get information about jobs in the queue.
-
-    Args:
-        omit (list, optional):
-            Specify which columns of the output should be omitted.
-
-    Returns:
-        pd.DataFrame: Information about jobs in the queue.
-    """
-
-    # get the user name
-    user = os.environ["USER"]
-
-    # call squeue returning only all variables of the jobs
-    squeue = subprocess.Popen(
-        ["squeue", "-u", user, "-o", "%all"], stdout=subprocess.PIPE
-    )
-
-    # get the output
-    output = squeue.communicate()[0]
-
-    # decode the output
-    output = output.decode("utf-8")
-
-    # parse data
-    data = output.split("\n")
-    headers = data[0].split("|")
-    rows = [x for x in data[1:] if x]
-
-    df = pd.DataFrame([row.split("|") for row in rows], columns=headers)
-
-    # add simulation progress
-    if add_progress:
-        df = add_progress_to_df(df)
-
-    # remove omitted columns
-    df = df.drop(columns=omit)
-
-    return df
-
-
-def add_progress_to_df(df):
-    progress_percentages = []
-
-    for case_path in df["NAME"]:
-        parts = case_path.split(".", 1)
-        case_name = parts[0]
-        case_suffix = parts[1] if len(parts) > 1 else ""
-        # create case
-        case = init.Case(
-            case_name=case_name,
-            suffix=case_suffix,
-            scratch_path="/scratch/snx3000",
-            store_path="/store/empa/em05/smeier/microhh_output",
-            overwrite=False,
-        )
-        current_timestep, max_timestep = get_simulation_progress(case)
-        progress_percentage = current_timestep / max_timestep * 100
-        progress_percentages.append(int(progress_percentage))
-
-    df["PROGRESS (%)"] = progress_percentages
-
-    return df
-
-
-def print_simulation_progress(case):
-    """Print the progress of a simulation based on the saved binary output
-    files of MicroHH"""
-
-    current_timestep, max_timestep = get_simulation_progress(case)
-    progress_percentage = current_timestep / max_timestep * 100
-
-    print(
-        f"Simulation progress of {case.case_path}: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
-    )
-
-
-def get_simulation_progress(case):
-    folder_path = Path(case.scratch_path)
-    current_timestep = 0
-    pattern = re.compile(r"time\.(\d+)")
-
-    for file in folder_path.iterdir():
-        if file.is_file():
-            # extract the numeric part from the filename using regex
-            match = pattern.search(file.name)
-            if match:
-                # timestep to an integer
-                timestep = int(match.group(1))
-                current_timestep = max(current_timestep, timestep)
-
-    # get max simulation time specified in .ini file
-    ini_file = mht.Read_namelist(case.ini_path)
-    max_timestep = int(ini_file["time"]["endtime"])
-
-    return current_timestep, max_timestep
-
-
-def delete_empty_folders(scratch_path="/scratch/snx3000"):
-    """
-    Finds and prints empty directories on your personal scratch. If the user
-    agrees, all directories found are deleted.
-
-    Args:
-        scratch_path (str):
-            The path to search for empty directories. Default is your personal scratch.
-    """
-
-    personal_scratch_path = os.path.join(scratch_path, os.environ["USER"])
-
-    print_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-print"]
-    delete_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-delete"]
-
-    # list empty folders
-    list_folders = subprocess.run(print_command, capture_output=True, text=True)
-
-    count = len(list_folders.stdout.split("\n")) - 1
-
-    if count > 0:
-        print(list_folders.stdout)
-
-        ask_delete = input("Should these folders be deleted? (y/n)").lower()
-        while ask_delete not in ["yes", "y", "no", "n"]:
-            ask_delete = input("Enter 'y' (delete) or 'n' (don't delete).").lower()
-
-        if ask_delete in ["yes", "y"]:
-            delete_folders = subprocess.run(
-                delete_command, capture_output=True, text=True
-            )
-            print("deleting...")
-        else:
-            print("No folder has been deleted.")
-
-    else:
-        print("No empty folder found")

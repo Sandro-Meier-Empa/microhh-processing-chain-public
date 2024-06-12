@@ -16,11 +16,10 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.append(f'/users/{os.environ["USER"]}/microhh/python')
-import microhh_tools as mht
-
-sys.path.append(f'/users/{os.environ["USER"]}/processing_chain/src/')
+sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
+
 import processing as proc
 import initialisation as init
 import ddeq as ddeq
@@ -61,7 +60,7 @@ class Visualisation:
             ncols (int, optional): _description_. Defaults to 4.
         """
 
-        fname = case.get_file_location(file="_input.nc")
+        fname = case.get_file_location(file_name="_input.nc")
 
         groups = list(nc.Dataset(fname).groups.keys())
 

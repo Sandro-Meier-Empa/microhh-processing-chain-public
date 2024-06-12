@@ -1,5 +1,4 @@
 import glob
-import importlib
 import os
 import shutil
 import subprocess
@@ -9,19 +8,14 @@ from pathlib import Path
 from typing import Union
 
 import netCDF4 as nc
-import pandas as pd
 import xarray as xr
-import matplotlib.pyplot as plt
 import numpy as np
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(
-    os.path.join("/users", os.environ["USER"], "microhh", "processing_chain", "src")
-)
-import microhh_tools as mht
-import processing as proc
-
+sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
+
+import microhh_tools as mht
 import ls2d
 
 
@@ -45,8 +39,8 @@ class Case:
         self,
         case_name: str,
         suffix: str,
-        scratch_path: str,
-        store_path: str,
+        scratch_path: Union[str, Path],
+        store_path: Union[str, Path],
         overwrite: bool = False,
         method: str = "new",
     ):
@@ -76,8 +70,8 @@ class Case:
         self.case_name = case_name
         self.suffix = suffix
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
-        self.scratch_path = os.path.join(scratch_path, self.user, self.case_path)
-        self.store_path = os.path.join(store_path, self.case_path)
+        self.scratch_path = Path(scratch_path, self.user, self.case_path)
+        self.store_path = Path(store_path, self.case_path)
         self.method = method
 
         # check if method is correct
@@ -96,22 +90,20 @@ class Case:
         Raises:
             FileNotFoundError: If the case does not exist or required files are missing.
         """
-        case_setup_path = os.path.join(
-            "/users", self.user, "microhh", "cases", self.case_name
-        )
-        if not os.path.exists(case_setup_path):
+        case_setup_path = Path("/users", self.user, "microhh", "cases", self.case_name)
+        if not case_setup_path.exists():
             raise FileNotFoundError(f"Case '{self.case_name}' does not exist.")
 
         # Check for the existence of {case_name}_input.py and {case_name}.ini files
-        input_py_path = os.path.join(case_setup_path, f"{self.case_name}_input.py")
-        ini_file_path = os.path.join(case_setup_path, f"{self.case_name}.ini")
+        input_py_path = Path(case_setup_path, f"{self.case_name}_input.py")
+        ini_file_path = Path(case_setup_path, f"{self.case_name}.ini")
 
-        if not os.path.exists(input_py_path):
+        if input_py_path.exists():
             raise FileNotFoundError(
                 f"{self.case_name}_input.py does not exist in the case directory."
             )
 
-        if not os.path.exists(ini_file_path):
+        if not ini_file_path.exists():
             raise FileNotFoundError(
                 f"{self.case_name}.ini does not exist in the case directory."
             )
@@ -134,7 +126,7 @@ class Case:
         """
 
         # set up directory on scratch
-        if not os.path.exists(self.scratch_path):
+        if not self.scratch_path.exists():
             print(f"Creating {self.scratch_path}")
             os.makedirs(self.scratch_path)
             self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
@@ -145,21 +137,23 @@ class Case:
                 os.makedirs(self.scratch_path)
                 self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
             else:
-                self.ini_path = self.get_file_location(file=f"{self.case_name}.ini")
+                self.ini_path = self.get_file_location(
+                    file_name=f"{self.case_name}.ini"
+                )
 
-    def get_file_location(self, file):
-        file_store_path = Path(self.store_path) / file
-        file_scratch_path = Path(self.scratch_path) / file
+    def get_file_location(self, file_name: str) -> Path:
+        file_store_path = Path(self.store_path, file_name)
+        file_scratch_path = Path(self.scratch_path, file_name)
 
         if file_store_path.exists():
             file_path = file_store_path
-            print(f"Reading {self.case_path}/{file} from store.")
+            print(f"Reading {self.case_path}/{file_name} from store.")
         elif file_scratch_path.exists():
             file_path = file_scratch_path
-            print(f"Reading {self.case_path}/{file} from scratch.")
+            print(f"Reading {self.case_path}/{file_name} from scratch.")
         else:
             raise FileNotFoundError(
-                f"{self.case_name}{file} does not exist on scratch or store."
+                f"{self.case_name}{file_name} does not exist on scratch or store."
             )
 
         return file_path
@@ -195,7 +189,7 @@ class Initialisation:
         self.provide_ini()
         self.provide_initial()
 
-    def initialise_restart(self, reuse_bash_script=True):
+    def initialise_restart(self, reuse_bash_script: bool = True):
 
         # List of files to keep
         files_to_keep = [
@@ -217,7 +211,7 @@ class Initialisation:
 
     def initialise_rerun(
         self,
-        case_to_rerun,
+        case_to_rerun: Case,
         reuse_bash_script: bool = True,
     ):
         # Re-run simulation based on bash_script.sbash, {case_name}.ini and {case_name}_input.nc.
@@ -236,7 +230,7 @@ class Initialisation:
 
         # copy files from store to scratch
         for file_name in files_to_copy:
-            for file in glob.glob(os.path.join(case_to_rerun.store_path, file_name)):
+            for file in glob.glob(Path(case_to_rerun.store_path, file_name)):
                 shutil.copy(file, self.scratch_path)
                 print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
 
@@ -295,212 +289,11 @@ class Initialisation:
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
 
-class DaintSetup:
-
-    # define number of cores used on daint multicore (cpu) and hybrid (gpu)
-    PROCESSOR_VERSIONS = {"cpu": 36, "gpu": 12}
-
-    PARTITION_CONDITIONS = {
-        "debug": {"time_limit": 30 * 60, "max_nodes": 10},
-        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
-        "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
-        "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
-    }
-
-    def __init__(
-        self,
-        processor: str,
-        mpi: bool,
-        account: str = "em05",
-        mail_type: str = "ALL",
-        email: str = "sandro.meier@empa.ch",
-        run_time: str = "00:30:00",
-        nodes: int = 1,
-        ntasks_per_core: int = 1,
-        ntasks_per_node: int = None,
-        cpus_per_task: int = 1,
-        large_memory: bool = False,
-        partition: str = "debug",
-    ):
-        """_summary_
-
-        processor (str) ['cpu', 'gpu']:
-            Processor version to be used to run the model.
-        mpi (bool):
-            Indicates if mpi should be enabled.
-        run_time (str, optional. Default: "00:30:00"):
-            Specify the job duration. Determines the queuing time.
-            Format: "HH:MM:SS".
-        nodes (int, optional. Default: 1):
-            Number of nodes to use for running MicroHH.
-        ntasks_per_core (int, optional. Default: 1):
-            Number of tasks per core. If > 1, hyperthreading is turned on.
-        ntasks_per_node (int, optional):
-            Number of tasks per node.
-            If not specified, the default for 'cpu' is set to
-            36 and 12 for 'gpu'. If 'mpi = False', it is set to 1.
-        cpus_per_task (int, optional. Default: 1):
-            Number of cpus per task.
-            Specify the number of cpus per task.
-            Defines the number of OpenMP threads per MPI rank.
-            The maximum value depends on the number of tasks per node.
-        large_memory (bool, optional. Defaults False):
-            Specifies if nodes with large memory should be used.
-        partition (str, optional. Default: 'debug')
-            ['debug', 'normal', 'prepost', 'low']:
-            Queue to be used on daint.
-        """
-
-        self.job_name = None
-        self.scratch_path = None
-        self.processor = processor.lower()
-        self.mpi = mpi
-        self.account = account
-        self.mail_type = mail_type
-        self.email = email
-        self.run_time = run_time
-        self.nodes = nodes
-        self.ntasks_per_core = ntasks_per_core
-        self.cpus_per_task = cpus_per_task
-        self.large_memory = large_memory
-        self.partition = partition
-        self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
-
-        self._check_cscs_setup_valid()
-
-    def _get_default_ntasks_per_node(self) -> int:
-        """Determines the default number of tasks per node
-        if not specified in __init__
-
-        Returns:
-            ntasks_per_node (int):
-                Number of tasks per node to be used.
-                Set to 36 for 'cpu' and 12 for 'gpu' on daint.
-                If 'mpi' is disabled, the tasks per node are set to 1.
-        """
-        if self.mpi:
-            return (
-                self.PROCESSOR_VERSIONS[self.processor] * self.ntasks_per_core
-                if self.processor in self.PROCESSOR_VERSIONS
-                else 1
-            )
-        else:
-            return 1
-
-    def _check_cscs_setup_valid(self):
-        """Checks if the setup is valid to be run on daint based
-        on the selected queue, wall time and number of nodes.
-
-        Raises:
-            ValueError: Raise error if the wall time is
-                too long for the selected queue.
-            ValueError: Raise error if the number of nodes is
-                too large for the selected queue.
-        """
-        # Check if CSCS setup is valid
-        run_time_delta = self._parse_run_time(self.run_time)
-        conditions = self.PARTITION_CONDITIONS.get(self.partition, {})
-        if (
-            conditions.get("time_limit")
-            and run_time_delta.total_seconds() > conditions["time_limit"]
-        ):
-            raise ValueError("Invalid time limit for the selected partition.")
-        if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
-            raise ValueError("Invalid number of nodes for the selected partition.")
-
-    def _parse_run_time(self, run_time: str) -> pd.Timedelta:
-        """Parse the run_time string and return a timedelta object
-
-        Args:
-            run_time (str):
-                Specify the job duration. Determines the queuing time.
-                Format: "HH:MM:SS".
-
-        Raises:
-            ValueError: Raise error if the format is not "HH:MM:SS".
-
-        Returns:
-            pd.Timedelta: Timedelta of the wall clock time.
-        """
-
-        try:
-            return pd.to_timedelta(run_time)
-        except ValueError:
-            raise ValueError("Invalid run_time format. Use HH:MM:SS")
-
-    def create_bash_script(
-        self, commands: Union[str, list], file_path, job_name, scratch_path
-    ):
-        """Create bash script to run a simulation.
-        For more info, see https://slurm.schedmd.com/sbatch.html
-
-        Args:
-            start_jobs (bool, optional. Default: False):
-                Specify if the job should be started.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-        """
-        # make sure commands is a list:
-        commands = proc.object_to_list(commands)
-
-        multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
-        constraint = "mc" if self.processor == "cpu" else "gpu"
-
-        with open(file_path, "w") as bash_script:
-            header = "#!/bin/bash -l \n\n"
-
-            header += f"#SBATCH --job-name={job_name} \n"
-            header += f"#SBATCH --account={self.account}\n"
-            header += f"#SBATCH --mail-type={self.mail_type}\n"
-            header += f"#SBATCH --mail-user={self.email}\n"
-            header += f"#SBATCH --time={self.run_time}\n"
-            header += f"#SBATCH --nodes={self.nodes}\n"
-            header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
-            header += f"#SBATCH --ntasks-per-node={self.ntasks_per_node}\n"
-            header += f"#SBATCH --cpus-per-task={self.cpus_per_task}\n"
-            if self.large_memory:
-                header += "#SBATCH --mem=120GB"
-            header += f"#SBATCH --partition={self.partition} \n"
-            header += f"#SBATCH --constraint={constraint}\n"
-            header += f"#SBATCH --hint={multithread}\n"
-            header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
-
-            header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
-            if self.processor == "gpu":
-                header += "export CRAY_CUDA_MPS=1\n\n"
-            else:
-                header += "\n"
-
-            # append commands to the file
-            for command in commands:
-                header += f"{command}\n"
-
-            bash_script.write(header)
-
-        return file_path
-
-    @staticmethod
-    def execute_bash_script(job_file: Path, wait: bool = True):
-        """Run a simulation using sbatch
-
-        Args:
-            job_file (Path):
-                Specify the path of the bash script which should be run.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-        """
-
-        print(f"Starting {job_file=}")
-        os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
-
-
 def interpolate_to_model_profile(
     grid: ls2d.grid,
-    variable_profile: Union[list, np.array] = None,
-    input_profile: Union[list, np.array] = None,
-):
+    variable_profile: Union[list, np.ndarray] = None,
+    input_profile: Union[list, np.ndarray] = None,
+) -> np.ndarray:
     """Interpolate a given vertical profile to the height levels of
     the MicroHH model.
 
@@ -557,7 +350,7 @@ def read_initial_cond(case: Case) -> xr.Dataset:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    fname = case.get_file_location(file=f"{case.case_name}_input.nc")
+    fname = case.get_file_location(file_name=f"{case.case_name}_input.nc")
     return _combine_nc_groups(fname)
 
 
@@ -578,15 +371,15 @@ def read_statistics(case: Case) -> xr.Dataset:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    fname = case.get_file_location(file=f"{case.case_name}.default.0000000.nc")
-    return _combine_nc_groups(fname)
+    file_path = case.get_file_location(file_name=f"{case.case_name}.default.0000000.nc")
+    return _combine_nc_groups(file_path)
 
 
-def _combine_nc_groups(fname):
-    groups = [""] + list(nc.Dataset(fname).groups.keys())
+def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
+    groups = [""] + list(nc.Dataset(file_path).groups.keys())
     merged_dataset = xr.Dataset()
     for group in groups:
-        ds = xr.open_dataset(fname, group=group, decode_times=False)
+        ds = xr.open_dataset(file_path, group=group, decode_times=False)
         merged_dataset = xr.merge([merged_dataset, ds])
 
     return merged_dataset

@@ -1,18 +1,20 @@
-import numpy as np
 import os
 import scipy
 import sys
 import ucat
-import xarray as xr
+
 from scipy.optimize import fsolve
 from typing import Union
+from pathlib import Path
+
+import numpy as np
+import xarray as xr
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
+
 import ddeq as ddeq
 import initialisation as init
-
-
-##################### Functions to calculate a wind profile #####################
 
 
 class WindProcessing:
