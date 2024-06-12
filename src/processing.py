@@ -7,6 +7,7 @@ import sys
 import pyproj
 import scipy
 import ucat
+import warnings
 
 from pathlib import Path
 from typing import Union, Tuple
@@ -226,6 +227,7 @@ class PreProcessing:
         # read in {case}_input.nc file:
         initial_cond = init.read_initial_cond(self.case)
         lowest_grid_level = initial_cond.z.values[0]
+        warning_threshold = 0.9 * lowest_grid_level
 
         if "boundary" in self.ini_file.groups:
             for roughness_type in ["z0m", "z0h"]:
@@ -235,6 +237,11 @@ class PreProcessing:
                         raise ValueError(
                             f"Surface roughness ({roughness_type} = {surface_roughness} m) is larger than the lowest level of the grid (={lowest_grid_level} m). "
                             "This will cause the model to crash."
+                        )
+                    elif surface_roughness >= warning_threshold:
+                        warnings.warn(
+                            f"Surface roughness ({roughness_type} = {surface_roughness} m) similar to the lowest grid level (={lowest_grid_level} m). "
+                            "This may cause instability in the model."
                         )
 
     def copy_executable(self):
