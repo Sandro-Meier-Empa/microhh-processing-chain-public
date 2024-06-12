@@ -442,7 +442,7 @@ class DaintSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        commands = object_to_list(commands)
+        commands = proc.object_to_list(commands)
 
         multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
         constraint = "mc" if self.processor == "cpu" else "gpu"

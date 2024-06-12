@@ -53,6 +53,7 @@ class PreProcessing:
                 Case to pre-process and run.
 
         """
+        self.case = case
         self.user = case.user
         self.case_name = case.case_name
         self.suffix = case.suffix
@@ -73,7 +74,7 @@ class PreProcessing:
             ValueError: Raise error if the model build does not exist.
         """
         # Check if build exists
-        if self.processor == "gpu" and self.mpi:
+        if self.daint_setup.processor == "gpu" and self.daint_setup.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
 
     def run_simulation(
@@ -152,6 +153,7 @@ class PreProcessing:
         self._check_source_position()
         self._check_source_sigma()
         self._check_buffer_height()
+        self._check_surface_roughness_height()
 
     def _check_ini_content(self):
         # check if the .ini file is not empty
@@ -219,6 +221,21 @@ class PreProcessing:
                     f"Buffer height={zstart} lies outside of the domain "
                     f" with zsize={zsize}."
                 )
+
+    def _check_surface_roughness_height(self):
+        # read in {case}_input.nc file:
+        initial_cond = init.read_initial_cond(self.case)
+        lowest_grid_level = initial_cond.z.values[0]
+
+        if "boundary" in self.ini_file.groups:
+            for roughness_type in ["z0m", "z0h"]:
+                if roughness_type in self.ini_file["boundary"]:
+                    surface_roughness = self.ini_file["boundary"][roughness_type]
+                    if surface_roughness >= lowest_grid_level:
+                        raise ValueError(
+                            f"Surface roughness ({roughness_type} = {surface_roughness} m) is larger than the lowest level of the grid (={lowest_grid_level} m). "
+                            "This will cause the model to crash."
+                        )
 
     def copy_executable(self):
         # Copy microhh executable
@@ -511,7 +528,7 @@ class PostProcessing:
             "*" + self.case_name + ".out",
             "*" + self.case_name + ".default.*.nc",
             "slurm-*.out",
-            "bash_script.sbash",
+            "run_microhh.sbash",
             "microhh",
         ]
         for pattern in file_patterns:
