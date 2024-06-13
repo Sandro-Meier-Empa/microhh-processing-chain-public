@@ -1,3 +1,4 @@
+import glob
 import os
 import shutil
 import subprocess
@@ -112,6 +113,87 @@ class PreProcessing:
                 )
 
         # Create bash script if it does not exist
+        job_file = self.create_run_script()
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
+
+        if start_jobs:
+            # Launch the job on daint
+            self.daint_setup.execute_bash_script(job_file, wait)
+
+    def restart_simulation(
+        self,
+        reuse_bash_script: bool = True,
+        start_jobs: bool = False,
+        wait: bool = False,
+    ):
+
+        # List of files to keep
+        files_to_keep = [
+            f"{self.case_name}.ini",
+            f"{self.case_name}_input.nc",
+            "microhh",
+        ]
+
+        # create bash script if needed
+        if reuse_bash_script:
+            files_to_keep.append("run_microhh.sbash")
+        else:
+            job_file = self.create_run_script()
+
+        # delete existing files except {case_name}.ini, {case_name}_input.nc and executable
+        for file_path in self.scratch_path.iterdir():
+            if file_path.name not in files_to_keep:
+                file_path.unlink()
+                print(f"Deleted {file_path}")
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
+
+        if start_jobs:
+            # Launch the job on daint
+            self.daint_setup.execute_bash_script(job_file, wait)
+
+    def rerun_simulation(
+        self,
+        reuse_bash_script: bool = True,
+        reuse_microhh: bool = True,
+        start_jobs: bool = False,
+        wait: bool = False,
+    ):
+        # Re-run simulation based on run_microhh.sbash, {case_name}.ini and {case_name}_input.nc.
+
+        # List of files to copy
+        files_to_copy = [
+            f"{self.case_name}.ini",
+            f"{self.case_name}_input.nc",
+        ]
+
+        if reuse_bash_script:
+            files_to_copy.append("run_microhh.sbash")
+        else:
+            job_file = self.create_run_script()
+
+        if reuse_microhh:
+            files_to_copy.append("microhh")
+        else:
+            self.copy_executable()
+
+        # copy files from store to scratch
+        for filename in files_to_copy:
+            for file in glob.glob(Path(self.store_path, filename)):
+                shutil.copy(file, self.scratch_path)
+                print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
+
+        if start_jobs:
+            # Launch the job on daint
+            self.daint_setup.execute_bash_script(job_file, wait)
+
+    def create_run_script(self) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
         if not job_file.exists():
             job_file = self.daint_setup.create_bash_script(
@@ -126,12 +208,7 @@ class PreProcessing:
         else:
             print(f"Reading existing bash script {job_file}")
 
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
-
-        if start_jobs:
-            # Launch the job on daint
-            self.daint_setup.execute_bash_script(job_file, wait)
+        return job_file
 
     def _check_ini_setup_valid(self):
         """
@@ -277,11 +354,12 @@ class PostProcessing:
         """Submit a bash script to do the post-processing on daint
 
         Args:
-            cases (Union[str, list]): TODO
-            daint_setup (cscs.DaintSetup): TODO
-            scratch_path (str): TODO
-            py_file_path (str): TODO
-            start_jobs (bool, optional): TODO. Defaults to True.
+            daint_setup (cscs.DaintSetup):
+                TODO
+            py_file_path (str):
+                TODO
+            start_jobs (bool, optional):
+                TODO. Defaults to True.
         """
 
         # create commands for bash script

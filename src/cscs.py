@@ -1,5 +1,5 @@
+import concurrent.futures
 import os
-import re
 import subprocess
 import sys
 
@@ -317,7 +317,6 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
             scratch_path=Path("/scratch/snx3000"),
             store_path=Path(""),
             location="scratch",
-            overwrite=False,
         )
         current_timestep, max_timestep = get_simulation_progress(case)
         progress_percentage = current_timestep / max_timestep * 100
@@ -341,20 +340,25 @@ def print_simulation_progress(case: init.Case):
 
 
 def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
-    folder_path = case.scratch_path
     current_timestep = 0
-    pattern = re.compile(r"time\.(\d+)")
 
-    for file in folder_path.iterdir():
-        if file.is_file():
-            # extract the numeric part from the filename using regex
-            match = pattern.search(file.name)
-            if match:
-                # timestep to an integer
-                timestep = int(match.group(1))
-                current_timestep = max(current_timestep, timestep)
+    def process_file(file):
+        if file.is_file() and file.name.startswith("time."):
+            try:
+                return int(file.name[5:])
+            except ValueError:
+                return 0
+        return 0
 
-    # get max simulation time specified in .ini file
+    # Using ThreadPoolExecutor to parallelize the file processing
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(process_file, file) for file in case.scratch_path.iterdir()
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            timestep = future.result()
+            current_timestep = max(current_timestep, timestep)
+
     ini_file = mht.Read_namelist(case.ini_path)
     max_timestep = int(ini_file["time"]["endtime"])
 

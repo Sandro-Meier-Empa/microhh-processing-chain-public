@@ -1,4 +1,3 @@
-import glob
 import os
 import shutil
 import subprocess
@@ -42,8 +41,6 @@ class Case:
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
         location: str,
-        method: str = "new",
-        overwrite: bool = False,
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -64,10 +61,7 @@ class Case:
                 Path of personal folder on 'store'.
             location (str):
                 TODO ('scratch', 'store')
-            overwrite (bool, default: False):
-                TODO
-            method (str, default: 'new'):
-                ('default', 'new')
+
 
         Raises:
             ValueError: TODO
@@ -79,20 +73,8 @@ class Case:
         self.scratch_path = Path(scratch_path, self.user, self.case_path)
         self.store_path = Path(store_path, self.case_path)
 
-        self._handle_method(method)
         self._handle_file_directory(location)
         self.ini_path = Path(self.file_directory, f"{self.case_name}.ini")
-
-        self._handle_case(overwrite)
-
-    def _handle_method(self, method):
-        # check if method is correct
-        if method not in ["default", "new"]:
-            raise ValueError(f"{method} is not available. Use 'default' or 'new'.")
-
-        # check if the case is set up in the directory 'microhh/cases/'
-        if method == "default":
-            self._check_case_setup()
 
     def _handle_file_directory(self, location):
         # check if the case is set up in the directory 'microhh/cases/'
@@ -102,6 +84,61 @@ class Case:
             self.file_directory = self.store_path
         else:
             raise ValueError(f"{location} is not available. Use 'scratch' or 'store'.")
+
+    def initialise(
+        self,
+        method: str = "new",
+        overwrite: bool = False,
+    ):
+        """TODO
+
+        Args:
+            method (str, default: 'new'):
+                ('default', 'new', 'rerun')
+            overwrite (bool, default: False):
+                TODO
+        """
+        self.method = method
+
+        self._handle_directory(overwrite)
+        self._handle_method()
+
+    def _handle_directory(self, overwrite: bool = False):
+        """Create the case by creating a directory on 'scratch'.
+
+        Args:
+            overwrite (bool, optional. Default: False):
+                Specify if an existing folder and content should be overwritten.
+        """
+
+        # set up directory on scratch
+
+        if not self.file_directory.exists():
+            print(f"Creating {self.file_directory}")
+            os.makedirs(self.file_directory)
+        elif overwrite:
+            shutil.rmtree(self.file_directory)
+            print(f"Overwriting {self.file_directory}")
+            os.makedirs(self.file_directory)
+
+    def _handle_method(self):
+        """check if method is correct
+
+        Raises:
+            ValueError:
+                TODO
+        """
+        # check if the case is set up in the directory 'microhh/cases/'
+        if self.method == "default":
+            self._check_case_setup()
+            self._provide_ini()
+            self._create_initial()
+        elif self.method == "new":
+            self._provide_ini()
+        elif self.method == "rerun":
+            pass
+        else:
+            raise ValueError(f"{self.method} is not available. Use 'default' or 'new'.")
 
     def _check_case_setup(self):
         """Check if the case is set up.
@@ -127,113 +164,7 @@ class Case:
                 f"{self.case_name}.ini does not exist in the case directory."
             )
 
-    def _handle_case(self, overwrite: bool = False):
-        """Create the case by creating a directory on 'scratch' and
-        copying the '{case_name}' file to the folder.
-
-        Args:
-            method (str) ['default', 'new']:
-                Specify if the {case_name}.ini file should be
-                generated copied from 'microhh/cases/{case_name}/' or if it is
-                newly generated using the function modify_ini
-            location (s):
-                TODO
-            overwrite (bool, optional. Default: False):
-                Specify if an existing folder and content should be overwritten.
-
-        """
-
-        # set up directory on scratch
-        if self.file_directory == self.scratch_path:
-            if not self.scratch_path.exists():
-                print(f"Creating {self.scratch_path}")
-                os.makedirs(self.scratch_path)
-            elif overwrite:
-                shutil.rmtree(self.scratch_path)
-                print(f"Overwriting {self.scratch_path}")
-                os.makedirs(self.scratch_path)
-            else:
-                print(f"Reading from {self.file_directory}")
-        else:
-            print(f"Reading from {self.file_directory}")
-
-
-class Initialisation:
-
-    def __init__(self, case: Case):
-        """Initialise the model run by modifying the .ini file and creating
-        the {case_name}_input.nc file.
-
-        Args:
-            case (Case):
-                Case which should be initialised.
-            method (str) ['default', 'new']:
-                Specify if the {case_name}_input.nc file should be
-                generated by running the {case_name}_input.py file or
-                by using the function 'write_netcdf_input' in
-                'LS2D/examples/microhh/microhh_ls2d_tools.py'
-            mode (str) ['run', 'rerun']
-        """
-        self.user = case.user
-        self.case_name = case.case_name
-        self.suffix = case.suffix
-        self.case_path = case.case_path
-        self.scratch_path = case.scratch_path
-        self.store_path = case.store_path
-        self.ini_path = case.ini_path
-
-    def initialise(self, method: str = "new"):
-        self.method = method
-
-        self.provide_ini()
-        self.provide_initial()
-
-    def initialise_restart(self, reuse_bash_script: bool = True):
-
-        # List of files to keep
-        files_to_keep = [
-            f"{self.case_name}.ini",
-            f"{self.case_name}_input.nc",
-            "microhh",
-        ]
-
-        if reuse_bash_script:
-            files_to_keep.append("bash_script.sbash")
-        else:
-            self.create_batch_script()
-
-        # delete existing files except {case_name}.ini, {case_name}_input.nc and executable
-        for file_path in self.scratch_path.iterdir():
-            if file_path.name not in files_to_keep:
-                file_path.unlink()
-                print(f"Deleted {file_path}")
-
-    def initialise_rerun(
-        self,
-        case_to_rerun: Case,
-        reuse_bash_script: bool = True,
-    ):
-        # Re-run simulation based on bash_script.sbash, {case_name}.ini and {case_name}_input.nc.
-
-        # List of files to copy
-        files_to_copy = [
-            f"{self.case_name}.ini",
-            f"{self.case_name}_input.nc",
-            "microhh",
-        ]
-
-        if reuse_bash_script:
-            files_to_copy.append("bash_script.sbash")
-        else:
-            self.create_batch_script()
-
-        # copy files from store to scratch
-        for filename in files_to_copy:
-            for file in glob.glob(Path(case_to_rerun.store_path, filename)):
-                shutil.copy(file, self.scratch_path)
-                print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
-
-    def provide_ini(self):
+    def _provide_ini(self):
 
         # default: copy .ini file from 'microhh/cases/'
         if self.method == "default":
@@ -251,7 +182,7 @@ class Initialisation:
 
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def provide_initial(self):
+    def _create_initial(self):
         # default: use {case_name}_input.py to create {case_name}_input.nc
         if self.method == "default":
             py_script_path = Path(

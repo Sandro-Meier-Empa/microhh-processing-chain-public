@@ -16,6 +16,7 @@ def process_case(case_name):
         suffix=case_suffix,
         scratch_path="/scratch/snx3000",
         store_path="/store/empa/em05/smeier/microhh_output",
+        location="scratch",
     )
 
     post_processing = proc.PostProcessing(case)
