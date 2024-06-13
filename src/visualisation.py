@@ -39,16 +39,13 @@ class Visualisation:
         Args:
             case (init.Case):
                 Case to visualise.
-            source (str) ['scratch', 'store']:
-                Source from where the case should be read.
 
         """
         self.case = case
         self.case_name = case.case_name
         self.suffix = case.suffix
         self.case_path = case.case_path
-        self.scratch_path = case.scratch_path
-        self.store_path = case.store_path
+        self.file_directory = case.file_directory
 
         self.post = proc.PostProcessing(self.case)
 
@@ -56,17 +53,19 @@ class Visualisation:
         """Plot the initial conditions in separate plots for the different groups.
 
         Args:
-            case (init.Case): _description_
-            ncols (int, optional): _description_. Defaults to 4.
+            case (init.Case):
+                TODO
+            ncols (int, optional):
+                TODO. Defaults to 4.
         """
 
-        fname = case.get_file_location(file_name="_input.nc")
+        file_path = Path(self.file_directory, f"{case.case_name}_input.nc")
 
-        groups = list(nc.Dataset(fname).groups.keys())
+        groups = list(nc.Dataset(file_path).groups.keys())
 
         # loop over all groups to get the dimensions of all variables
         for group in groups:
-            data_group = xr.open_dataset(fname, group=group, decode_times=False)
+            data_group = xr.open_dataset(file_path, group=group, decode_times=False)
             dims = []
             for var in data_group.data_vars:
                 dims.append(data_group[var].dims)
@@ -236,9 +235,11 @@ class Visualisation:
         variable = variable.upper()
 
         try:
-            data = self.post.open_3d_netCDF(f"{self.case_name}_output_vars")
+            data = self.post.open_3d_prognostic_variable(
+                f"{self.case_name}_output_vars"
+            )
         except:
-            data = self.post.open_3d_netCDF(variable)
+            data = self.post.open_3d_prognostic_variable(variable)
 
         xdim, ydim, zdim = (
             self.wind_dims[variable]
@@ -481,13 +482,13 @@ def add_ime_text(
     """Add retrieval information
 
     Args:
-        gas (_type_): _description_
-        data (_type_): _description_
-        result (_type_): _description_
-        title (_type_, optional): _description_. Defaults to None.
+        gas (_type_): TODO
+        data (_type_): TODO
+        result (_type_): TODO
+        title (_type_, optional): TODO. Defaults to None.
 
     Returns:
-        _type_: _description_
+        _type_: TODO
     """
 
     time = pd.Timestamp(data.time.values)

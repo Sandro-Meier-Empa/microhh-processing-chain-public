@@ -44,7 +44,7 @@ class DaintSetup:
         large_memory: bool = False,
         partition: str = "debug",
     ):
-        """_summary_
+        """TODO
 
         processor (str) ['cpu', 'gpu']:
             Processor version to be used to run the model.
@@ -315,7 +315,8 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
             case_name=case_name,
             suffix=case_suffix,
             scratch_path=Path("/scratch/snx3000"),
-            store_path=Path("/store/empa/em05/smeier/microhh_output"),
+            store_path=Path(""),
+            location="scratch",
             overwrite=False,
         )
         current_timestep, max_timestep = get_simulation_progress(case)

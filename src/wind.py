@@ -28,8 +28,7 @@ class WindProcessing:
         import processing as proc
 
         self.post = proc.PostProcessing(case)
-        self.scratch_path = case.scratch_path
-        self.store_path = case.store_path
+        self.file_directory = case.file_directory
 
     def create_wind_dataset(
         self,
@@ -145,17 +144,16 @@ class WindProcessing:
         height: Union[int, float] = None,
         save: bool = True,
         overwrite: bool = False,
-    ):
+    ) -> xr.Dataset:
         wind_vars = self._get_wind_vars(method)
 
         # load wind.nc if it exists
-        wind_nc_path = os.path.join(self.scratch_path, "wind_2D.nc")
+        wind_nc_path = Path(self.file_directory, "wind_2D.nc")
         if os.path.exists(wind_nc_path):
             if overwrite:
                 os.remove(wind_nc_path)
                 print(f"Overwriting {wind_nc_path}")
             else:
-                print("Reading 'wind_2D.nc' from scratch.")
                 return self.post.open_microhh_nc(wind_nc_path)
 
         self._check_wind_integration(method, gas, height)
@@ -209,6 +207,16 @@ class WindProcessing:
             raise ValueError("'gas' must be a string, not 'None'.")
 
     def _process_wind_data(self, wind_vars: list) -> xr.Dataset:
+        """TODO
+
+        Args:
+            wind_vars (list):
+                TODO
+
+        Returns:
+            xr.Dataset:
+                TODO
+        """
         wind_data = self.post.combine_prognostic_variables(None, wind_vars)
 
         return wind_data
@@ -309,19 +317,19 @@ class WindProcessing:
     def calculate_weight_profile(
         self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
     ):
-        """_summary_
+        """TODO
 
         Args:
-            data (_type_): _description_
-            gas (str, optional): _description_. Defaults to "ch4".
+            data (_type_): TODO
+            gas (str, optional): TODO. Defaults to "ch4".
             threshold (float, optional): in mol mol-1. Defaults to None.
 
         Raises:
-            ValueError: _description_
-            ValueError: _description_
+            ValueError: TODO
+            ValueError: TODO
 
         Returns:
-            _type_: _description_
+            _type_: TODO
         """
         if gas not in data.data_vars:
             raise KeyError(

@@ -41,8 +41,9 @@ class Case:
         suffix: str,
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
-        overwrite: bool = False,
+        location: str,
         method: str = "new",
+        overwrite: bool = False,
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -61,10 +62,15 @@ class Case:
                 Path of personal folder on 'scratch'.
             store_path (str):
                 Path of personal folder on 'store'.
+            location (str):
+                TODO ('scratch', 'store')
+            overwrite (bool, default: False):
+                TODO
+            method (str, default: 'new'):
+                ('default', 'new')
 
         Raises:
-            FileNotFoundError: Raise error if the case is not set up
-            in microhh/cases
+            ValueError: TODO
         """
         self.user = os.environ["USER"]
         self.case_name = case_name
@@ -72,19 +78,32 @@ class Case:
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
         self.scratch_path = Path(scratch_path, self.user, self.case_path)
         self.store_path = Path(store_path, self.case_path)
-        self.method = method
 
+        self._handle_method(method)
+        self._handle_file_directory(location)
+        self.ini_path = Path(self.file_directory, f"{self.case_name}.ini")
+
+        self._handle_case(overwrite)
+
+    def _handle_method(self, method):
         # check if method is correct
         if method not in ["default", "new"]:
             raise ValueError(f"{method} is not available. Use 'default' or 'new'.")
 
         # check if the case is set up in the directory 'microhh/cases/'
         if method == "default":
-            self.check_case_setup()
+            self._check_case_setup()
 
-        self.handle_case(overwrite)
+    def _handle_file_directory(self, location):
+        # check if the case is set up in the directory 'microhh/cases/'
+        if location == "scratch":
+            self.file_directory = self.scratch_path
+        elif location == "store":
+            self.file_directory = self.store_path
+        else:
+            raise ValueError(f"{location} is not available. Use 'scratch' or 'store'.")
 
-    def check_case_setup(self):
+    def _check_case_setup(self):
         """Check if the case is set up.
 
         Raises:
@@ -108,7 +127,7 @@ class Case:
                 f"{self.case_name}.ini does not exist in the case directory."
             )
 
-    def handle_case(self, overwrite: bool = False):
+    def _handle_case(self, overwrite: bool = False):
         """Create the case by creating a directory on 'scratch' and
         copying the '{case_name}' file to the folder.
 
@@ -117,46 +136,26 @@ class Case:
                 Specify if the {case_name}.ini file should be
                 generated copied from 'microhh/cases/{case_name}/' or if it is
                 newly generated using the function modify_ini
+            location (s):
+                TODO
             overwrite (bool, optional. Default: False):
                 Specify if an existing folder and content should be overwritten.
 
-        Raises:
-            FileExistsError: Raise error if the folder exists and
-            'overwrite=False'.
         """
 
         # set up directory on scratch
-        if not self.scratch_path.exists():
-            print(f"Creating {self.scratch_path}")
-            os.makedirs(self.scratch_path)
-            self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
-        else:
-            if overwrite:
+        if self.file_directory == self.scratch_path:
+            if not self.scratch_path.exists():
+                print(f"Creating {self.scratch_path}")
+                os.makedirs(self.scratch_path)
+            elif overwrite:
                 shutil.rmtree(self.scratch_path)
                 print(f"Overwriting {self.scratch_path}")
                 os.makedirs(self.scratch_path)
-                self.ini_path = Path(self.scratch_path) / f"{self.case_name}.ini"
             else:
-                self.ini_path = self.get_file_location(
-                    file_name=f"{self.case_name}.ini"
-                )
-
-    def get_file_location(self, file_name: str) -> Path:
-        file_store_path = Path(self.store_path, file_name)
-        file_scratch_path = Path(self.scratch_path, file_name)
-
-        if file_store_path.exists():
-            file_path = file_store_path
-            print(f"Reading {self.case_path}/{file_name} from store.")
-        elif file_scratch_path.exists():
-            file_path = file_scratch_path
-            print(f"Reading {self.case_path}/{file_name} from scratch.")
+                print(f"Reading from {self.file_directory}")
         else:
-            raise FileNotFoundError(
-                f"{self.case_name}{file_name} does not exist on scratch or store."
-            )
-
-        return file_path
+            print(f"Reading from {self.file_directory}")
 
 
 class Initialisation:
@@ -229,8 +228,8 @@ class Initialisation:
             self.create_batch_script()
 
         # copy files from store to scratch
-        for file_name in files_to_copy:
-            for file in glob.glob(Path(case_to_rerun.store_path, file_name)):
+        for filename in files_to_copy:
+            for file in glob.glob(Path(case_to_rerun.store_path, filename)):
                 shutil.copy(file, self.scratch_path)
                 print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
 
@@ -340,17 +339,13 @@ def read_initial_cond(case: Case) -> xr.Dataset:
     Args:
         case (Case):
             Case for which the initial conditions should be read.
-        source (str) ['scratch', 'store']:
-            Source from which the initial conditions should be read from.
-
-    Raises:
-        ValueError: Raise error if 'source' is invalid.
 
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    fname = case.get_file_location(file_name=f"{case.case_name}_input.nc")
+    fname = Path(case.file_directory, f"{case.case_name}_input.nc")
+
     return _combine_nc_groups(fname)
 
 
@@ -361,17 +356,14 @@ def read_statistics(case: Case) -> xr.Dataset:
     Args:
         case (Case):
             Case for which the initial conditions should be read.
-        source (str) ['scratch', 'store']:
-            Source from which the initial conditions should be read from.
 
-    Raises:
-        ValueError: Raise error if 'source' is invalid.
 
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    file_path = case.get_file_location(file_name=f"{case.case_name}.default.0000000.nc")
+    file_path = Path(case.file_directory, f"{case.case_name}.default.0000000.nc")
+
     return _combine_nc_groups(file_path)
 
 

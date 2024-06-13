@@ -45,6 +45,8 @@ class PreProcessing:
         Args:
             case (init.Case):
                 Case to pre-process and run.
+            daint_setup (cscs.DaintSetup):
+                Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
 
         """
         self.case = case
@@ -77,7 +79,7 @@ class PreProcessing:
         wait: bool = False,
     ):
         """Prepare MicroHH for running a simulation and executes the simulation.
-        - Create or use the {case_name}_input.nc
+        - Copy the initial conditions {case_name}_input.nc
         - Copy the specified build of MicroHH to scratch
         - Create bash script and execute it to run the model
 
@@ -89,7 +91,7 @@ class PreProcessing:
                 after the previous one has stopped.
 
         Raises:
-            FileNotFoundError: Raise error if the .ini file cannot be found on scatch.
+            FileNotFoundError: Raise error if oen of the files cannot be found on scatch.
         """
 
         # copy microHH to directory
@@ -133,12 +135,7 @@ class PreProcessing:
 
     def _check_ini_setup_valid(self):
         """
-        Check if the setup specified in the .ini file is valid based on the selected number of nodes and the model
-        segregation and number of grid cells.
-
-        Raises:
-            ValueError: If the specified grid and model segregation do not match in x direction or y direction.
-            ValueError: If the segregation and number of nodes do not match.
+        Check if the setup specified in the .ini file is valid based on the daint setup and the parameters specified in the .ini file.
         """
         self._check_ini_content()
         self._adjust_mpi_settings()
@@ -150,7 +147,7 @@ class PreProcessing:
         self._check_surface_roughness_height()
 
     def _check_ini_content(self):
-        # check if the .ini file is not empty
+        """check if the .ini file is not empty"""
         if len(self.ini_file.groups) == 0:
             raise ValueError(f"{self.case_name}.ini is empty.")
 
@@ -200,6 +197,7 @@ class PreProcessing:
                     )
 
     def _check_source_sigma(self):
+        """Check if the source std is greater than zero."""
         if "source" in self.ini_file.groups:
             for coord in ["x", "y", "z"]:
                 if self.ini_file["source"][f"sigma_{coord}"] == 0:
@@ -217,6 +215,7 @@ class PreProcessing:
                 )
 
     def _check_surface_roughness_height(self):
+        """Check if the surface roughness is smaller than the lowest vertical grid level."""
         # read in {case}_input.nc file:
         initial_cond = init.read_initial_cond(self.case)
         lowest_grid_level = initial_cond.z.values[0]
@@ -228,17 +227,19 @@ class PreProcessing:
                     surface_roughness = self.ini_file["boundary"][roughness_type]
                     if surface_roughness >= lowest_grid_level:
                         raise ValueError(
-                            f"Surface roughness ({roughness_type} = {surface_roughness} m) is larger than the lowest level of the grid (={lowest_grid_level} m). "
+                            f"Surface roughness ({roughness_type} = {surface_roughness} m) "
+                            f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
                             "This will cause the model to crash."
                         )
                     elif surface_roughness >= warning_threshold:
                         warnings.warn(
-                            f"Surface roughness ({roughness_type} = {surface_roughness} m) similar to the lowest grid level (={lowest_grid_level} m). "
+                            f"Surface roughness ({roughness_type} = {surface_roughness} m) "
+                            f"similar to the lowest grid level (={lowest_grid_level} m). "
                             "This may cause instability in the model."
                         )
 
     def copy_executable(self):
-        # Copy microhh executable
+        """Copy MicroHH executable to scratch"""
         processor = self.processor
         version = "mpi" if self.daint_setup.mpi else "nompi"
 
@@ -265,114 +266,35 @@ class PostProcessing:
         self.store_path = case.store_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
+        self.file_directory = case.file_directory
 
-    def parse_slurm_output(self, slurm_source: str) -> pd.DataFrame:
-        """Parse the output of the 'slurm.out' script to get the job information.
-
-        Args:
-            slurm_source (str) ['scratch', 'store']:
-                Specify the source from where the 'slurm.out' script should be read.
-
-        Raises:
-            ValueError: Raise error if 'slurm_source' is invalid.
-            FileNotFoundError: Raise error if the 'slurm.out' cannot be found.
-
-        Returns:
-            pd.DataFrame: Data frame containing the job information.
-        """
-        counter = 0
-        job_info = False
-        headers = []
-        values = []
-
-        if slurm_source == "scratch":
-            source_path = self.scratch_path
-        elif slurm_source == "store":
-            source_path = self.store_path
-        else:
-            raise ValueError(
-                f"Invalid source: '{slurm_source}'. Use 'scratch' or 'store'."
-            )
-
-        out_files = list(Path(source_path).glob("slurm-*.out*"))
-
-        if not out_files:
-            raise FileNotFoundError(f"No slurm output script found in {source_path}")
-
-        for out_file in out_files:
-            with open(out_file, "r") as f:
-                for line in f:
-                    # use the lines after "job information"
-                    if "Job information" in line:
-                        counter = 0
-                        job_info = True
-                        continue
-
-                    if counter == 1 and job_info:  # first line defines the header
-                        header = line
-                    elif (
-                        counter == 2 and job_info
-                    ):  # second line defines the length of the content
-                        separator = line
-                        sep_len = [len(i) for i in separator.split()]
-                    elif counter == 3 and job_info:  # third line defines the value
-                        value = line
-                    elif counter == 4 and job_info:  # reset for next job info
-                        job_info = False
-                        startIndex = 0
-
-                        # parse header and values
-                        for l in sep_len:
-                            headers.append(header[startIndex : startIndex + l].strip())
-                            values.append(value[startIndex : startIndex + l].strip())
-                            startIndex += l + 1
-                            df = pd.DataFrame([values], columns=headers)
-
-                    counter += 1
-
-        # Format columns
-        timedelta_cols = ["Elapsed", "Time limit"]
-        datetime_cols = ["Submit", "Eligible", "Start", "End"]
-        df[timedelta_cols] = df[timedelta_cols].apply(pd.to_timedelta)
-        df[datetime_cols] = df[datetime_cols].apply(pd.to_datetime)
-
-        # Extracting integer part and unit part from usage and memory
-        df[["Energy", "Energy unit"]] = df["Energy"].str.split(expand=True)
-        df["Energy"] = df["Energy"].astype(float)
-
-        try:  # only available for simulations on GPU
-            df["Execution time"] = df["Execution time"].apply(pd.to_timedelta)
-
-            df[["Usage", "Usage unit"]] = df["Usage"].str.split(expand=True)
-            df[["Max mem", "Max mem unit"]] = df["Max mem"].str.split(expand=True)
-            df[["Usage", "Max mem"]] = df[["Usage", "Max mem"]].astype(float)
-        except:
-            pass
-
-        return df
-
-    @staticmethod
     def submit_postprocessing(
-        cases: Union[str, list],
+        self,
         daint_setup: cscs.DaintSetup,
-        scratch_path: str,
         py_file_path: str,
         start_jobs: bool = True,
     ):
+        """Submit a bash script to do the post-processing on daint
 
-        cases = object_to_list(cases)
+        Args:
+            cases (Union[str, list]): TODO
+            daint_setup (cscs.DaintSetup): TODO
+            scratch_path (str): TODO
+            py_file_path (str): TODO
+            start_jobs (bool, optional): TODO. Defaults to True.
+        """
 
         # create commands for bash script
-        commands = f"srun python {py_file_path} --case-names {' '.join(cases)}"
+        commands = f"srun python {py_file_path} --case-name {self.case_name} --case-suffix {self.suffix}"
 
         # submit bash script to run post processing in parallel on daint
-        job_file = Path(scratch_path, "post_processing.sbash")
+        job_file = Path(self.scratch_path, "post_processing.sbash")
         if not job_file.exists():
             job_file = daint_setup.create_bash_script(
                 commands=commands,
-                job_name=f"post-processing-{len(cases)}-cases",
+                job_name=f"post-processing-{self.case_path}",
                 file_path=job_file,
-                scratch_path=scratch_path,
+                scratch_path=self.scratch_path,
             )
         else:
             print(f"Reading existing bash script {job_file}")
@@ -394,21 +316,33 @@ class PostProcessing:
         overwrite: bool = False,
         save: bool = True,
     ):
-        """Run all post-processing steps.
+        """Run all post-processing steps to...
+            ... create netCDF files from grid output files
+            ... convert gas mixing ratios to concentrations
+            ... vertically integrate the concentrations
+            ... vertically integrate wind data
 
         Args:
-            vars (Union[str, list]):
-                Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
-            overwrite (bool, optional. Default: False):
-                Specify if existing files on 'scratch' and
-                'store' should be overwritten.
-            precision (str, optional. Default "double"):
-                Precision used for the created .nc file.
-            start_time (int, optional. Default: None):
-                Start time in s of the data.
-            end_time (int, optional. Default: None):
-                End time in s of the data.
+            gas (str):
+                TODO
+            precision (str, optional):
+                TODO. Defaults to "double".
+            start_time (_type_, optional):
+                TODO. Defaults to None.
+            end_time (_type_, optional):
+                TODO. Defaults to None.
+            to_unit (str, optional):
+                TODO. Defaults to "kg m-2".
+            default_p_and_t (bool, optional):
+                TODO. Defaults to False.
+            method (str, optional):
+                TODO. Defaults to "height".
+            height (Union[int, float], optional):
+                TODO. Defaults to None.
+            overwrite (bool, optional):
+                TODO. Defaults to False.
+            save (bool, optional):
+                TODO. Defaults to True.
         """
         vars = ["u", "v", "thl", gas]
 
@@ -428,8 +362,8 @@ class PostProcessing:
             save=save,
             overwrite=overwrite,
         )
-        wind_proc = wind_proc.WindProcessing(self.case)
-        wind_2D = wind_proc.create_2D_wind(
+        wind_processing = wind_proc.WindProcessing(self.case)
+        wind_2D = wind_processing.create_2D_wind(
             method=method,
             gas=gas,
             height=height,
@@ -507,14 +441,16 @@ class PostProcessing:
         Args:
             overwrite (bool, optional):
                 Specify if existing files on 'store' should be overwritten.
-
-        Raises:
-            FileExistsError: Raise error if the folder
-            already exists and 'overwrite=False'.
+            move_var_files (bool, optional):
+                TODO. Defaults to False.
+            vars (Union[str, list], optional):
+                TODO. Defaults to None.
+            move_processed_files (bool, optional):
+                TODO. Defaults to True.
         """
 
         # Handle target path
-        if self.store_path.exists():
+        if not self.store_path.exists():
             self.store_path.mkdir(parents=True, exist_ok=True)
         elif overwrite:
             shutil.rmtree(self.store_path)
@@ -545,16 +481,27 @@ class PostProcessing:
                 self.move_pattern_to_store(pattern, overwrite)
 
     def move_pattern_to_store(self, pattern: str, overwrite: bool):
+        """TODO
+
+        Args:
+            pattern (str):
+                TODO
+            overwrite (bool):
+                TODO
+        """
 
         for file in self.scratch_path.glob(pattern):
-            dest_file = self.store_path / file.name
+            dest_file = Path(self.store_path, file.name)
             if not dest_file.exists() or overwrite:
                 shutil.copy(file, self.store_path)
                 print(f"Successfully copied '{file}' to '{self.store_path}'.")
             else:
                 print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
 
-    def open_3d_prognostic_variable(self, variable: str) -> xr.Dataset:
+    def open_3d_prognostic_variable(
+        self,
+        variable: str,
+    ) -> xr.Dataset:
         """Open 3D output netCDF file of 'variable' from model output.
 
         Args:
@@ -564,11 +511,10 @@ class PostProcessing:
         Returns:
             xr.Dataset: 3D netCDF file from model output.
         """
-        try:
-            file_path = self.case.get_file_location(file_name=f"{variable.lower()}.nc")
-        except FileNotFoundError:
+        file_path = Path(self.file_directory, f"{variable.lower()}.nc")
+
+        if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
-            file_path = Path(self.scratch_path, f"{variable.lower()}.nc")
 
         data = self.open_microhh_nc(file_path)
 
@@ -577,7 +523,17 @@ class PostProcessing:
 
         return data
 
-    def open_microhh_nc(self, file_path):
+    def open_microhh_nc(self, file_path: Union[str, Path]) -> xr.Dataset:
+        """TODO
+
+        Args:
+            file_path (Union[str, Path]):
+                TODO
+
+        Returns:
+            xr.Dataset:
+                TODO
+        """
         try:
             data = xr.open_dataset(file_path)
         except ValueError:
@@ -589,7 +545,12 @@ class PostProcessing:
         """Assign long_name and unit attributes to variables in a .nc file.
 
         Args:
-            nc_file_path (str): Path to the .nc file.
+            data (xr.Dataset):
+                TODO
+
+        Returns:
+            xr.Dataset:
+                TODO
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
         variables = {
@@ -651,33 +612,49 @@ class PostProcessing:
             vars (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+            filename (str):
+                TODO
             overwrite (bool. Default: False):
                 Indicate if an existing file should be overwritten.
             save (bool. Default: True):
-                Indicate if the creates file should be saved.
+                Indicate if the created file should be saved.
 
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
-        output_filename = Path(self.store_path, f"{filename}.nc")
+        file_path = Path(self.file_directory, f"{filename}.nc")
 
         # Check if the output file already exists
-        if output_filename.exists() and not overwrite:
+        if file_path.exists() and not overwrite:
             # If the file exists, open and return it
-            return self.open_microhh_nc(output_filename)
+            return self.open_microhh_nc(file_path)
 
         # combine the prognostic variables into one dataset
-        combined_dataset = self.combine_prognostic_variables(None, vars)
+        combined_dataset = self.combine_prognostic_variables(vars=vars)
 
         # Save the combined dataset to a new NetCDF file
         if save:
-            combined_dataset.to_netcdf(output_filename)
+            combined_dataset.to_netcdf(file_path)
 
         return combined_dataset
 
     def combine_prognostic_variables(
-        self, data: xr.Dataset, vars: Union[str, list]
+        self,
+        vars: Union[str, list],
+        data: xr.Dataset = None,
     ) -> xr.Dataset:
+        """TODO
+
+        Args:
+            data (xr.Dataset):
+                TODO
+            vars (Union[str, list]):
+                TODO
+
+        Returns:
+            xr.Dataset:
+                TODO
+        """
         vars = object_to_list(vars)
         datasets = [] if data is None else [data]
 
@@ -742,22 +719,29 @@ class PostProcessing:
         Assumes that the vertical dimension is in units m.
 
         Args:
-            variable (str): Variable which should be vertically integrated.
-            to_unit (str): Target unit of the columns.
+            variable (str):
+                Variable which should be vertically integrated.
+            to_unit (str):
+                Target unit of the columns.
+            default_p_and_t (bool)
+                TODO
+            save (bool. Default: True):
+                Indicate if the created file should be saved.
+            overwrite (bool. Default: False):
+                Indicate if an existing file should be overwritten.
 
         Returns:
             xr.Dataset: Vertically integrated trace gas dataset.
         """
 
         # read in file if it exists:
-        gas_column_nc_path = Path(self.scratch_path, f"{variable.lower()}_2D.nc")
-        if gas_column_nc_path.exists():
+        file_path = Path(self.file_directory, f"{variable.lower()}_2D.nc")
+        if file_path.exists():
             if overwrite:
-                os.remove(gas_column_nc_path)
-                print(f"Overwriting {gas_column_nc_path}")
+                os.remove(file_path)
+                print(f"Overwriting {file_path}")
             else:
-                print(f"Reading '{variable.lower()}_2D.nc' from scratch.")
-                return self.open_microhh_nc(gas_column_nc_path)
+                return self.open_microhh_nc(file_path)
 
         data = self.open_3d_prognostic_variable(variable.lower())
 
@@ -794,7 +778,7 @@ class PostProcessing:
         data_2D = data_2D[variable]
 
         if save:
-            data_2D.to_netcdf(gas_column_nc_path)
+            data_2D.to_netcdf(file_path)
 
         return data_2D
 
@@ -949,11 +933,8 @@ class PostProcessing:
             xr.Dataset: Dataset with source information.
         """
 
-        def to_list(value):
-            return value if isinstance(value, (list, np.ndarray)) else [value]
-
         source_list = self.ini_file["source"]["sourcelist"]
-        nr_sources = len(to_list(source_list))
+        nr_sources = len(object_to_list(source_list))
 
         source_names = (
             source_names or source_labels or [f"source{i+1}" for i in range(nr_sources)]
@@ -970,27 +951,39 @@ class PostProcessing:
             source_radius = np.full(nr_sources, 5 * pixel_size / 1e3)  # in km
 
         data = {
-            "lon_o": (["source"], np.array(to_list(lon), dtype=float)),
-            "lat_o": (["source"], np.array(to_list(lat), dtype=float)),
+            "lon_o": (["source"], np.array(object_to_list(lon), dtype=float)),
+            "lat_o": (["source"], np.array(object_to_list(lat), dtype=float)),
             "source_x0": (
                 ["source"],
-                np.array(to_list(self.ini_file["source"]["source_x0"]), dtype=float),
+                np.array(
+                    object_to_list(self.ini_file["source"]["source_x0"]), dtype=float
+                ),
             ),
             "source_y0": (
                 ["source"],
-                np.array(to_list(self.ini_file["source"]["source_y0"]), dtype=float),
+                np.array(
+                    object_to_list(self.ini_file["source"]["source_y0"]), dtype=float
+                ),
             ),
             "source_z0": (
                 ["source"],
-                np.array(to_list(self.ini_file["source"]["source_z0"]), dtype=float),
+                np.array(
+                    object_to_list(self.ini_file["source"]["source_z0"]), dtype=float
+                ),
             ),
             "type": (["source"], np.full(nr_sources, "power plant", dtype=object)),
-            "label": (["source"], np.array(to_list(source_labels), dtype=object)),
-            "radius": (["source"], np.array(to_list(source_radius), dtype=float)),
+            "label": (
+                ["source"],
+                np.array(object_to_list(source_labels), dtype=object),
+            ),
+            "radius": (
+                ["source"],
+                np.array(object_to_list(source_radius), dtype=float),
+            ),
             "strength": (["source"], self.model_emissions_to_kg_per_h()),
         }
 
-        coords = {"source": np.array(to_list(source_names), dtype=object)}
+        coords = {"source": np.array(object_to_list(source_names), dtype=object)}
 
         sources = xr.Dataset(data, coords=coords)
         sources.lon_o.attrs["units"] = "longitude of source"
@@ -1191,22 +1184,39 @@ class PostProcessing:
         molar_mass = np.array([gas_mass[gas] for gas in sourcelist])
 
         if all(swvmr):  # it true, units are kmol s-1
-            strength *= molar_mass * 3600  # convert to kg/h
+            strength *= molar_mass * 60**2  # convert to kg/h
         else:  # units are kg kg s-1, seems to be an error
             strength = np.full(len(swvmr), np.nan)
 
         return strength
 
     def convert_to_concentration(
-        self, data: xr.Dataset, gas: str = "ch4", new_var_unit: str = "kg m-3"
+        self,
+        data: xr.Dataset,
+        gas: str = "ch4",
+        new_var_unit: str = "kg m-3",
     ) -> xr.Dataset:
+        """TODO
+
+        Args:
+            data (xr.Dataset):
+                TODO
+            gas (str, optional):
+                TODO. Defaults to "ch4".
+            new_var_unit (str, optional):
+                TODO. Defaults to "kg m-3".
+
+        Returns:
+            xr.Dataset:
+                TODO
+        """
         required_prognostic_vars = [gas, "thl"]
 
         # check if all required prognostic variables are in the dataset
         for var in required_prognostic_vars:
             if var not in data.data_vars:
                 print(f"Adding '{var}' to the dataset.")
-                data = self.combine_prognostic_variables(data, var)
+                data = self.combine_prognostic_variables(vars=var, data=data)
 
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
@@ -1264,12 +1274,25 @@ class PostProcessing:
 
         return data
 
-    def calculate_tke(self, data: xr.Dataset) -> xr.Dataset:
+    def calculate_tke(
+        self,
+        data: xr.Dataset,
+    ) -> xr.Dataset:
+        """TODO
+
+        Args:
+            data (xr.Dataset):
+                TODO
+
+        Returns:
+            xr.Dataset:
+                TODO
+        """
         wind_components = ["u", "v", "w"]
 
         for var in wind_components:
             if var not in data.data_vars:
-                data = self.combine_prognostic_variables(data, var)
+                data = self.combine_prognostic_variables(vars=var, data=data)
 
         # compute temporal deviation for each wind component
         for wind_component in wind_components:
@@ -1291,6 +1314,75 @@ class PostProcessing:
         data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
 
         return data
+
+    def parse_slurm_output(self) -> pd.DataFrame:
+        """Parse the output of the 'slurm.out' script to get the job information.
+
+        Returns:
+            pd.DataFrame: Data frame containing the job information.
+        """
+        counter = 0
+        job_info = False
+        headers = []
+        values = []
+
+        out_files = list(self.file_directory.glob("slurm-*.out*"))
+
+        if not out_files:
+            raise FileNotFoundError(
+                f"No slurm output script found in {self.file_directory}"
+            )
+
+        for out_file in out_files:
+            with open(out_file, "r") as f:
+                for line in f:
+                    # use the lines after "job information"
+                    if "Job information" in line:
+                        counter = 0
+                        job_info = True
+                        continue
+
+                    if counter == 1 and job_info:  # first line defines the header
+                        header = line
+                    elif (
+                        counter == 2 and job_info
+                    ):  # second line defines the length of the content
+                        separator = line
+                        sep_len = [len(i) for i in separator.split()]
+                    elif counter == 3 and job_info:  # third line defines the value
+                        value = line
+                    elif counter == 4 and job_info:  # reset for next job info
+                        job_info = False
+                        startIndex = 0
+
+                        # parse header and values
+                        for l in sep_len:
+                            headers.append(header[startIndex : startIndex + l].strip())
+                            values.append(value[startIndex : startIndex + l].strip())
+                            startIndex += l + 1
+                            df = pd.DataFrame([values], columns=headers)
+
+                    counter += 1
+
+        # Format columns
+        timedelta_cols = ["Elapsed", "Time limit"]
+        datetime_cols = ["Submit", "Eligible", "Start", "End"]
+        df[timedelta_cols] = df[timedelta_cols].apply(pd.to_timedelta)
+        df[datetime_cols] = df[datetime_cols].apply(pd.to_datetime)
+
+        # Extracting integer part and unit part from usage and memory
+        df[["Energy", "Energy unit"]] = df["Energy"].str.split(expand=True)
+        df["Energy"] = df["Energy"].astype(float)
+
+        try:  # only available for simulations on GPU
+            df["Execution time"] = df["Execution time"].apply(pd.to_timedelta)
+            df[["Usage", "Usage unit"]] = df["Usage"].str.split(expand=True)
+            df[["Max mem", "Max mem unit"]] = df["Max mem"].str.split(expand=True)
+            df[["Usage", "Max mem"]] = df[["Usage", "Max mem"]].astype(float)
+        except:
+            pass
+
+        return df
 
 
 ############# other functions #############
