@@ -22,7 +22,7 @@ sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 
 import processing as proc
 import initialisation as init
-import ddeq as ddeq
+import ddeq
 
 
 class Visualisation:
@@ -508,7 +508,7 @@ def add_ime_text(
 
     noise = data[gas].attrs["noise_level"]
     units = data[gas].attrs["units"]
-    text.append(f"• {ddeq.vis.sub_numbers(gas)} noise: {noise:g} {units}")
+    text.append(f"• {ddeq.vis.sub_numbers(gas)} noise: {noise:.3g} {units}")
 
     text.append("")
     text.append("Plume detection:")
@@ -520,8 +520,12 @@ def add_ime_text(
         f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}'
     )
 
-    text.append("\nMean wind:")
-    text.append(f"• Speed: {np.mean(result.wind_speed):.1f} m/s")
+    wind_method = result.wind_speed.attrs.get("method", None)
+
+    text.append("\nWind:")
+    if wind_method is not None:
+        text.append(f"• Method: {wind_method}")
+    text.append(f"• Speed: {np.nanmean(result.wind_speed):.1f} m/s")
     text.append(
         f"• Direction: {scipy.stats.circmean(result.wind_direction, high=360):.0f}°"
     )

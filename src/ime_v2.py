@@ -1,13 +1,6 @@
-import glob
 import os
-import re
-import shutil
 import skimage
-import subprocess
 import sys
-import pyproj
-import scipy
-import ucat
 
 from pathlib import Path
 from typing import Union, Tuple
@@ -25,10 +18,12 @@ sys.path.append(
     os.path.join("/users", os.environ["USER"], "microhh", "processing_chain", "src")
 )
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
 
 import microhh_tools as mht
 import initialisation as init
-import ddeq as ddeq
+import ddeq
+import ucat
 
 
 def estimate_emissions(
@@ -79,10 +74,18 @@ def estimate_emissions(
             and auxiliary variables for all detected sources.
     """
 
-    if "time" in wind.dims:
+    if any("time" in dim for dim in wind.dims) or any(
+        "time" in dim for dim in data.dims
+    ):
         raise ValueError(
-            "Wind dataset contains multiple time steps. " "Select one time step."
+            "Either the wind dataset or the data dataset contains multiple time steps. "
+            "Please select one time step."
         )
+
+    # if available, add method of vertical integration of wind as attribute
+    wind_method = wind.attrs.get("method", None)
+    if wind_method is not None:
+        wind.speed.attrs["method"] = wind_method
 
     data = ddeq.dplume.detect_plumes(
         data,
@@ -99,13 +102,24 @@ def estimate_emissions(
         data, crs, radius=2, radius_units="px", plume_area="area", do_coords=True
     )
 
-    # convert from ppmv m to kg/m2
-    dims = data["CH4"].dims
-    noise_level = ucat.convert_points(
-        np.nanmean(data["CH4_std"]), "ppmv", "kg/m3", molar_mass="CH4"
+    # convert noise to correct units
+    noise_units = data["CH4_std"].attrs.get("units", None)
+    noise_level = ucat.convert_columns(
+        np.nanmean(data["CH4_std"]),
+        from_units=noise_units,
+        to_units="kg m-2",
+        molar_mass="CH4",
     )
+
+    # convert data to correct units
+    data_units = data["CH4"].attrs.get("units", None)
+    ch4_mass = ucat.convert_columns(
+        data["CH4"], from_units=data_units, to_units="kg m-2", molar_mass="CH4"
+    )
+
+    # put into array
+    dims = data["CH4"].dims
     attrs = {"units": "kg m-2", "noise_level": noise_level}
-    ch4_mass = ucat.convert_points(data["CH4"], "ppmv", "kg/m3", molar_mass="CH4")
     data["CH4_mass"] = xr.DataArray(ch4_mass, dims=dims, attrs=attrs)
 
     # normalized convolution (sigma px)
@@ -116,13 +130,20 @@ def estimate_emissions(
         mask_hits=False,
         extra_dilation=background_dilation,
     )
-    mass_bg = ucat.convert_points(
-        data.CH4_estimated_background, "ppmv", "kg/m3", molar_mass="CH4"
+
+    # convert background to correct units
+    background_units = data["CH4_estimated_background"].attrs.get("units", None)
+    mass_bg = ucat.convert_columns(
+        data["CH4_estimated_background"],
+        from_units=background_units,
+        to_units="kg m-2",
+        molar_mass="CH4",
     )
+
+    # put into array
     data["CH4_minus_estimated_background_mass"] = xr.DataArray(
-        data.CH4_mass - mass_bg, dims=data.CH4.dims
+        data.CH4_mass - mass_bg, dims=data.CH4.dims, attrs={"units": "kg m-2"}
     )
-    data["CH4_minus_estimated_background_mass"].attrs["units"] = "kg m-2"
 
     # estimate emissions
     L_max = np.max(data.xp.values[data.detected_plume]) + 0.5 * np.sqrt(

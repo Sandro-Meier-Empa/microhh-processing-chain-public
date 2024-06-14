@@ -1,7 +1,6 @@
 import os
 import scipy
 import sys
-import ucat
 
 from scipy.optimize import fsolve
 from typing import Union
@@ -12,9 +11,11 @@ import xarray as xr
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
 
-import ddeq as ddeq
 import initialisation as init
+import ddeq
+import ucat
 
 
 class WindProcessing:
@@ -74,6 +75,12 @@ class WindProcessing:
             wind_data, selected_source, radius
         )
 
+        global_attrs = wind_data_subset.attrs.copy()
+        new_attrs = {
+            "radius around source": f"{radius} pixels",
+        }
+        global_attrs.update(new_attrs)
+
         # combine in new dataset
         wind_src = xr.Dataset(
             coords={
@@ -86,22 +93,22 @@ class WindProcessing:
                 "U": (
                     ["source", "time"],
                     [wind_data_subset["u"].median(dim=["x", "y"]).values],
-                    {"units": "m s-1"},
+                    wind_data_subset["u"].attrs,
                 ),
                 "V": (
                     ["source", "time"],
                     [wind_data_subset["v"].median(dim=["x", "y"]).values],
-                    {"units": "m s-1"},
+                    wind_data_subset["v"].attrs,
                 ),
                 "speed": (
                     ["source", "time"],
                     [wind_data_subset["speed"].median(dim=["x", "y"]).values],
-                    {"units": "m s-1"},
+                    wind_data_subset["speed"].attrs,
                 ),
                 "speed_precision": (
                     ["source", "time"],
                     [wind_data_subset["speed"].std(dim=["x", "y"]).values],
-                    {"units": "m s-1"},
+                    wind_data_subset["speed"].attrs,
                 ),
                 "direction": (
                     ["source", "time"],
@@ -114,7 +121,7 @@ class WindProcessing:
                             ],
                         )
                     ],
-                    {"units": "°"},
+                    wind_data_subset["direction"].attrs,
                 ),
                 "direction_precision": (
                     ["source", "time"],
@@ -127,12 +134,10 @@ class WindProcessing:
                             ],
                         )
                     ],
-                    {"units": "°"},
+                    wind_data_subset["direction"].attrs,
                 ),
             },
-            attrs={
-                "radius around source": f"{radius} pixels",
-            },
+            attrs=global_attrs,
         )
 
         return wind_src
@@ -167,14 +172,17 @@ class WindProcessing:
         wind_data["direction"] = ddeq.wind.calculate_wind_direction(
             wind_data.u, wind_data.v
         )
+        # add units
+        for wind_var in wind_vars:
+            wind_data[wind_var].attrs["units"] = "m s-1"
         wind_data["speed"].attrs["units"] = "m s-1"
         wind_data["direction"].attrs["units"] = "°"
 
         method_description = {
-            "mean": "vertical mean of wind speed",
-            "median": "vertical median of wind speed",
-            "height": f"{height} m wind speed",
-            "concentration_weighted": f"{gas} concentration weighted wind speed",
+            "mean": "vertical mean of wind",
+            "median": "vertical median of wind",
+            "height": f"{height} m wind",
+            "concentration_weighted": f"{gas} concentration weighted wind",
         }
 
         attributes = {
@@ -344,14 +352,17 @@ class WindProcessing:
         if quantity not in ["cm", "cM", "cn"]:
             # add pressure which is needed to convert mass mixing ratios to concentraions
             data = self.post.add_statistics_variable(data, "phydro")
-            data = self.post.convert_to_concentration(data, gas, new_var_unit="kg m-3")
+            data = self.post.convert_to_concentration(data, gas, to_units="kg m-3")
 
         # calculate threshold. Default is 1 ppb
         mixing_ratio_threshold = (
             1e-9 if mixing_ratio_threshold is None else mixing_ratio_threshold
         )
         threshold = ucat.convert_points(
-            mixing_ratio_threshold, "mol mol-1", units, molar_mass=gas.upper()
+            mixing_ratio_threshold,
+            from_units="mol mol-1",
+            to_units=units,
+            molar_mass=gas,
         )
 
         # filter out values with low gas concentration to avoid erroneous weights

@@ -5,7 +5,6 @@ import subprocess
 import sys
 import pyproj
 import scipy
-import ucat
 import warnings
 
 from pathlib import Path
@@ -18,12 +17,14 @@ import numpy as np
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
 
 import microhh_tools as mht
-import cscs as cscs
+import cscs
 import initialisation as init
 import wind as wind_proc
-import ddeq as ddeq
+import ddeq
+import ucat
 
 # molar mass (g/mol)
 gas_mass = {
@@ -823,7 +824,8 @@ class PostProcessing:
 
         data = self.open_3d_prognostic_variable(variable.lower())
 
-        new_var_unit = self._format_volume_unit(to_unit)
+        to_unit = self._format_units(to_unit)
+        volume_unit = ucat.col_unit2vol_unit(to_unit)
 
         variable = variable.upper()
 
@@ -833,21 +835,20 @@ class PostProcessing:
         if default_p_and_t:
             data[variable] = (
                 data[variable].dims,
-                ucat.convert_points(
+                ucat.convert_columns(
                     data[variable],
-                    data[variable].attrs.get("units", None),
-                    new_var_unit,
+                    from_units=data[variable].attrs.get("units", None),
+                    to_units=volume_unit,
                     molar_mass=variable,
                 ),
             )
         else:
-            data = self.convert_to_concentration(data, variable, new_var_unit)
+            data = self.convert_to_concentration(data, variable, volume_unit)
 
         # integrate vertically
         data_2D = data.integrate(coord="z")
 
         # adjust units due to integration
-        data_2D[variable].attrs["units"] = self._format_units(to_unit)
         data_2D[variable].attrs[
             "description"
         ] = f"vertically integrated {variable} columns"
@@ -859,36 +860,6 @@ class PostProcessing:
             data_2D.to_netcdf(file_path)
 
         return data_2D
-
-    def _format_volume_unit(self, to_unit: str) -> str:
-        """Determine the corresponding volumetric unit if a target column unit is given.
-        Assumes that the vertical dimension is in units m.
-
-        Args:
-            to_unit (str): Target unit of the column.
-
-        Raises:
-            ValueError: Raise error if the unit could not be parsed.
-
-        Returns:
-            str: Formatted column unit
-        """
-
-        if " " in to_unit:
-            n, d = map(str.strip, to_unit.split())
-        elif "/" in to_unit:
-            n, d = map(str.strip, to_unit.split("/"))
-        else:
-            raise ValueError(f"{to_unit} is a unit not supported")
-
-        if d == "m":
-            formatted_unit = n
-        elif d == "m-2":
-            formatted_unit = " ".join([n, "m-3"])
-        else:
-            raise ValueError(f"{to_unit} is a unit not supported")
-
-        return formatted_unit
 
     def _format_units(self, to_unit: str) -> str:
         """Format unit of columns to have a consistent notation, e.g.
@@ -904,16 +875,20 @@ class PostProcessing:
         if "/" in to_unit:
             n, d = map(str.strip, to_unit.split("/"))
             if d[-1].isdigit():
-                d = "-".join([d[:-1], d[-1]])
+                d = f"{d[:-1]}-{d[-1]}"
+            else:
+                d = f"{d}{-1}"
 
-            formatted_unit = " ".join([n, d])
+            formatted_unit = f"{n} {d}"
 
         else:
             formatted_unit = to_unit
 
         return formatted_unit
 
-    def add_gaussian_noise(self, data: xr.Dataset, var: str, std: float) -> xr.Dataset:
+    def add_gaussian_noise(
+        self, data: xr.Dataset, var: str, std: float, noise_units: str
+    ) -> xr.Dataset:
         """
         Add Gaussian noise to a specified variable in the dataset.
 
@@ -924,6 +899,8 @@ class PostProcessing:
                 The name of the variable to which Gaussian noise will be added.
             std (float):
                 The standard deviation of the Gaussian noise distribution.
+            unit (str):
+                Unit of the noise added.
 
         Returns:
             xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
@@ -933,17 +910,23 @@ class PostProcessing:
         # Create a deep copy of the dataset to avoid modifying the original in-place
         data_copy = data.copy(deep=True)
 
-        # assume no bias (center = 0) but noise (= std)
-        noise = np.random.normal(0, std, data_copy[var].size)
+        # convert noise to same unit as data
+        data_units = data[var].attrs.get("units", None)
+        std_conv = ucat.convert_columns(
+            std, from_units=noise_units, to_units=data_units, molar_mass=var
+        )
+
+        # assume no bias (center = 0) but noise (= std_conv)
+        noise = np.random.normal(0, std_conv, data_copy[var].size)
         noise = noise.reshape(data_copy[var].shape)
 
         data_copy[var] = data[var] + noise
         data_copy[var].attrs.update(data[var].attrs)
-        data_copy[var].attrs["noise_level"] = std
+        data_copy[var].attrs["noise_level"] = std_conv
 
-        # add std for variable based on artificial noise
-        data_copy[f"{var}_std"] = (data[var].dims, np.full_like(data[var], std))
-        data_copy[f"{var}_std"].attrs["units"] = data[var].attrs.get("units", None)
+        # add std_conv for variable based on artificial noise
+        data_copy[f"{var}_std"] = (data[var].dims, np.full_like(data[var], std_conv))
+        data_copy[f"{var}_std"].attrs["units"] = data_units
 
         return data_copy
 
@@ -1272,7 +1255,7 @@ class PostProcessing:
         self,
         data: xr.Dataset,
         gas: str = "ch4",
-        new_var_unit: str = "kg m-3",
+        to_units: str = "kg m-3",
     ) -> xr.Dataset:
         """TODO
 
@@ -1281,7 +1264,7 @@ class PostProcessing:
                 TODO
             gas (str, optional):
                 TODO. Defaults to "ch4".
-            new_var_unit (str, optional):
+            to_units (str, optional):
                 TODO. Defaults to "kg m-3".
 
         Returns:
@@ -1304,15 +1287,14 @@ class PostProcessing:
         print(
             f"Converting {gas} mixing ratios to concentrations. This might take a while."
         )
-        data[gas] = ucat.convert_points(
+        data[gas] = ucat.convert_columns(
             data[gas],
-            data[gas].attrs.get("units", None),
-            new_var_unit,
-            molar_mass=gas.upper(),
+            from_units=data[gas].attrs.get("units", None),
+            to_units=to_units,
+            molar_mass=gas,
             p=data.phydro,
             T=data.thl,
         )
-        data[gas].attrs["units"] = new_var_unit
 
         return data
 
@@ -1464,10 +1446,13 @@ class PostProcessing:
 
 
 ############# other functions #############
-def object_to_list(var: str) -> list:
+def object_to_list(var) -> list:
     if var is None:
-        raise ValueError(f"{var} should be of type 'str' or 'list', not 'None'")
-    if not isinstance(var, list):
+        raise ValueError("Input should not be 'None'")
+    if isinstance(var, xr.DataArray):
+        var = var.values.tolist()
+    elif isinstance(var, np.ndarray):
+        var = var.tolist()
+    elif not isinstance(var, list):
         var = [var]
-
     return var

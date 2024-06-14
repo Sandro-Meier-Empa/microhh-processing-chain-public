@@ -331,11 +331,29 @@ def print_simulation_progress(case: init.Case):
     """Print the progress of a simulation based on the saved binary output
     files of MicroHH"""
 
+    class bcolors:
+        CYAN = "\033[96m"
+        VIOLET = "\033[95m"
+        BLUE = "\033[94m"
+        YELLOW = "\033[93m"
+        GREEN = "\033[92m"
+        RED = "\033[91m"
+        UNDERLINE = "\033[4m"
+        BOLD = "\033[1m"
+        ENDC = "\033[0m"
+
     current_timestep, max_timestep = get_simulation_progress(case)
-    progress_percentage = current_timestep / max_timestep * 100
+    progress_percentage = int(current_timestep / max_timestep * 100)
+
+    if progress_percentage == 0:
+        color = bcolors.RED
+    elif progress_percentage == 100:
+        color = bcolors.GREEN
+    else:
+        color = bcolors.YELLOW
 
     print(
-        f"Simulation progress of {case.case_path}: {progress_percentage:.0f}% ({current_timestep}s ouf of {max_timestep}s)"
+        f"{color}Simulation progress of {case.case_path}: {progress_percentage}% ({current_timestep}s ouf of {max_timestep}s){bcolors.ENDC}"
     )
 
 
