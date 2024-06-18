@@ -1,11 +1,13 @@
 import glob
 import os
+import pyproj
+import re
+import scipy
 import shutil
 import subprocess
 import sys
-import pyproj
-import scipy
 import warnings
+import zipfile
 
 from pathlib import Path
 from typing import Union, Tuple
@@ -427,6 +429,12 @@ class PostProcessing:
 
         print(f"########## START PROCESSING OF {self.case_path} ##########")
 
+        # skip post-processing if simulation failed at start
+        current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
+        if current_time_step == 0:
+            print("ERROR: Simulation failed. Skipped post-processing.")
+            return
+
         self.create_3d_output(
             vars=vars,
             overwrite=overwrite,
@@ -576,6 +584,42 @@ class PostProcessing:
                 print(f"Successfully copied '{file}' to '{self.store_path}'.")
             else:
                 print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
+
+    def zip_grid_files(self, remove_files: bool = False):
+        """TODO
+
+        Args:
+            remove_files (bool, optional):
+                TODO. Defaults to False.
+        """
+        pattern = re.compile(r"^.*\.\d{7}$")
+        matching_files = [
+            file for file in self.scratch_path.iterdir() if pattern.match(file.name)
+        ]
+        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+
+        with zipfile.ZipFile(zip_filename, "w") as zip_file:
+            for file in matching_files:
+                zip_file.write(file, file.name)
+
+        print(
+            f"{len(matching_files)} files were added to the zip folder '{zip_filename}'"
+        )
+
+        if remove_files:
+            for file in matching_files:
+                file.unlink()
+
+    def unzip_grid_files(self):
+        """TODO"""
+        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+
+        with zipfile.ZipFile(zip_filename, "r") as zip_ref:
+            zip_ref.extractall(self.scratch_path)
+
+        print(
+            f"Files from '{zip_filename}' successfully extracted to '{self.scratch_path}'"
+        )
 
     def open_3d_prognostic_variable(
         self,
@@ -1284,12 +1328,14 @@ class PostProcessing:
             print(f"Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
+        from_units = data[gas].attrs.get("units", None)
         print(
-            f"Converting {gas} mixing ratios to concentrations. This might take a while."
+            f"Converting {gas} mixing ratios [{from_units}] to concentrations [{to_units}]. ",
+            "This might take a while.",
         )
-        data[gas] = ucat.convert_columns(
+        data[gas] = ucat.convert_points(
             data[gas],
-            from_units=data[gas].attrs.get("units", None),
+            from_units=from_units,
             to_units=to_units,
             molar_mass=gas,
             p=data.phydro,
@@ -1334,7 +1380,7 @@ class PostProcessing:
 
         return data
 
-    def calculate_tke(
+    def calculate_3D_tke(
         self,
         data: xr.Dataset,
     ) -> xr.Dataset:
@@ -1456,3 +1502,47 @@ def object_to_list(var) -> list:
     elif not isinstance(var, list):
         var = [var]
     return var
+
+
+def get_2D_tke_threshold_time(
+    stats: xr.Dataset,
+    tke_threshold: bool = False,
+    tke_der_threshold: bool = False,
+    threshold_value=0,
+) -> Tuple[int, Union[int, np.datetime64]]:
+
+    if not tke_threshold and not tke_der_threshold:
+        raise ValueError("Either 'tke_threshold' or 'tke_der_treshold' must be true.")
+    if tke_threshold and tke_der_threshold:
+        raise ValueError(
+            "Only one of 'tke_threshold' or 'tke_der_treshold' should be true."
+        )
+
+    # Calculate the median of tke over the 'z' dimension
+    tke_median = stats.tke.median(dim="z")
+
+    if tke_threshold:
+        threshold_time = tke_median.where(
+            tke_median > threshold_value * tke_median.max()
+        ).dropna(dim="time")
+    elif tke_der_threshold:
+        # Calculate the derivative of tke_median with respect to time
+        tke_derivative = tke_median.differentiate(coord="time")
+
+        # Calculate the relative derivative
+        tke_median_overall = stats.tke.median(dim=["z", "time"])
+        relative_derivative = tke_derivative / tke_median_overall
+
+        # Find the time where the threshold is exceeded for the first time
+        threshold_time = relative_derivative.where(
+            relative_derivative > threshold_value
+        ).dropna(dim="time")
+    else:
+        raise ValueError
+
+    if threshold_time.size > 0:
+        time_value = threshold_time.time[0].item()
+        time_ind = stats["time"].where(stats["time"] == time_value).argmax().item()
+        return time_ind, time_value
+    else:
+        raise ValueError(f"No data for TKE threshold = {threshold_value}.")

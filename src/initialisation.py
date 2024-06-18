@@ -101,7 +101,7 @@ class Case:
         self.method = method
 
         self._handle_directory(overwrite)
-        self._handle_method()
+        self._handle_running_method()
 
     def _handle_directory(self, overwrite: bool = False):
         """Create the case by creating a directory on 'scratch'.
@@ -121,8 +121,12 @@ class Case:
             print(f"Overwriting {self.file_directory}")
             os.makedirs(self.file_directory)
 
-    def _handle_method(self):
-        """check if method is correct
+    def _handle_running_method(self):
+        """Check if the running method is correct.
+        Accepted values are
+            'default': Create .ini file and initial conditions by running a python script.
+            'new': Create .ini file and initial conditions object oriented.
+            'rerun': Rerun a case which is stored on store.
 
         Raises:
             ValueError:
@@ -217,6 +221,11 @@ class Case:
                     self.ini_file.set_value(group=group, variable=variable, value=value)
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
+
+    def delete_scratch_folder(self):
+        """Delete the scratch directory"""
+        shutil.rmtree(self.scratch_path)
+        print(f"Deleting {self.case_path} from scratch.")
 
 
 def interpolate_to_model_profile(

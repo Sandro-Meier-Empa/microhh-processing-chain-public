@@ -225,7 +225,7 @@ class WindProcessing:
             xr.Dataset:
                 TODO
         """
-        wind_data = self.post.combine_prognostic_variables(None, wind_vars)
+        wind_data = self.post.combine_prognostic_variables(vars=wind_vars)
 
         return wind_data
 

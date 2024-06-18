@@ -22,6 +22,7 @@ sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
 
 import microhh_tools as mht
 import initialisation as init
+import processing as proc
 import ddeq
 import ucat
 
@@ -74,6 +75,7 @@ def estimate_emissions(
             and auxiliary variables for all detected sources.
     """
 
+    # check if data or wind contains multiple time steps
     if any("time" in dim for dim in wind.dims) or any(
         "time" in dim for dim in data.dims
     ):
@@ -81,6 +83,10 @@ def estimate_emissions(
             "Either the wind dataset or the data dataset contains multiple time steps. "
             "Please select one time step."
         )
+
+    # add corners of pixels if not in data
+    if XX not in data:
+        data = proc.add_corners(data)
 
     # if available, add method of vertical integration of wind as attribute
     wind_method = wind.attrs.get("method", None)

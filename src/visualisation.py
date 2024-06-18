@@ -616,3 +616,118 @@ def plot_gas_weight(
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_tke(
+    case,
+    tke_threshold: bool = False,
+    tke_der_threshold: bool = False,
+    threshold_value=0,
+):
+    stats = init.read_statistics(case)
+    _, threshold_time = proc.get_2D_tke_threshold_time(
+        stats, tke_threshold, tke_der_threshold, threshold_value
+    )
+
+    # Calculate the median of tke over the 'z' dimension
+    tke_median = stats.tke.median(dim="z")
+
+    # Calculate the derivative of tke_median with respect to time
+    tke_derivative = tke_median.differentiate(coord="time")
+
+    # Calculate the relative derivative
+    tke_median_overall = stats.tke.median(dim=["z", "time"])
+    relative_derivative = tke_derivative / tke_median_overall
+
+    # Create subplots
+    fig, ax = plt.subplots(2, 2, sharex=True, figsize=(14, 10))
+
+    # Plot the original 2D TKE as the first subplot
+    cax = ax[0, 0].pcolormesh(stats["time"], stats["z"], stats["tke"].T, cmap="viridis")
+    ax[0, 0].set_title("2D TKE")
+    ax[0, 0].set_xlabel("Time")
+    ax[0, 0].set_ylabel("Height [m]")
+    ax[0, 0].axvspan(stats["time"].min(), threshold_time, color="white", alpha=0.3)
+
+    # Add the colorbar above the first subplot
+    cbar = fig.colorbar(cax, ax=ax[0, 0], orientation="horizontal", pad=0.15)
+    cbar.set_label(f"TKE [{stats.tke.attrs['units']}]")
+
+    # Plot median tke on the second subplot
+    ax[0, 1].plot(
+        tke_median["time"],
+        tke_median,
+        linestyle="dotted",
+        color="C0",
+    )
+    ax[0, 1].plot(
+        tke_median["time"].where(tke_median["time"] >= threshold_time, drop=True),
+        tke_median.where(tke_median["time"] >= threshold_time, drop=True),
+        linestyle="solid",
+        color="C0",
+    )
+    ax[0, 1].set_title("Median TKE over Time")
+    ax[0, 1].set_xlabel("Time")
+    ax[0, 1].set_ylabel(f"Median TKE [{stats.tke.attrs['units']}]")
+
+    if tke_threshold:
+        ax[0, 1].axhline(
+            y=threshold_value * tke_median.max(),
+            color="black",
+            label=f"Threshold: {int(threshold_value*100)}% of max TKE",
+        )
+        ax[0, 1].legend()
+
+    # Plot the derivative of tke on the third subplot
+    ax[1, 0].plot(
+        tke_derivative["time"],
+        tke_derivative,
+        linestyle="dotted",
+        color="orange",
+    )
+    ax[1, 0].plot(
+        tke_derivative["time"].where(
+            tke_derivative["time"] >= threshold_time, drop=True
+        ),
+        tke_derivative.where(tke_derivative["time"] >= threshold_time, drop=True),
+        linestyle="solid",
+        color="orange",
+    )
+    ax[1, 0].axhline(0, color="black", linestyle="--", linewidth=0.7)
+    ax[1, 0].set_title("Derivative of Median TKE over Time")
+    ax[1, 0].set_xlabel("Time")
+    ax[1, 0].set_ylabel("Derivative of Median TKE")
+
+    # Plot the relative derivative on the fourth subplot
+    ax[1, 1].plot(
+        relative_derivative["time"],
+        relative_derivative * 100,
+        linestyle="dotted",
+        color="green",
+    )
+    ax[1, 1].plot(
+        relative_derivative["time"].where(
+            relative_derivative["time"] >= threshold_time, drop=True
+        ),
+        relative_derivative.where(
+            relative_derivative["time"] >= threshold_time, drop=True
+        )
+        * 100,
+        linestyle="solid",
+        color="green",
+    )
+    ax[1, 1].axhline(0, color="black", linestyle="--", linewidth=0.7)
+    ax[1, 1].set_title("Relative Derivative of Median TKE over Time [%]")
+    ax[1, 1].set_xlabel("Time")
+
+    if tke_der_threshold:
+        ax[1, 1].axhline(
+            y=threshold_value * 100,
+            color="black",
+            label=f"Threshold: {int(threshold_value*100)}% of second derivative of TKE",
+        )
+        ax[1, 1].legend()
+
+    # Adjust layout
+    plt.tight_layout()
+    plt.show()
