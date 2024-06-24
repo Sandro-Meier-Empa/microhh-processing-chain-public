@@ -19,7 +19,7 @@ import numpy as np
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "ucat", "src"))
 
 import microhh_tools as mht
 import cscs
@@ -592,19 +592,22 @@ class PostProcessing:
             remove_files (bool, optional):
                 TODO. Defaults to False.
         """
+        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+
+        if zip_filename.exists():
+            print(f"{zip_filename} already exists. Skipping...")
+            return
+
         pattern = re.compile(r"^.*\.\d{7}$")
         matching_files = [
             file for file in self.scratch_path.iterdir() if pattern.match(file.name)
         ]
-        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
 
         with zipfile.ZipFile(zip_filename, "w") as zip_file:
             for file in matching_files:
                 zip_file.write(file, file.name)
 
-        print(
-            f"{len(matching_files)} files were added to the zip folder '{zip_filename}'"
-        )
+        print(f"{len(matching_files)} files were zipped to '{zip_filename}'.")
 
         if remove_files:
             for file in matching_files:
@@ -868,7 +871,7 @@ class PostProcessing:
 
         data = self.open_3d_prognostic_variable(variable.lower())
 
-        to_unit = self._format_units(to_unit)
+        to_unit = ucat.format_unit(to_unit, sep=" ")
         volume_unit = ucat.col_unit2vol_unit(to_unit)
 
         variable = variable.upper()
@@ -877,15 +880,12 @@ class PostProcessing:
         # default MicroHH output is mol mol-1
         # use default pressure and temperature for computational efficiency
         if default_p_and_t:
-            data[variable] = (
-                data[variable].dims,
-                ucat.convert_columns(
-                    data[variable],
-                    from_units=data[variable].attrs.get("units", None),
-                    to_units=volume_unit,
-                    molar_mass=variable,
+            data[variable] = ucat.convert_columns(
+                data[variable],
+                from_unit=data[variable].attrs.get("units", None),
+                to_unit=volume_unit,
+                molar_mass=variable
                 ),
-            )
         else:
             data = self.convert_to_concentration(data, variable, volume_unit)
 
@@ -893,6 +893,7 @@ class PostProcessing:
         data_2D = data.integrate(coord="z")
 
         # adjust units due to integration
+        data_2D[variable].attrs["units"] = ucat.format_unit(to_unit, sep=" ")
         data_2D[variable].attrs[
             "description"
         ] = f"vertically integrated {variable} columns"
@@ -904,31 +905,6 @@ class PostProcessing:
             data_2D.to_netcdf(file_path)
 
         return data_2D
-
-    def _format_units(self, to_unit: str) -> str:
-        """Format unit of columns to have a consistent notation, e.g.
-        m s-1, kg s-1 etc.
-
-        Args:
-            to_unit (str): Unit which should be formatted
-
-        Returns:
-            str: Formatted unit
-        """
-
-        if "/" in to_unit:
-            n, d = map(str.strip, to_unit.split("/"))
-            if d[-1].isdigit():
-                d = f"{d[:-1]}-{d[-1]}"
-            else:
-                d = f"{d}{-1}"
-
-            formatted_unit = f"{n} {d}"
-
-        else:
-            formatted_unit = to_unit
-
-        return formatted_unit
 
     def add_gaussian_noise(
         self, data: xr.Dataset, var: str, std: float, noise_units: str
@@ -957,7 +933,7 @@ class PostProcessing:
         # convert noise to same unit as data
         data_units = data[var].attrs.get("units", None)
         std_conv = ucat.convert_columns(
-            std, from_units=noise_units, to_units=data_units, molar_mass=var
+            std, from_unit=noise_units, to_unit=data_units, molar_mass=var
         )
 
         # assume no bias (center = 0) but noise (= std_conv)
@@ -1246,8 +1222,8 @@ class PostProcessing:
 
         return data
 
+    @staticmethod
     def add_corners(
-        self,
         data: xr.Dataset,
         var: Tuple[str, str] = ("lon", "lat"),
         dims: Tuple[str, str] = ("nrows", "nobs"),
@@ -1299,7 +1275,7 @@ class PostProcessing:
         self,
         data: xr.Dataset,
         gas: str = "ch4",
-        to_units: str = "kg m-3",
+        to_unit: str = "kg m-3",
     ) -> xr.Dataset:
         """TODO
 
@@ -1308,7 +1284,7 @@ class PostProcessing:
                 TODO
             gas (str, optional):
                 TODO. Defaults to "ch4".
-            to_units (str, optional):
+            to_unit (str, optional):
                 TODO. Defaults to "kg m-3".
 
         Returns:
@@ -1328,15 +1304,15 @@ class PostProcessing:
             print(f"Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
-        from_units = data[gas].attrs.get("units", None)
+        from_unit = data[gas].attrs.get("units", None)
         print(
-            f"Converting {gas} mixing ratios [{from_units}] to concentrations [{to_units}]. ",
+            f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}]. ",
             "This might take a while.",
         )
         data[gas] = ucat.convert_points(
             data[gas],
-            from_units=from_units,
-            to_units=to_units,
+            from_unit=from_unit,
+            to_unit=to_unit,
             molar_mass=gas,
             p=data.phydro,
             T=data.thl,

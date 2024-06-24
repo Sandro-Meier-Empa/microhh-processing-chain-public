@@ -517,7 +517,7 @@ def add_ime_text(
     text.append(f'• Filter size: {data.attrs.get("filter_size", "-"):g}')
     text.append(f"• Plume size: {plume_size:d} px")
     text.append(
-        f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "-")}'
+        f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "a.u.")}'
     )
 
     wind_method = result.wind_speed.attrs.get("method", None)

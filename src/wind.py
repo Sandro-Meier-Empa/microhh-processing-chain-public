@@ -345,14 +345,14 @@ class WindProcessing:
             )
 
         # get current unit of gas
-        units = data[gas].attrs.get("units", None)
-        quantity, _ = ucat._unit2quantity(units)
+        unit = data[gas].attrs.get("units", None)
+        quantity, _ = ucat._unit2quantity(unit)
 
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
             # add pressure which is needed to convert mass mixing ratios to concentraions
             data = self.post.add_statistics_variable(data, "phydro")
-            data = self.post.convert_to_concentration(data, gas, to_units="kg m-3")
+            data = self.post.convert_to_concentration(data, gas, to_unit="kg m-3")
 
         # calculate threshold. Default is 1 ppb
         mixing_ratio_threshold = (
@@ -360,8 +360,8 @@ class WindProcessing:
         )
         threshold = ucat.convert_points(
             mixing_ratio_threshold,
-            from_units="mol mol-1",
-            to_units=units,
+            from_unit="mol mol-1",
+            to_unit=unit,
             molar_mass=gas,
         )
 

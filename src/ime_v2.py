@@ -85,8 +85,8 @@ def estimate_emissions(
         )
 
     # add corners of pixels if not in data
-    if XX not in data:
-        data = proc.add_corners(data)
+    if "corners" not in data.dims:
+        data = proc.PostProcessing.add_corners(data)
 
     # if available, add method of vertical integration of wind as attribute
     wind_method = wind.attrs.get("method", None)
@@ -112,21 +112,17 @@ def estimate_emissions(
     noise_units = data["CH4_std"].attrs.get("units", None)
     noise_level = ucat.convert_columns(
         np.nanmean(data["CH4_std"]),
-        from_units=noise_units,
-        to_units="kg m-2",
+        from_unit=noise_units,
+        to_unit="kg m-2",
         molar_mass="CH4",
     )
 
     # convert data to correct units
     data_units = data["CH4"].attrs.get("units", None)
-    ch4_mass = ucat.convert_columns(
-        data["CH4"], from_units=data_units, to_units="kg m-2", molar_mass="CH4"
+    data["CH4_mass"] = ucat.convert_columns(
+        data["CH4"], from_unit=data_units, to_unit="kg m-2", molar_mass="CH4"
     )
-
-    # put into array
-    dims = data["CH4"].dims
-    attrs = {"units": "kg m-2", "noise_level": noise_level}
-    data["CH4_mass"] = xr.DataArray(ch4_mass, dims=dims, attrs=attrs)
+    data["CH4_mass"].attrs.update({"noise_level": noise_level})
 
     # normalized convolution (sigma px)
     data = ddeq.background.estimate(
@@ -141,8 +137,8 @@ def estimate_emissions(
     background_units = data["CH4_estimated_background"].attrs.get("units", None)
     mass_bg = ucat.convert_columns(
         data["CH4_estimated_background"],
-        from_units=background_units,
-        to_units="kg m-2",
+        from_unit=background_units,
+        to_unit="kg m-2",
         molar_mass="CH4",
     )
 
