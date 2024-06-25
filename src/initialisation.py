@@ -60,11 +60,8 @@ class Case:
             store_path (str):
                 Path of personal folder on 'store'.
             location (str):
-                TODO ('scratch', 'store')
-
-
-        Raises:
-            ValueError: TODO
+                Location where the case should be handled (read and write)
+                Options are 'scratch' and 'store'.
         """
         self.user = os.environ["USER"]
         self.case_name = case_name
@@ -90,13 +87,19 @@ class Case:
         method: str = "new",
         overwrite: bool = False,
     ):
-        """TODO
+        """Initialise a case by creating or reading in a directory.
 
         Args:
             method (str, default: 'new'):
-                ('default', 'new', 'rerun')
+                Method of how the case should be set up.
+                Options are...
+                    ...'default': use python script to create .ini file and
+                    initial conditions.
+                    ...'new': create .ini file and initial conditions object
+                    oriented.
+                    ...'rerun': use .ini file and initial condition from store.
             overwrite (bool, default: False):
-                TODO
+                Specify if existing case should be overwritten.
         """
         self.method = method
 
@@ -127,10 +130,6 @@ class Case:
             'default': Create .ini file and initial conditions by running a python script.
             'new': Create .ini file and initial conditions object oriented.
             'rerun': Rerun a case which is stored on store.
-
-        Raises:
-            ValueError:
-                TODO
         """
         # check if the case is set up in the directory 'microhh/cases/'
         if self.method == "default":
@@ -169,6 +168,9 @@ class Case:
             )
 
     def _provide_ini(self):
+        """Provide .ini file based on the selected method when initialising a case.
+        If method="default", it will be created by running a pyhton file.
+        If method="new", an empty file is created which can be modified later."""
 
         # default: copy .ini file from 'microhh/cases/'
         if self.method == "default":
@@ -237,7 +239,7 @@ def interpolate_to_model_profile(
     the MicroHH model.
 
     Args:
-        grid: TODO
+        grid: MicroHH grid created using the LS2D module.
         variable_profile (Union[list, np.array], optional. Default: None):
             Value of the variable at these heights. If not specified,
             the variable is set to 0.

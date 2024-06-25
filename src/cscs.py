@@ -44,18 +44,20 @@ class DaintSetup:
         large_memory: bool = False,
         partition: str = "debug",
     ):
-        """TODO
+        """A calss handling everything around the worklow on cscs's supercomputers.
+        Is used to create and submit job scripts.
 
         processor (str) ['cpu', 'gpu']:
             Processor version to be used to run the model.
         mpi (bool):
             Indicates if mpi should be enabled.
         account (str):
-            TODO
+            Account on which the job should be submitted from.
         mail_type (str):
-            TODO (NONE, BEGIN, END, FAIL, REQUEUE, ALL)
+            Specify which events should trigger a mail to the user.
+            Options are 'NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'
         email (str):
-            TODO
+            E-mail adress of the user.
         run_time (str, optional. Default: "00:30:00"):
             Specify the job duration. Determines the queuing time.
             Format: "HH:MM:SS".
@@ -152,6 +154,54 @@ class DaintSetup:
             return pd.to_timedelta(run_time)
         except ValueError:
             raise ValueError("Invalid run_time format. Use HH:MM:SS")
+
+    def process_case_on_daint(
+        self,
+        case: init.Case,
+        py_file_path: str,
+        job_name: str,
+        additional_args: dict = {},
+        start_jobs: bool = True,
+    ):
+        """Submit a bash script to process a case on daint.
+
+        Args:
+            case (init.Case):
+                Case which should be processed.
+            py_file_path (str):
+                File to the python script which should be executed to process the case.
+            job_name (str):
+                Name of the job. Determines the name of the resulting slurm.out script
+                and the job name in the queue.
+            additional_args (dict, optional):
+                Addtional arguments for the function called in the python script. Defaults to {}.
+            start_jobs (bool, optional):
+                Specify if the job should be starte. Defaults to True.
+        """
+        job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
+
+        # create command for bash script
+        command = f"srun python {py_file_path} --case-name {case.case_name} --case-suffix {case.suffix}"
+        additional_args_str = " ".join(
+            [f"{key}={str(value)}" for key, value in additional_args.items()]
+        )
+        command = f"{command} --additional-args {additional_args_str}"
+
+        # submit bash script to run post processing in parallel on daint
+        job_file = Path(case.scratch_path, f"{job_name_formatted}.sbash")
+        if not job_file.exists():
+            job_file = self.create_bash_script(
+                commands=command,
+                job_name=f"{job_name_formatted.replace('_', '-')}-{case.case_path}",
+                file_path=job_file,
+                scratch_path=case.scratch_path,
+            )
+        else:
+            print(f"Reading existing bash script {job_file}")
+
+        if start_jobs:
+            # Launch the job on daint
+            self.execute_bash_script(job_file, wait=False)
 
     def create_bash_script(
         self,
@@ -304,6 +354,16 @@ def jobs_in_queue(
 
 
 def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Add MicroHH simulation progress to the DataFrame containing the jobs in the queue.
+
+    Args:
+        df (pd.DataFrame):
+            DataFrame containing the jobs in the queue
+
+    Returns:
+        pd.DataFrame:
+            DataFrame containing the jobs in the queue with simulation progress.
+    """
     progress_percentages = []
 
     for case_path in df["NAME"]:
@@ -358,6 +418,17 @@ def print_simulation_progress(case: init.Case):
 
 
 def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
+    """Get current simulation progress of a MicroHH simulation based on the
+    binary grid files generated when running the model.
+
+    Args:
+        case (init.Case):
+            Case for which the simulation progress should be returned.
+
+    Returns:
+        Tuple[int, int]:
+            Current and max time step of a simulation.
+    """
     current_timestep = 0
 
     def process_file(file):

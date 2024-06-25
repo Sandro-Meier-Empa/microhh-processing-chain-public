@@ -54,9 +54,9 @@ class Visualisation:
 
         Args:
             case (init.Case):
-                TODO
+                Case to visualise the initial conditions for
             ncols (int, optional):
-                TODO. Defaults to 4.
+                Number of columns in the subplots. Defaults to 4.
         """
 
         file_path = Path(self.file_directory, f"{case.case_name}_input.nc")
@@ -479,16 +479,20 @@ def plot_ime_result(
 def add_ime_text(
     gas: str, data: xr.Dataset, result: xr.Dataset, title: str = None
 ) -> list:
-    """Add retrieval information
+    """Add retrieval information to a plot
 
     Args:
-        gas (_type_): TODO
-        data (_type_): TODO
-        result (_type_): TODO
-        title (_type_, optional): TODO. Defaults to None.
+        gas (str):
+            Gas which was processed.
+        data (xr.Dataset):
+            Dataset containing the retrieval information
+        result (xr.Dataset):    
+            Dataset containing the results of the retrieval.
+        title (str, optional):  
+            Title of the retrieval information. Defaults to None.
 
     Returns:
-        _type_: TODO
+        list: Formatted retrieval information.
     """
 
     time = pd.Timestamp(data.time.values)

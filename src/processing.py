@@ -348,42 +348,6 @@ class PostProcessing:
         self.ini_file = mht.Read_namelist(self.ini_path)
         self.file_directory = case.file_directory
 
-    def submit_postprocessing(
-        self,
-        daint_setup: cscs.DaintSetup,
-        py_file_path: str,
-        start_jobs: bool = True,
-    ):
-        """Submit a bash script to do the post-processing on daint
-
-        Args:
-            daint_setup (cscs.DaintSetup):
-                TODO
-            py_file_path (str):
-                TODO
-            start_jobs (bool, optional):
-                TODO. Defaults to True.
-        """
-
-        # create commands for bash script
-        commands = f"srun python {py_file_path} --case-name {self.case_name} --case-suffix {self.suffix}"
-
-        # submit bash script to run post processing in parallel on daint
-        job_file = Path(self.scratch_path, "post_processing.sbash")
-        if not job_file.exists():
-            job_file = daint_setup.create_bash_script(
-                commands=commands,
-                job_name=f"post-processing-{self.case_path}",
-                file_path=job_file,
-                scratch_path=self.scratch_path,
-            )
-        else:
-            print(f"Reading existing bash script {job_file}")
-
-        if start_jobs:
-            # Launch the job on daint
-            daint_setup.execute_bash_script(job_file, wait=False)
-
     def run_postprocessing(
         self,
         gas: str,
@@ -405,25 +369,28 @@ class PostProcessing:
 
         Args:
             gas (str):
-                TODO
+                Gas which should be processed to concentrations and vertically integrated.
             precision (str, optional):
-                TODO. Defaults to "double".
-            start_time (_type_, optional):
-                TODO. Defaults to None.
-            end_time (_type_, optional):
-                TODO. Defaults to None.
+                Precision used for the created .nc file. Defaults to "double".
+            start_time (int, optional. Default: None):
+                Start time in s of the data to process.
+            end_time (int, optional. Default: None):
+                End time in s of the data to process.
             to_unit (str, optional):
-                TODO. Defaults to "kg m-2".
+                Units of the trace gas columns. Defaults to "kg m-2".
             default_p_and_t (bool, optional):
-                TODO. Defaults to False.
+                Indicate if the standard values for pressure and temperature should be
+                used to convert mixing ratios to concentrations or if the
+                modelled pressure and temperature should be used. Defaults to False.
             method (str, optional):
-                TODO. Defaults to "height".
+                Method to vertically integrate wind speeds. Available options are
+                "mean", "median", "height", "concentration_weighted". Defaults to "height".
             height (Union[int, float], optional):
-                TODO. Defaults to None.
+                Height at which the wind speed should be used if method = 'height'. Defaults to None.
             overwrite (bool, optional):
-                TODO. Defaults to False.
+                Specify if the resulting dataset should be overwritten if it exists. Defaults to False.
             save (bool, optional):
-                TODO. Defaults to True.
+                Specify if the resulting dataset should be saved. Defaults to True.
         """
         vars = ["u", "v", "thl", gas]
 
@@ -479,9 +446,9 @@ class PostProcessing:
             precision (str, optional. Default: "double"):
                 Precision used for the created .nc file.
             start_time (int, optional. Default: None):
-                Start time in s of the data.
+                Start time in s of the data to process.
             end_time (int, optional. Default: None):
-                End time in s of the data.
+                End time in s of the data to process.
         """
         vars = object_to_list(vars)
         vars_to_process = vars.copy()
@@ -529,11 +496,12 @@ class PostProcessing:
             overwrite (bool, optional):
                 Specify if existing files on 'store' should be overwritten.
             move_var_files (bool, optional):
-                TODO. Defaults to False.
+                Specify if the .nc files of the variable files should be moved as well.
+                Defaults to False.
             vars (Union[str, list], optional):
-                TODO. Defaults to None.
+                Names of the variables to move if 'move_var_files' is True. Defaults to None.
             move_processed_files (bool, optional):
-                TODO. Defaults to True.
+                Specify if the processed files (e.g. {gas}_2D.nc) should be moved. Defaults to True.
         """
 
         # Handle target path
@@ -568,13 +536,13 @@ class PostProcessing:
                 self.move_pattern_to_store(pattern, overwrite)
 
     def move_pattern_to_store(self, pattern: str, overwrite: bool):
-        """TODO
+        """Move files whith a certain pattern to store.
 
         Args:
             pattern (str):
-                TODO
+                Pattern of files which should be moved.
             overwrite (bool):
-                TODO
+                Specify if existing files should be overwritten.
         """
 
         for file in self.scratch_path.glob(pattern):
@@ -586,11 +554,12 @@ class PostProcessing:
                 print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
 
     def zip_grid_files(self, remove_files: bool = False):
-        """TODO
+        """Zip all binary grid files together.
 
         Args:
             remove_files (bool, optional):
-                TODO. Defaults to False.
+                Specify if the grid files should be removed after zipping them together.
+                Defaults to False.
         """
         zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
 
@@ -614,7 +583,7 @@ class PostProcessing:
                 file.unlink()
 
     def unzip_grid_files(self):
-        """TODO"""
+        """Unzip the binay grid files to scratch"""
         zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
@@ -650,15 +619,11 @@ class PostProcessing:
         return data
 
     def open_microhh_nc(self, file_path: Union[str, Path]) -> xr.Dataset:
-        """TODO
+        """Open a .nc file related to MicroHH output.
 
         Args:
             file_path (Union[str, Path]):
-                TODO
-
-        Returns:
-            xr.Dataset:
-                TODO
+                Path of the file including file name.
         """
         try:
             data = xr.open_dataset(file_path)
@@ -672,11 +637,7 @@ class PostProcessing:
 
         Args:
             data (xr.Dataset):
-                TODO
-
-        Returns:
-            xr.Dataset:
-                TODO
+                MicroHH dataset to which the attributes and units should be assigned.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
         variables = {
@@ -739,7 +700,7 @@ class PostProcessing:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "thl"]
             filename (str):
-                TODO
+                Name of the file without path or file extension.
             overwrite (bool. Default: False):
                 Indicate if an existing file should be overwritten.
             save (bool. Default: True):
@@ -769,17 +730,20 @@ class PostProcessing:
         vars: Union[str, list],
         data: xr.Dataset = None,
     ) -> xr.Dataset:
-        """TODO
+        """Combine multiple prognostic variables of the MicroHH output to one 
+        dataset. Specify either the variables to combine or give a dataset to
+        which the new variables should be added.
 
         Args:
-            data (xr.Dataset):
-                TODO
             vars (Union[str, list]):
-                TODO
+                Variable(s) to add together or to assign to the given dataset.
+            data (xr.Dataset):
+                If given, the variable(s) are added to this dataset
+            
 
         Returns:
             xr.Dataset:
-                TODO
+                Dataset containing the combined variables.
         """
         vars = object_to_list(vars)
         datasets = [] if data is None else [data]
@@ -824,9 +788,20 @@ class PostProcessing:
 
         return nc_file_interpolated
 
-    def _get_dims_at_grid_boundaries(self, nc_file):
+    def _get_dims_at_grid_boundaries(self, data: xr.Dataset) -> str:
+        """Get the name of the dimension that is sampled at the boundaries of the
+        MicroHH grid
+
+        Args:
+            data (xr.Dataset):
+                Dataset which contains a dimension which is sampled at the boundaries
+                of the grid.
+
+        Returns:
+            str: Name of dimension which is sampled at the grid boundaries.
+        """
         # iterate over the dimensions of the Dataset
-        for dim in list(nc_file.dims):
+        for dim in list(data.dims):
             # check if the dimension name ends with 'h'
             if dim.endswith("h"):
                 return dim
@@ -849,8 +824,10 @@ class PostProcessing:
                 Variable which should be vertically integrated.
             to_unit (str):
                 Target unit of the columns.
-            default_p_and_t (bool)
-                TODO
+            default_p_and_t (bool. Default: False):
+                Indicate if the standard values for pressure and temperature should
+                be used to convert mixing ratios to concentrations or if the
+                modelled pressure and temperature should be used.
             save (bool. Default: True):
                 Indicate if the created file should be saved.
             overwrite (bool. Default: False):
@@ -880,12 +857,14 @@ class PostProcessing:
         # default MicroHH output is mol mol-1
         # use default pressure and temperature for computational efficiency
         if default_p_and_t:
-            data[variable] = ucat.convert_columns(
-                data[variable],
-                from_unit=data[variable].attrs.get("units", None),
-                to_unit=volume_unit,
-                molar_mass=variable
+            data[variable] = (
+                ucat.convert_columns(
+                    data[variable],
+                    from_unit=data[variable].attrs.get("units", None),
+                    to_unit=volume_unit,
+                    molar_mass=variable,
                 ),
+            )
         else:
             data = self.convert_to_concentration(data, variable, volume_unit)
 
@@ -1277,19 +1256,17 @@ class PostProcessing:
         gas: str = "ch4",
         to_unit: str = "kg m-3",
     ) -> xr.Dataset:
-        """TODO
+        """Convert the gas given in data to concentrations using modelled pressure
+        and temperature.
 
         Args:
             data (xr.Dataset):
-                TODO
+                Dataset containing the variable which should be converted to concentrations.
             gas (str, optional):
-                TODO. Defaults to "ch4".
+                Gas for which the columns should be computed. Defaults to "ch4".
             to_unit (str, optional):
-                TODO. Defaults to "kg m-3".
-
-        Returns:
-            xr.Dataset:
-                TODO
+                Concentration units to which the gas should be converted.
+                Defaults to "kg m-3".
         """
         required_prognostic_vars = [gas, "thl"]
 
@@ -1360,15 +1337,16 @@ class PostProcessing:
         self,
         data: xr.Dataset,
     ) -> xr.Dataset:
-        """TODO
+        """Calculate the TKE based on the 3D prognostic variables of MicroHH
 
         Args:
             data (xr.Dataset):
-                TODO
+                Dataset containing the required variables. If it does not contain
+                all variables, they are added.
 
         Returns:
             xr.Dataset:
-                TODO
+                Dataset containing TKE as a variable.
         """
         wind_components = ["u", "v", "w"]
 

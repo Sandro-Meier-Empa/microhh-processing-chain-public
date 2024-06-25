@@ -150,6 +150,28 @@ class WindProcessing:
         save: bool = True,
         overwrite: bool = False,
     ) -> xr.Dataset:
+        """Create a 2D wind dataset from 3D MicroHH wind fields.
+
+        Args:
+            method (str):
+                Method to vertically integrate wind speeds. Available options are
+                "mean", "median", "height", "concentration_weighted"
+            gas (str, optional):
+                Gas to use if method = 'concentration_weighted' wind speeds.
+                Defaults to None.
+            height (Union[int, float], optional):
+                Height at which the wind speed should be used if method = 'height'.
+                Defaults to None.
+            save (bool, optional):
+                Specify if the resulting xarray dataset should be saved.
+                Defaults to True.
+            overwrite (bool, optional):
+                Specify if the output file should be overwritten if it exists.
+                Defaults to False.
+
+        Returns:
+            xr.Dataset: Dataset with vertically integrated wind.
+        """
         wind_vars = self._get_wind_vars(method)
 
         # load wind.nc if it exists
@@ -163,7 +185,7 @@ class WindProcessing:
 
         self._check_wind_integration(method, gas, height)
 
-        wind_data = self._process_wind_data(wind_vars)
+        wind_data = self.post.combine_prognostic_variables(vars=wind_vars)
 
         wind_data = self.vertically_integrate_wind(wind_data, method, gas, height)
 
@@ -196,7 +218,20 @@ class WindProcessing:
 
         return wind_data
 
-    def _get_wind_vars(self, method: str):
+    def _get_wind_vars(self, method: str) -> list:
+        """Get list of prognostic variables used for the given wind integration method.
+
+        Args:
+            method (str):
+                Method to vertically integrate wind speeds. Available options are
+                "mean", "median", "height", "concentration_weighted"
+
+        Raises:
+            NotImplementedError: Raise error if the method is not implemented.
+
+        Returns:
+            list: List of prognostic variables used for the given wind integration method.
+        """
         if method in ["mean", "median", "height"]:
             return ["u", "v"]
         elif method == "concentration_weighted":
@@ -204,7 +239,19 @@ class WindProcessing:
         else:
             raise NotImplementedError(f"Method {method} is not implemented.")
 
-    def _check_wind_integration(self, method, gas, height):
+    def _check_wind_integration(self, method: str, gas: str, height: Union[int, float]):
+        """Check if all required variables for a given wind integration method are given.
+
+        Args:
+            method (str):
+                Method to vertically integrate wind speeds. Available options are
+                "mean", "median", "height", "concentration_weighted"
+            gas (str, optional):
+                Gas to use if method = 'concentration_weighted' wind speeds.
+            height (Union[int, float], optional):
+                Height at which the wind speed should be used if method = 'height'.
+        """
+
         if method not in ["mean", "median", "height", "concentration_weighted"]:
             raise ValueError(
                 f"'method' must be 'mean', 'median', 'height' or 'concentration_weighted', not {method}."
@@ -213,21 +260,6 @@ class WindProcessing:
             raise ValueError("Height must be an integer or float, not 'None'.")
         if method == "concentration_weighted" and gas is None:
             raise ValueError("'gas' must be a string, not 'None'.")
-
-    def _process_wind_data(self, wind_vars: list) -> xr.Dataset:
-        """TODO
-
-        Args:
-            wind_vars (list):
-                TODO
-
-        Returns:
-            xr.Dataset:
-                TODO
-        """
-        wind_data = self.post.combine_prognostic_variables(vars=wind_vars)
-
-        return wind_data
 
     def _select_pixels_around_source(
         self, wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
@@ -323,21 +355,22 @@ class WindProcessing:
         return data[wind_components]
 
     def calculate_weight_profile(
-        self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
-    ):
-        """TODO
+        self, data: xr.Dataset, gas: str = "ch4", mixing_ratio_threshold: float = None
+    ) -> xr.Dataset:
+        """Calculate a weight profile for 3D wind speed based on the concentration
+        distribution of a gas.
 
         Args:
-            data (_type_): TODO
-            gas (str, optional): TODO. Defaults to "ch4".
-            threshold (float, optional): in mol mol-1. Defaults to None.
-
-        Raises:
-            ValueError: TODO
-            ValueError: TODO
+            data (xr.Dataset):
+                Dataset to which the weight profile should be added.
+            gas (str, optional):
+                Gas which is used to compute the weight profile. Defaults to "ch4".
+            mixing_ratio_threshold (float, optional):
+                Threshold in mol mol-1 below which the gas values are not used
+                to compute the weight profile. Defaults to None.
 
         Returns:
-            _type_: TODO
+            xr.Dataset: Dataset containing the weight profile.
         """
         if gas not in data.data_vars:
             raise KeyError(

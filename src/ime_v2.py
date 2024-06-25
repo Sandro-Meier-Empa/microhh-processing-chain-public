@@ -159,7 +159,7 @@ def estimate_emissions(
         L_max=L_max,
         gas="CH4",
         min_pixel_number=1,
-        allowed_upstream_detected=10,
+        allowed_upstream_detected=15,
     )
 
     return data, curves, results
