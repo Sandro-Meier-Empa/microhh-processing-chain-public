@@ -94,7 +94,7 @@ def process_case(case_name, case_suffix, **kwargs):
             stats, start_date="2020-01-01 08:00:00"
         )
 
-        for t, sim_time in enumerate(data.time.values[:start_time_step]):
+        for t, sim_time in enumerate(data.time.values[1:start_time_step]):
             data_subset = data.sel(time=sim_time)
             wind_subset = wind.sel(time=sim_time)
             stats_subset = stats.sel(time=sim_time)

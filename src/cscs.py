@@ -322,7 +322,7 @@ def jobs_in_queue(
         "CORE_SPEC",
         "SCHEDNODES",
     ],
-    add_progress: bool = True,
+    add_progress: bool = False,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 

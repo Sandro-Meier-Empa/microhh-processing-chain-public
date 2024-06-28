@@ -266,6 +266,16 @@ class WindProcessing:
     def _select_pixels_around_source(
         self, wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
     ) -> xr.Dataset:
+        """Select all pixels within a radius around a source
+
+        Args:
+            wind_data (xr.Dataset):
+                Dataset containg the wind information.
+            selected_source (xr.Dataset):
+                Source around which the pixels are to be selected.
+            radius (int):
+                Radius in pixels around the source.
+        """
         source_x0 = selected_source.source_x0.values
         source_y0 = selected_source.source_y0.values
 
@@ -326,6 +336,15 @@ class WindProcessing:
         data: xr.Dataset,
         height: Union[int, float],
     ):
+        """Get the wind speed at a certain height.
+
+        Args:
+            data (xr.Dataset):
+                Dataset containing the wind speed information.
+            height (Union[int, float]):
+                Height in m at which the wind speed should be taken from.
+
+        """
         if height is None:
             raise ValueError("Height must be an integer or float, not 'None'.")
 
@@ -341,8 +360,23 @@ class WindProcessing:
         return data_subset.mean(dim="z")
 
     def concentration_weighted_mean_wind(
-        self, data, gas: str = "ch4", mixing_ratio_threshold: float = None
+        self, data: xr.Dataset, gas: str = "ch4", mixing_ratio_threshold: float = None
     ) -> xr.Dataset:
+        """_summary_
+
+        Args:
+            data (xr.Dataset):
+                Dataset containing the wind information.
+            gas (str, optional):
+                Gas which should be used to weight the 3D wind fields.
+                Defaults to "ch4".
+            mixing_ratio_threshold (float, optional):
+                Threshold in mol mol-1 below which the gas values are not used
+                to compute the weight profile. Defaults to None.
+
+        Returns:
+            xr.Dataset: Dataset containing the weighted wind.
+        """
 
         wind_components = ["u", "v"]
 
@@ -423,15 +457,46 @@ class WindProcessing:
 
 
 def wind_profile_from_given_wind(
-    grid,
-    wind_speed,
-    height,
-    surface_roughness,
-    thl,
-    qt,
-    sensible_heat_flux,
-    threshold=None,
-):
+    grid: Union[
+        np.ndarray,
+        ls2d.grid.Grid_equidist,
+        ls2d.grid.Grid_linear_stretched,
+        ls2d.grid.Grid_stretched,
+        ls2d.grid.Grid_stretched_manual,
+    ],
+    wind_speed: Union[int, float],
+    height: Union[int, float],
+    surface_roughness: Union[int, float],
+    thl: Union[int, float, list, np.ndarray],
+    qt: Union[int, float, list, np.ndarray],
+    sensible_heat_flux: Union[int, float],
+    threshold: float = None,
+) -> xr.Dataset:
+    """_summary_
+
+    Args:
+        grid (Union[ np.ndarray, ls2d.grid.Grid_equidist, ls2d.grid.Grid_linear_stretched,
+        ls2d.grid.Grid_stretched, ls2d.grid.Grid_stretched_manual]):
+            Array of heights above the ground level.
+        wind_speed (Union[int, float]):
+            Target wind speed at 'height', (in m).
+        height (Union[int, float]):
+            Target height at which the wind speed should be 'wind_speed'.
+        surface_roughness (Union[int, float]):
+            Surface roughness length, (in m).
+        thl (Union[int, float, list, np.ndarray]):
+            (Potential) temperature profile, (in K).
+        qt (Union[int, float, list, np.ndarray]):
+            Specific humidity profile (dimensionless, in kg/kg)
+        sensible_heat_flux (Union[int, float]):
+            Sensible heat flux (W/m2).
+        threshold (float, optional):
+            Maximum difference between target 'wind_speed' and calculated wind speed. Defaults to None.
+
+    Returns:
+        xr.Dataset: _description_
+    """
+
     if isinstance(grid, np.ndarray):
         model_profile = grid
     elif isinstance(
@@ -508,7 +573,7 @@ def get_wind_profile(
     z0 (Union[int, float]): Roughness length.
     u_star (Union[int, float]): Friction velocity.
     t (Union[int, float, list, np.ndarray]): (Potential) temperature profile (in K).
-    q (Union[int, float, list, np.ndarray]): Specific humidity profile (dimensionless, in kg/kg)..
+    q (Union[int, float, list, np.ndarray]): Specific humidity profile (dimensionless, in kg/kg).
     H (Union[int, float]): Sensible heat flux (W/m^2).
     H_turb (Union[int, float]): Turbulent sensible heat flux (K m/s).
     displacement_height (Union[int, float], optional): Zero-plane displacement height (m). Defaults to 0.
@@ -774,7 +839,15 @@ def compute_u_star_stable(
     return u_star
 
 
-def replace_by_majority_sign(arr):
+def replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
+    """Replace wind speed in array with 0 if it does not have the same sign as
+    the majority of wind values in the array.
+
+    Args:
+        arr (np.ndarray):
+            Array containing the wind speed.
+
+    """
     # Determine the signs of each element (-1 for negative, 1 for positive, 0 for zero)
     signs = np.sign(arr).astype(int)
 
