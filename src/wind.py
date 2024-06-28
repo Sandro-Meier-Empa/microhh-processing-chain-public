@@ -12,10 +12,12 @@ import xarray as xr
 sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
+sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
 
 import initialisation as init
 import ddeq
 import ucat
+import ls2d
 
 
 class WindProcessing:
@@ -430,13 +432,25 @@ def wind_profile_from_given_wind(
     sensible_heat_flux,
     threshold=None,
 ):
+    if isinstance(grid, np.ndarray):
+        model_profile = grid
+    elif isinstance(
+        grid,
+        (
+            ls2d.grid.Grid_equidist,
+            ls2d.grid.Grid_linear_stretched,
+            ls2d.grid.Grid_stretched,
+            ls2d.grid.Grid_stretched_manual,
+        ),
+    ):
+        model_profile = grid.z
 
     u_star = compute_u_star(
         wind_speed, height, surface_roughness, thl, qt, H=sensible_heat_flux
     )
 
     wind_profile = get_wind_profile(
-        z=grid.z,
+        z=model_profile,
         z0=surface_roughness,
         u_star=u_star,
         t=thl,
@@ -445,13 +459,13 @@ def wind_profile_from_given_wind(
     )
 
     # check if wind speed at height deviates too much from given value
-    z_resolution = np.mean(np.diff(grid.z))
+    z_resolution = np.mean(np.diff(model_profile))
     lower_bound = height - z_resolution / 2
     upper_bound = height + z_resolution / 2
 
-    # Ucreate a mask based on whether grid.z is within the bounds
+    # Ucreate a mask based on whether model_profile is within the bounds
     mask = np.where(
-        (grid.z >= lower_bound) & (grid.z <= upper_bound),
+        (model_profile >= lower_bound) & (model_profile <= upper_bound),
         1,
         0,
     ).astype(bool)

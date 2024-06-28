@@ -232,7 +232,7 @@ class Visualisation:
             matplotlib.figure.Figure: Figure with subplots and text
         """
 
-        variable = variable.upper()
+        # variable = variable.upper()
 
         try:
             data = self.post.open_3d_prognostic_variable(

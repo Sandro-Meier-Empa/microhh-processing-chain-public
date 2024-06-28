@@ -231,7 +231,13 @@ class Case:
 
 
 def interpolate_to_model_profile(
-    grid: ls2d.grid,
+    grid: Union[
+        np.ndarray,
+        ls2d.grid.Grid_equidist,
+        ls2d.grid.Grid_linear_stretched,
+        ls2d.grid.Grid_stretched,
+        ls2d.grid.Grid_stretched_manual,
+    ],
     variable_profile: Union[list, np.ndarray] = None,
     input_profile: Union[list, np.ndarray] = None,
 ) -> np.ndarray:
@@ -250,7 +256,22 @@ def interpolate_to_model_profile(
         np.array: Values interpolated to the height levels of
         the MicroHH model.
     """
-    model_profile = grid.z
+    if isinstance(grid, np.ndarray):
+        model_profile = grid
+    elif isinstance(
+        grid,
+        (
+            ls2d.grid.Grid_equidist,
+            ls2d.grid.Grid_linear_stretched,
+            ls2d.grid.Grid_stretched,
+            ls2d.grid.Grid_stretched_manual,
+        ),
+    ):
+        model_profile = grid.z
+    else:
+        raise ValueError(
+            "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
+        )
 
     if variable_profile is not None:
         # Convert variable_profile to a NumPy array if it's a list
