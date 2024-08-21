@@ -204,7 +204,7 @@ class PreProcessing:
                     f"srun {self.scratch_path}/microhh init {self.case_name}",
                     f"srun {self.scratch_path}/microhh run {self.case_name}",
                 ],
-                job_name=self.case_path,
+                job_name="run_microhh",
                 file_path=job_file,
                 scratch_path=self.scratch_path,
             )
@@ -518,7 +518,7 @@ class PostProcessing:
             "*" + self.case_name + "_input.nc",
             "*" + self.case_name + ".out",
             "*" + self.case_name + ".default.*.nc",
-            "slurm-*.out",
+            "run_microhh_*.out",
             "run_microhh.sbash",
             "microhh",
         ]
@@ -582,9 +582,13 @@ class PostProcessing:
             for file in matching_files:
                 file.unlink()
 
-    def unzip_grid_files(self):
+    def unzip_grid_files(self, remove_zip_file: bool = False):
         """Unzip the binay grid files to scratch"""
         zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+
+        if not zip_filename.exists():
+            print(f"{zip_filename} does not exist. Skipping...")
+            return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
             zip_ref.extractall(self.scratch_path)
@@ -592,6 +596,9 @@ class PostProcessing:
         print(
             f"Files from '{zip_filename}' successfully extracted to '{self.scratch_path}'"
         )
+
+        if remove_zip_file:
+            zip_filename.unlink()
 
     def open_3d_prognostic_variable(
         self,
@@ -730,7 +737,7 @@ class PostProcessing:
         vars: Union[str, list],
         data: xr.Dataset = None,
     ) -> xr.Dataset:
-        """Combine multiple prognostic variables of the MicroHH output to one 
+        """Combine multiple prognostic variables of the MicroHH output to one
         dataset. Specify either the variables to combine or give a dataset to
         which the new variables should be added.
 
@@ -739,7 +746,7 @@ class PostProcessing:
                 Variable(s) to add together or to assign to the given dataset.
             data (xr.Dataset):
                 If given, the variable(s) are added to this dataset
-            
+
 
         Returns:
             xr.Dataset:
@@ -1257,7 +1264,7 @@ class PostProcessing:
         to_unit: str = "kg m-3",
     ) -> xr.Dataset:
         """Convert the gas given in data to concentrations using modelled pressure
-        and temperature.
+        and potential temperature.
 
         Args:
             data (xr.Dataset):
@@ -1281,18 +1288,25 @@ class PostProcessing:
             print(f"Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
+        # convert potential temperature to absolute temperature
+        if "ta" not in data.data_vars:
+            print(f"Calculating absolute temperature.")
+            data = self.add_absolute_temperature(data)
+
         from_unit = data[gas].attrs.get("units", None)
+
         print(
-            f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}]. ",
+            f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}].",
             "This might take a while.",
         )
+
         data[gas] = ucat.convert_points(
             data[gas],
             from_unit=from_unit,
             to_unit=to_unit,
             molar_mass=gas,
             p=data.phydro,
-            T=data.thl,
+            T=data.ta,
         )
 
         return data
@@ -1332,6 +1346,47 @@ class PostProcessing:
             )
 
         return data
+
+    def add_absolute_temperature(self, data: xr.Dataset) -> xr.Dataset:
+        """FIXME
+
+        Args:
+            data (xr.Dataset): _description_
+
+        Returns:
+            xr.Dataset: _description_
+        """
+
+        if "phydroh" not in data.data_vars:
+            print(f"Adding 'phydroh' to the dataset.")
+            data = self.add_statistics_variable(data, "phydroh")
+
+        # Calculate absolute temperature
+        data["ta"] = PostProcessing.calculate_absolute_temperature(
+            theta=data.thl, p=data.phydro, p0=data.phydroh.sel(zh=0)
+        )
+
+        # Add attributes to 'ta' variable
+        data["ta"].attrs["long_name"] = "Absolute temperature"
+        data["ta"].attrs["units"] = "K"
+
+        return data
+
+    @staticmethod
+    def calculate_absolute_temperature(theta, p, p0):
+        """
+        Calculate absolute temperature from potential temperature and pressure.
+
+        FIXME
+        """
+        # Constants
+        R = scipy.constants.R  # Specific gas constant for dry air in J/(kg·K)
+        cp = 1004  # Specific heat capacity at constant pressure for dry air in J/(kg·K)
+
+        # Calculate absolute temperature
+        absolute_temperature = theta * (p / p0) ** (R / cp)
+
+        return absolute_temperature
 
     def calculate_3D_tke(
         self,
@@ -1386,12 +1441,14 @@ class PostProcessing:
         headers = []
         values = []
 
-        out_files = list(self.file_directory.glob("slurm-*.out*"))
+        out_files = list(self.file_directory.glob("run_microhh_*.out"))
 
         if not out_files:
             raise FileNotFoundError(
                 f"No slurm output script found in {self.file_directory}"
             )
+
+        # FIXME: Handle case with multiple files
 
         for out_file in out_files:
             with open(out_file, "r") as f:

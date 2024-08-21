@@ -3,7 +3,7 @@ import scipy
 import sys
 
 from scipy.optimize import fsolve
-from typing import Union
+from typing import Union, Tuple
 from pathlib import Path
 
 import numpy as np
@@ -391,7 +391,7 @@ class WindProcessing:
         return data[wind_components]
 
     def calculate_weight_profile(
-        self, data: xr.Dataset, gas: str = "ch4", mixing_ratio_threshold: float = None
+        self, data: xr.Dataset, gas: str = "CH4", mixing_ratio_threshold: float = None
     ) -> xr.Dataset:
         """Calculate a weight profile for 3D wind speed based on the concentration
         distribution of a gas.
@@ -400,7 +400,7 @@ class WindProcessing:
             data (xr.Dataset):
                 Dataset to which the weight profile should be added.
             gas (str, optional):
-                Gas which is used to compute the weight profile. Defaults to "ch4".
+                Gas which is used to compute the weight profile. Defaults to "CH4".
             mixing_ratio_threshold (float, optional):
                 Threshold in mol mol-1 below which the gas values are not used
                 to compute the weight profile. Defaults to None.
@@ -415,12 +415,13 @@ class WindProcessing:
 
         # get current unit of gas
         unit = data[gas].attrs.get("units", None)
-        quantity, _ = ucat._unit2quantity(unit)
+        quantity, _, _ = ucat._unit2quantity(unit)
 
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
             # add pressure which is needed to convert mass mixing ratios to concentraions
             data = self.post.add_statistics_variable(data, "phydro")
+            data = self.post.add_statistics_variable(data, "phydroh")
             data = self.post.convert_to_concentration(data, gas, to_unit="kg m-3")
 
         # calculate threshold. Default is 1 ppb
@@ -454,6 +455,79 @@ class WindProcessing:
     def _circular_std(self, a, axes):
         """Calculate circular standard deviation, e.g. of wind direction"""
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
+
+
+class EffectiveWind:
+
+    _SLOPES = {
+        "stable": {
+            "wind_speed": 0.617019,
+            "emission_height": 0.115684,
+            "surface_roughness": -2.948321,
+        },
+        "neutral": {
+            "wind_speed": 0.792523,
+            "emission_height": 0.043337,
+            "surface_roughness": -1.287769,
+        },
+        "instable": {
+            "wind_speed": 0.836352,
+            "emission_height": 0.044841,
+            "surface_roughness": -0.680651,
+        },
+    }
+
+    _STD_ERR = {
+        "stable": {
+            "wind_speed": 0.003964,
+            "emission_height": 0.001533,
+            "surface_roughness": 0.063785,
+        },
+        "neutral": {
+            "wind_speed": 0.001557,
+            "emission_height": 0.000568,
+            "surface_roughness": 0.026411,
+        },
+        "instable": {
+            "wind_speed": 0.002279,
+            "emission_height": 0.001016,
+            "surface_roughness": 0.049216,
+        },
+    }
+
+    _RESID_STD_ERR = {"stable": 0.3808, "neutral": 0.3396, "instable": 0.4077}
+
+    def __init__(
+        self,
+        stability: str = None,
+        MO_length: Union[int, float] = None,
+    ) -> None:
+
+        if stability is not None:
+            self.slopes = EffectiveWind._SLOPES[stability]
+            self.std_err = EffectiveWind._STD_ERR[stability]
+        elif MO_length is not None:
+            stability = determine_stability(L=MO_length)
+            self.slopes = EffectiveWind._SLOPES[stability]
+            self.std_err = EffectiveWind._STD_ERR[stability]
+        else:
+            raise ValueError("Invalid input.")
+
+    def get_effective_wind_speed(
+        self, u10: float, emission_height: float, surface_roughness: float
+    ) -> Tuple[float, float]:
+
+        u_eff = (
+            self.slopes["wind_speed"] * u10
+            + self.slopes["emission_height"] * emission_height
+            + self.slopes["surface_roughness"] * surface_roughness
+        )
+
+        return u_eff, self.std_err
+
+
+################ other functions ################
+################################################################################
 
 
 def wind_profile_from_given_wind(
@@ -553,8 +627,9 @@ def get_wind_profile(
     z: Union[int, float, list, np.ndarray],
     z0: Union[int, float],
     u_star: Union[int, float],
-    t: Union[int, float, list, np.ndarray],
-    q: Union[int, float, list, np.ndarray],
+    L: Union[int, float] = None,
+    t: Union[int, float, list, np.ndarray] = None,
+    q: Union[int, float, list, np.ndarray] = None,
     H: Union[int, float] = None,
     H_turb: Union[int, float] = None,
     displacement_height: Union[int, float] = 0,
@@ -588,28 +663,33 @@ def get_wind_profile(
     z = np.array(z)
 
     # compute displacement height:
-    # displacement_height = 10 * z0 * (3 / 4)
+    if displacement_height is None:
+        displacement_height = 10 * z0 * (3 / 4)
 
-    displacement_height = 0
+    # calculate MO length if it is not given
+    if L is None:
+        # raise error if t or q are not provided
+        if (t is None) or (q is None):
+            raise ValueError("Temperature (t) and humidity (q) have to be provided.")
 
-    # raise error if both H and H_turb are provided
-    if (H is not None) and (H_turb is not None):
-        raise ValueError(
-            "Only one of sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided, not both."
-        )
+        # raise error if both H and H_turb are provided
+        if (H is not None) and (H_turb is not None):
+            raise ValueError(
+                "Only one of sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided, not both."
+            )
 
-    # convert sensible heat flux H to turbulent sensible heat flux H_turb, if H is provided
-    elif H is not None:
-        H_turb = calculate_virtual_turbulent_heat_flux(H)
+        # convert sensible heat flux H to turbulent sensible heat flux H_turb, if H is provided
+        elif H is not None:
+            H_turb = calculate_virtual_turbulent_heat_flux(H)
 
-    # raise error if both H and H_turb are not provided
-    elif H_turb is None:
-        raise ValueError(
-            "Either sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided."
-        )
+        # raise error if both H and H_turb are not provided
+        elif (H is None) and (H_turb is None):
+            raise ValueError(
+                "Either sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided."
+            )
 
-    T_v_mean = calculate_virtual_temperature(t, q).mean()
-    L = calculate_monin_obukhov_length(u_star, T_v_mean, H_turb)
+        T_v_mean = calculate_virtual_temperature(t, q).mean()
+        L = calculate_monin_obukhov_length(u_star, T_v_mean, H_turb)
 
     stability = determine_stability(L)
 
@@ -635,7 +715,7 @@ def calculate_virtual_temperature(
     t: Union[int, float, list, np.ndarray], q: Union[int, float, list, np.ndarray]
 ) -> np.ndarray:
     """
-    Calculate the virtual temperature T_v.
+    Calculate the virtual (potential) temperature T_v.
 
     Parameters:
     t (Union[int, float, list, np.ndarray]): (Potential) temperature (in K).
@@ -777,7 +857,10 @@ def solve_wind_profile(
     Returns:
     np.ndarray: Difference between calculated and measured wind speed.
     """
-    return get_wind_profile(z, z0, u_star, t, q, H, H_turb) - wind_speed
+    return (
+        get_wind_profile(z=z, z0=z0, u_star=u_star, t=t, q=q, H=H, H_turb=H_turb)
+        - wind_speed
+    )
 
 
 def compute_u_star(

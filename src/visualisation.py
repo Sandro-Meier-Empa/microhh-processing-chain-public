@@ -552,7 +552,7 @@ def add_ime_text(
 
 
 def plot_gas_weight(
-    data: xr.Dataset, gas: str = "ch4", fig_width: Union[int, float] = 15
+    data: xr.Dataset, gas: str = "CH4", fig_width: Union[int, float] = 15
 ):
 
     if "time" in data.sizes:

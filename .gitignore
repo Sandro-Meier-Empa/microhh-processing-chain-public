@@ -1,5 +1,6 @@
 images/
 notebooks/
+data/
 
 *.pyc
 __pycache__

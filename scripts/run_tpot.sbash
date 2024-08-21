@@ -1,0 +1,21 @@
+#!/bin/bash -l 
+
+#SBATCH --job-name=run-tpot
+#SBATCH --account=s1302
+#SBATCH --mail-type=NONE
+#SBATCH --mail-user=sandro.meier@empa.ch
+#SBATCH --time=16:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-core=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --partition=normal 
+#SBATCH --constraint=gpu
+#SBATCH --hint=nomultithread
+#SBATCH --output=run_tpot_%j.out
+#SBATCH --chdir=/scratch/snx3000/smeier/eff_wind_regression
+
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export CRAY_CUDA_MPS=1
+
+srun /users/smeier/.venv/bin/python3.9  /users/smeier/processing_chain/scripts/eff_wind_regression.py

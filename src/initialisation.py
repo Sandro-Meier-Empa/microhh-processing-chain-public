@@ -157,7 +157,7 @@ class Case:
         input_py_path = Path(case_setup_path, f"{self.case_name}_input.py")
         ini_file_path = Path(case_setup_path, f"{self.case_name}.ini")
 
-        if input_py_path.exists():
+        if not input_py_path.exists():
             raise FileNotFoundError(
                 f"{self.case_name}_input.py does not exist in the case directory."
             )

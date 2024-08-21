@@ -173,6 +173,7 @@ class DaintSetup:
         py_file_path: str,
         job_name: str,
         additional_args: dict = {},
+        overwrite: bool = False,
         start_jobs: bool = True,
     ):
         """Submit a bash script to process a case on daint.
@@ -194,17 +195,23 @@ class DaintSetup:
 
         # create command for bash script
         command = f"srun python {py_file_path} --case-name {case.case_name} --case-suffix {case.suffix}"
-        additional_args_str = " ".join(
-            [f"{key}={str(value)}" for key, value in additional_args.items()]
-        )
-        command = f"{command} --additional-args {additional_args_str}"
+
+        if additional_args:
+            additional_args_str = " ".join(
+                [f"{key}={str(value)}" for key, value in additional_args.items()]
+            )
+            command = f"{command} --additional-args {additional_args_str}"
 
         # submit bash script to run post processing in parallel on daint
         job_file = Path(case.scratch_path, f"{job_name_formatted}.sbash")
-        if not job_file.exists():
+
+        if job_file.exists() and overwrite:
+            os.remove(job_file)
+
+        if not job_file.exists() or overwrite:
             job_file = self.create_bash_script(
                 commands=command,
-                job_name=f"{job_name_formatted.replace('_', '-')}-{case.case_path}",
+                job_name=job_name_formatted,
                 file_path=job_file,
                 scratch_path=case.scratch_path,
             )
@@ -257,6 +264,7 @@ class DaintSetup:
             header += f"#SBATCH --partition={self.partition} \n"
             header += f"#SBATCH --constraint={constraint}\n"
             header += f"#SBATCH --hint={multithread}\n"
+            header += f"#SBATCH --output={job_name}_%j.out\n"
             header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
 
             header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
@@ -378,21 +386,29 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     progress_percentages = []
 
-    for case_path in df["NAME"]:
-        parts = case_path.split(".", 1)
-        case_name = parts[0]
-        case_suffix = parts[1] if len(parts) > 1 else ""
-        # create case
-        case = init.Case(
-            case_name=case_name,
-            suffix=case_suffix,
-            scratch_path=Path("/scratch/snx3000"),
-            store_path=Path(""),
-            location="scratch",
-        )
-        current_timestep, max_timestep = get_simulation_progress(case)
-        progress_percentage = current_timestep / max_timestep * 100
-        progress_percentages.append(int(progress_percentage))
+    for index, row in df.iterrows():
+        job_name = row["NAME"]
+        job_dir = row["WORK_DIR"]
+        if "microhh" in job_name:
+            try:
+                parts = job_dir.split(".")
+                case_name = parts[-2].split("/")[-1]
+                case_suffix = parts[-1] if len(parts) > 1 else ""
+                # create case
+                case = init.Case(
+                    case_name=case_name,
+                    suffix=case_suffix,
+                    scratch_path=Path("/scratch/snx3000"),
+                    store_path=Path(""),
+                    location="scratch",
+                )
+                current_timestep, max_timestep = get_simulation_progress(case)
+                progress_percentage = current_timestep / max_timestep * 100
+                progress_percentages.append(int(progress_percentage))
+            except:
+                progress_percentages.append("NA")
+        else:
+            progress_percentages.append("NA")
 
     df["PROGRESS (%)"] = progress_percentages
 
