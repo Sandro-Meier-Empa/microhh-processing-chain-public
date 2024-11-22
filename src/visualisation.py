@@ -16,13 +16,11 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-
-import processing as proc
-import initialisation as init
 import ddeq
+
+sys.path.append(os.path.join("/users", os.environ["USER"]))
+import processing_chain.src.processing as proc
+import processing_chain.src.initialisation as init
 
 
 class Visualisation:
@@ -486,9 +484,9 @@ def add_ime_text(
             Gas which was processed.
         data (xr.Dataset):
             Dataset containing the retrieval information
-        result (xr.Dataset):    
+        result (xr.Dataset):
             Dataset containing the results of the retrieval.
-        title (str, optional):  
+        title (str, optional):
             Title of the retrieval information. Defaults to None.
 
     Returns:

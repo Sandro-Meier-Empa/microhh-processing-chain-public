@@ -11,9 +11,7 @@ import xarray as xr
 import numpy as np
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
-
 import microhh_tools as mht
 import ls2d
 

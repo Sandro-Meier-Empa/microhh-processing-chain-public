@@ -16,17 +16,16 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "ucat", "src"))
-
-import microhh_tools as mht
-import cscs
-import initialisation as init
-import wind as wind_proc
 import ddeq
 import ucat
+
+sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
+import microhh_tools as mht
+
+sys.path.append(os.path.join("/users", os.environ["USER"]))
+import processing_chain.src.initialisation as init
+import processing_chain.src.cscs as cscs
+import processing_chain.src.wind as wind_proc
 
 # molar mass (g/mol)
 gas_mass = {

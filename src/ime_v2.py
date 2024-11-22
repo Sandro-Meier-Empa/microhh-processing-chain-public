@@ -13,18 +13,15 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(
-    os.path.join("/users", os.environ["USER"], "microhh", "processing_chain", "src")
-)
-sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
-
-import microhh_tools as mht
-import initialisation as init
-import processing as proc
 import ddeq
 import ucat
+
+sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
+import microhh_tools as mht
+
+sys.path.append(os.path.join("/users", os.environ["USER"]))
+import processing_chain.src.initialisation as init
+import processing_chain.src.processing as proc
 
 
 def estimate_emissions(

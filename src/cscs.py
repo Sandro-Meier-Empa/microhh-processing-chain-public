@@ -10,11 +10,10 @@ import pandas as pd
 
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(
-    os.path.join("/users", os.environ["USER"], "microhh", "processing_chain", "src")
-)
 import microhh_tools as mht
-import initialisation as init
+
+sys.path.append(os.path.join("/users", os.environ["USER"]))
+import processing_chain.src.initialisation as init
 
 
 class print_colors:
@@ -240,9 +239,9 @@ class DaintSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        import processing as proc
+        import processing_chain.src.processing as proc_pc
 
-        commands = proc.object_to_list(commands)
+        commands = proc_pc.object_to_list(commands)
 
         multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
         constraint = "mc" if self.processor == "cpu" else "gpu"
@@ -293,7 +292,7 @@ class DaintSetup:
                 after the previous one has stopped.
         """
 
-        print(f"Starting {job_file=}")
+        print(f"Starting {str(job_file)}")
         os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
 
 
