@@ -171,6 +171,7 @@ class DaintSetup:
         case: init.Case,
         py_file_path: str,
         job_name: str,
+        python_path: str = "python",
         additional_args: dict = {},
         overwrite: bool = False,
         start_jobs: bool = True,
@@ -185,6 +186,8 @@ class DaintSetup:
             job_name (str):
                 Name of the job. Determines the name of the resulting slurm.out script
                 and the job name in the queue.
+            python_path (str):
+                Path of the python environment to use. The default is /users/USER/bin/python3
             additional_args (dict, optional):
                 Addtional arguments for the function called in the python script. Defaults to {}.
             start_jobs (bool, optional):
@@ -193,7 +196,7 @@ class DaintSetup:
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        command = f"srun python {py_file_path} --case-name {case.case_name} --case-suffix {case.suffix}"
+        command = f"srun {python_path} {py_file_path} --case-name {case.case_name} --case-suffix {case.suffix}"
 
         if additional_args:
             additional_args_str = " ".join(
