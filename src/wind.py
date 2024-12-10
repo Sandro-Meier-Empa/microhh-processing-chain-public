@@ -544,7 +544,7 @@ def wind_profile_from_given_wind(
     thl: Union[int, float, list, np.ndarray],
     qt: Union[int, float, list, np.ndarray],
     sensible_heat_flux: Union[int, float],
-    threshold: float = None,
+    threshold: float,
 ) -> xr.Dataset:
     """_summary_
 
@@ -565,7 +565,7 @@ def wind_profile_from_given_wind(
         sensible_heat_flux (Union[int, float]):
             Sensible heat flux (W/m2).
         threshold (float, optional):
-            Maximum difference between target 'wind_speed' and calculated wind speed. Defaults to None.
+            Maximum difference between target 'wind_speed' and calculated wind speed.
 
     Returns:
         xr.Dataset: _description_
@@ -602,7 +602,7 @@ def wind_profile_from_given_wind(
     lower_bound = height - z_resolution / 2
     upper_bound = height + z_resolution / 2
 
-    # Ucreate a mask based on whether model_profile is within the bounds
+    # create a mask based on whether model_profile is within the bounds
     mask = np.where(
         (model_profile >= lower_bound) & (model_profile <= upper_bound),
         1,
