@@ -375,6 +375,12 @@ def jobs_in_queue(
     return df
 
 
+def cancel_all() -> None:
+
+    user = os.environ["USER"]
+    subprocess.run(["scancel -u", user], check=True)
+
+
 def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     """Add MicroHH simulation progress to the DataFrame containing the jobs in the queue.
 

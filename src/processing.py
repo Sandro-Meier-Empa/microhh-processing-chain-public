@@ -297,7 +297,9 @@ class PreProcessing:
         """Check if the surface roughness is smaller than the lowest vertical grid level."""
         # read in {case}_input.nc file:
         initial_cond = init.read_initial_cond(self.case)
-        lowest_grid_level = initial_cond.z.values[0]
+        grid_values = initial_cond.z.values
+        non_neg_grid_values = [value for value in grid_values if value >= 0]
+        lowest_grid_level = min(non_neg_grid_values)
         warning_threshold = 0.9 * lowest_grid_level
 
         if "boundary" in self.ini_file.groups:
@@ -305,10 +307,10 @@ class PreProcessing:
                 if roughness_type in self.ini_file["boundary"]:
                     surface_roughness = self.ini_file["boundary"][roughness_type]
                     if surface_roughness >= lowest_grid_level:
-                        raise ValueError(
+                        warnings.warn(
                             f"Surface roughness ({roughness_type} = {surface_roughness} m) "
                             f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
-                            "This will cause the model to crash."
+                            "This may cause the model to crash."
                         )
                     elif surface_roughness >= warning_threshold:
                         warnings.warn(
@@ -973,7 +975,7 @@ class PostProcessing:
         lon: Union[list, np.ndarray],
         source_names: Union[list, np.ndarray] = None,
         source_labels: Union[list, np.ndarray] = None,
-        source_radius: Union[list, np.ndarray] = None,
+        source_diameter: Union[list, np.ndarray] = None,
     ) -> xr.Dataset:
         """Create a sources dataset used for the plume detection and in 'ddeq'.
 
@@ -990,8 +992,8 @@ class PostProcessing:
                 List of names of the sources used for plotting.
                 If not specified, the sources will be numbered
                 starting with source1 etc.
-            source_radius (Union[list, np.ndarray], optional. Default: None):
-                Radius (in pixels) around the soruce which are considered
+            source_diameter (Union[list, np.ndarray], optional. Default: None):
+                Diameter (in pixels) around the soruce which are considered
                 to assign a plume to a source. If not specified, 5 * pixel_size
                 is used.
 
@@ -1007,18 +1009,18 @@ class PostProcessing:
         )
         source_labels = source_labels or source_names
 
-        if source_radius is None:
+        if source_diameter is None:
             pixel_size = np.max(
                 [
                     self.ini_file["grid"]["xsize"] / self.ini_file["grid"]["itot"],
                     self.ini_file["grid"]["ysize"] / self.ini_file["grid"]["jtot"],
                 ]
             )
-            source_radius = np.full(nr_sources, 5 * pixel_size / 1e3)  # in km
+            source_diameter = np.full(nr_sources, 5 * pixel_size)  # in m
 
         data = {
-            "lon_o": (["source"], np.array(object_to_list(lon), dtype=float)),
-            "lat_o": (["source"], np.array(object_to_list(lat), dtype=float)),
+            "lon": (["source"], np.array(object_to_list(lon), dtype=float)),
+            "lat": (["source"], np.array(object_to_list(lat), dtype=float)),
             "source_x0": (
                 ["source"],
                 np.array(
@@ -1037,14 +1039,13 @@ class PostProcessing:
                     object_to_list(self.ini_file["source"]["source_z0"]), dtype=float
                 ),
             ),
-            "type": (["source"], np.full(nr_sources, "power plant", dtype=object)),
             "label": (
                 ["source"],
                 np.array(object_to_list(source_labels), dtype=object),
             ),
-            "radius": (
+            "diameter": (
                 ["source"],
-                np.array(object_to_list(source_radius), dtype=float),
+                np.array(object_to_list(source_diameter), dtype=float),
             ),
             "strength": (["source"], self.model_emissions_to_kg_per_h()),
         }
@@ -1052,9 +1053,9 @@ class PostProcessing:
         coords = {"source": np.array(object_to_list(source_names), dtype=object)}
 
         sources = xr.Dataset(data, coords=coords)
-        sources.lon_o.attrs["units"] = "longitude of source"
-        sources.lat_o.attrs["units"] = "latitude of source"
-        sources.radius.attrs["units"] = "km"
+        sources.lon.attrs["units"] = "longitude of source"
+        sources.lat.attrs["units"] = "latitude of source"
+        sources.diameter.attrs["units"] = "m"
         sources.strength.attrs["units"] = "kg h-1"
 
         for dim in ["x", "y", "z"]:
@@ -1108,8 +1109,8 @@ class PostProcessing:
             grid_y = self.ini_file["grid"]["ysize"] / 2
         elif source is not None and sources is not None:
             source_data = sources.sel(source=source)
-            lat = source_data.lat_o.values
-            lon = source_data.lon_o.values
+            lat = source_data.lat.values
+            lon = source_data.lon.values
             grid_x = source_data.source_x0.values
             grid_y = source_data.source_y0.values
         else:
@@ -1126,7 +1127,7 @@ class PostProcessing:
         xx, yy = np.meshgrid(data["x"], data["y"])
 
         # shift grid of x and y values so that the source or domain center
-        # is at the location given by lat_o and lon_o
+        # is at the location given by lat and lon
         shifted_grid_x = xx - grid_x + x_o
         shifted_grid_y = yy - grid_y + y_o
 

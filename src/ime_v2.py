@@ -1,4 +1,6 @@
 import os
+import ddeq.dplume
+import ddeq.plume_coords
 import skimage
 import sys
 
@@ -81,9 +83,24 @@ def estimate_emissions(
             "Please select one time step."
         )
 
+    data["source"] = sources["source"].copy()
+    data["label_source"] = sources["label"].copy()
+    data["lon_source"], data["lat_source"], data["diameter_source"] = (
+        ddeq.sources.get_location(sources)
+    )
+
     # add corners of pixels if not in data
     if "corners" not in data.dims:
         data = proc.PostProcessing.add_corners(data)
+
+    # convert to coordinate system using meters
+    data = ddeq.plume_coords.compute_xy_coords(data, crs=crs)
+
+    # compute pixel area [in m²]
+    if "xc" in data and "yc" in data:
+        data = ddeq.plume_coords.compute_pixel_areas(data)
+
+    pixel_size = np.sqrt(data.pixel_area.mean().values)
 
     # if available, add method of vertical integration of wind as attribute
     wind_method = wind.attrs.get("method", None)
@@ -93,6 +110,7 @@ def estimate_emissions(
     data = ddeq.dplume.detect_plumes(
         data,
         sources,
+        pixel_size=pixel_size,
         variable="CH4",
         variable_std="CH4_std",
         filter_type="gaussian",
@@ -124,23 +142,23 @@ def estimate_emissions(
     # normalized convolution (sigma px)
     data = ddeq.background.estimate(
         data,
-        "CH4",
+        "CH4_mass",
         sigma=sigma,
         mask_hits=False,
         extra_dilation=background_dilation,
     )
 
     # convert background to correct units
-    background_units = data["CH4_estimated_background"].attrs.get("units", None)
+    background_units = data["CH4_mass_estimated_background"].attrs.get("units", None)
     mass_bg = ucat.convert_columns(
-        data["CH4_estimated_background"],
+        data["CH4_mass_estimated_background"],
         from_unit=background_units,
         to_unit="kg m-2",
         molar_mass="CH4",
     )
 
     # put into array
-    data["CH4_minus_estimated_background_mass"] = xr.DataArray(
+    data["CH4_mass_minus_estimated_background_mass"] = xr.DataArray(
         data.CH4_mass - mass_bg, dims=data.CH4.dims, attrs={"units": "kg m-2"}
     )
 
@@ -155,6 +173,7 @@ def estimate_emissions(
         curves,
         L_max=L_max,
         gas="CH4",
+        variable="CH4_mass_minus_estimated_background_mass",
         min_pixel_number=1,
         allowed_upstream_detected=15,
     )

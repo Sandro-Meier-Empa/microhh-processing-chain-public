@@ -9,15 +9,14 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "ddeq", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "u-cat", "src"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
-
-import initialisation as init
 import ddeq
 import ucat
+
+sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
 import ls2d
+
+sys.path.append(os.path.join("/users", os.environ["USER"]))
+import processing_chain.src.initialisation as init
 
 
 class WindProcessing:
@@ -28,7 +27,7 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        import processing as proc
+        import processing_chain.src.processing as proc
 
         self.post = proc.PostProcessing(case)
         self.file_directory = case.file_directory
@@ -90,8 +89,8 @@ class WindProcessing:
                 "time": (["time"], wind_data_subset.time.values),
             },
             data_vars={
-                "lon": (["source"], [selected_source.lon_o.values]),
-                "lat": (["source"], [selected_source.lat_o.values]),
+                "lon": (["source"], [selected_source.lon.values]),
+                "lat": (["source"], [selected_source.lat.values]),
                 "U": (
                     ["source", "time"],
                     [wind_data_subset["u"].median(dim=["x", "y"]).values],

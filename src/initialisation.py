@@ -333,7 +333,7 @@ def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
     merged_dataset = xr.Dataset()
     for group in groups:
         ds = xr.open_dataset(file_path, group=group, decode_times=False)
-        merged_dataset = xr.merge([merged_dataset, ds])
+        merged_dataset = xr.merge([merged_dataset, ds], compat="override")
 
     return merged_dataset
 
