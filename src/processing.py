@@ -42,13 +42,13 @@ gas_mass = {
 
 
 class PreProcessing:
-    def __init__(self, case: init.Case, daint_setup: cscs.DaintSetup):
+    def __init__(self, case: init.Case, alps_setup: cscs.AlpsSetup):
         """Class used for pre-processing and running MicroHH cases
 
         Args:
             case (init.Case):
                 Case to pre-process and run.
-            daint_setup (cscs.DaintSetup):
+            alps_setup (cscs.AlpsSetup):
                 Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
 
         """
@@ -61,8 +61,8 @@ class PreProcessing:
         self.store_path = case.store_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
-        self.processor = daint_setup.processor
-        self.daint_setup = daint_setup
+        self.processor = alps_setup.processor
+        self.alps_setup = alps_setup
 
         self._check_microhh_build_exists()
 
@@ -73,7 +73,7 @@ class PreProcessing:
             ValueError: Raise error if the model build does not exist.
         """
         # Check if build exists
-        if self.daint_setup.processor == "gpu" and self.daint_setup.mpi:
+        if self.alps_setup.processor == "gpu" and self.alps_setup.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
 
     def run_simulation(
@@ -121,8 +121,8 @@ class PreProcessing:
         self._check_ini_setup_valid()
 
         if start_jobs:
-            # Launch the job on daint
-            self.daint_setup.execute_bash_script(job_file, wait)
+            # Launch the job on alps
+            self.alps_setup.execute_bash_script(job_file, wait)
 
     def restart_simulation(
         self,
@@ -154,8 +154,8 @@ class PreProcessing:
         self._check_ini_setup_valid()
 
         if start_jobs:
-            # Launch the job on daint
-            self.daint_setup.execute_bash_script(job_file, wait)
+            # Launch the job on alps
+            self.alps_setup.execute_bash_script(job_file, wait)
 
     def rerun_simulation(
         self,
@@ -192,13 +192,13 @@ class PreProcessing:
         self._check_ini_setup_valid()
 
         if start_jobs:
-            # Launch the job on daint
-            self.daint_setup.execute_bash_script(job_file, wait)
+            # Launch the job on alps
+            self.alps_setup.execute_bash_script(job_file, wait)
 
     def create_run_script(self) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
         if not job_file.exists():
-            job_file = self.daint_setup.create_bash_script(
+            job_file = self.alps_setup.create_bash_script(
                 commands=[
                     f"srun {self.scratch_path}/microhh init {self.case_name}",
                     f"srun {self.scratch_path}/microhh run {self.case_name}",
@@ -233,7 +233,7 @@ class PreProcessing:
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
         if (
-            not self.daint_setup.mpi
+            not self.alps_setup.mpi
             and not self.ini_file["master"]["npx"] == 1
             and not self.ini_file["master"]["npy"] == 1
         ):
@@ -255,9 +255,9 @@ class PreProcessing:
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
         expected_nodes = self.ini_file["master"]["npx"] * self.ini_file["master"]["npy"]
-        if expected_nodes != self.daint_setup.ntasks_per_node:
+        if expected_nodes != self.alps_setup.ntasks_per_node:
             raise ValueError(
-                f"Task per node ({self.daint_setup.ntasks_per_node}) does "
+                f"Task per node ({self.alps_setup.ntasks_per_node}) does "
                 f"not match the expected value."
             )
 
@@ -322,7 +322,7 @@ class PreProcessing:
     def copy_executable(self):
         """Copy MicroHH executable to scratch"""
         processor = self.processor
-        version = "mpi" if self.daint_setup.mpi else "nompi"
+        version = "mpi" if self.alps_setup.mpi else "nompi"
 
         microhh_executable_path = Path(
             "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"

@@ -9,9 +9,6 @@ from typing import Union, Tuple
 import pandas as pd
 
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-import microhh_tools as mht
-
 sys.path.append(os.path.join("/users", os.environ["USER"]))
 import processing_chain.src.initialisation as init
 
@@ -28,10 +25,21 @@ class print_colors:
     ENDC = "\033[0m"
 
 
-class DaintSetup:
+class AlpsSetup:
 
-    # define number of cores used on daint multicore (cpu) and hybrid (gpu)
-    PROCESSOR_VERSIONS = {"cpu": 36, "gpu": 12}
+    # define number of cores used on Alps
+    PROCESSOR_VERSIONS = {
+        # no gpu feature, cpu = cores per socket (64) * threads (2)
+        "eiger": {"cpu": 128},
+        # no cpu frature, gpu = cores per socket (72) * threads (1)
+        "santis": {"gpu": 72},
+        # not implemented
+        "daint": {None},
+        # not implemented
+        "clariden": {None},
+        # not implemented
+        "todi": {None},
+    }
 
     PARTITION_CONDITIONS = {
         "debug": {"time_limit": 30 * 60, "max_nodes": 10},
@@ -42,6 +50,7 @@ class DaintSetup:
 
     def __init__(
         self,
+        cluster: str,
         processor: str,
         mpi: bool,
         account: str,
@@ -58,6 +67,8 @@ class DaintSetup:
         """A calss handling everything around the worklow on cscs's supercomputers.
         Is used to create and submit job scripts.
 
+        cluster (str) ['clariden', 'daint', 'eiger', 'santis', 'todi']:
+            Cluster on which to run jobs.
         processor (str) ['cpu', 'gpu']:
             Processor version to be used to run the model.
         mpi (bool):
@@ -89,9 +100,10 @@ class DaintSetup:
             Specifies if nodes with large memory should be used.
         partition (str, optional. Default: 'debug')
             ['debug', 'normal', 'prepost', 'low']:
-            Queue to be used on daint.
+            Queue to be used on alps.
         """
-        self.processor = processor.lower()
+        self._cluster = cluster
+        self._processor = processor
         self.mpi = mpi
         self.account = account
         self.mail_type = mail_type
@@ -106,27 +118,43 @@ class DaintSetup:
 
         self._check_cscs_setup_valid()
 
+    @property
+    def cluster(self):
+        if self._cluster.lower() in ["santis", "eiger"]:
+            return self._cluster.lower()
+        elif self._cluster.lower() in self.PROCESSOR_VERSIONS.keys():
+            raise NotImplementedError
+        else:
+            raise ValueError(f"{self._cluster} is invalid.")
+
+    @property
+    def processor(self):
+        if self._processor.lower() in self.PROCESSOR_VERSIONS[self.cluster]:
+            return self._processor.lower()
+        else:
+            raise ValueError(
+                f"{self._processor.lower()} is not available on {self.cluster}."
+            )
+
     def _get_default_ntasks_per_node(self) -> int:
         """Determines the default number of tasks per node
         if not specified in __init__
 
         Returns:
             ntasks_per_node (int):
-                Number of tasks per node to be used.
-                Set to 36 for 'cpu' and 12 for 'gpu' on daint.
+                Number of tasks per node to be used depending on the cluster on alps.
                 If 'mpi' is disabled, the tasks per node are set to 1.
         """
         if self.mpi:
             return (
-                self.PROCESSOR_VERSIONS[self.processor] * self.ntasks_per_core
-                if self.processor in self.PROCESSOR_VERSIONS
-                else 1
+                self.PROCESSOR_VERSIONS[self.cluster][self.processor]
+                * self.ntasks_per_core
             )
         else:
             return 1
 
     def _check_cscs_setup_valid(self):
-        """Checks if the setup is valid to be run on daint based
+        """Checks if the setup is valid to be run on alps based
         on the selected queue, wall time and number of nodes.
 
         Raises:
@@ -166,7 +194,7 @@ class DaintSetup:
         except ValueError:
             raise ValueError("Invalid run_time format. Use HH:MM:SS")
 
-    def process_case_on_daint(
+    def process_case_on_alps(
         self,
         case: init.Case,
         py_file_path: str,
@@ -176,7 +204,7 @@ class DaintSetup:
         overwrite: bool = False,
         start_jobs: bool = True,
     ):
-        """Submit a bash script to process a case on daint.
+        """Submit a bash script to process a case on alps.
 
         Args:
             case (init.Case):
@@ -204,7 +232,7 @@ class DaintSetup:
             )
             command = f"{command} --additional-args {additional_args_str}"
 
-        # submit bash script to run post processing in parallel on daint
+        # submit bash script to run post processing in parallel on alps
         job_file = Path(case.scratch_path, f"{job_name_formatted}.sbash")
 
         if job_file.exists() and overwrite:
@@ -221,7 +249,7 @@ class DaintSetup:
             print(f"Reading existing bash script {job_file}")
 
         if start_jobs:
-            # Launch the job on daint
+            # Launch the job on alps
             self.execute_bash_script(job_file, wait=False)
 
     def create_bash_script(
@@ -442,43 +470,6 @@ def print_simulation_progress(case: init.Case):
     )
 
 
-def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
-    """Get current simulation progress of a MicroHH simulation based on the
-    binary grid files generated when running the model.
-
-    Args:
-        case (init.Case):
-            Case for which the simulation progress should be returned.
-
-    Returns:
-        Tuple[int, int]:
-            Current and max time step of a simulation.
-    """
-    current_timestep = 0
-
-    def process_file(file):
-        if file.is_file() and file.name.startswith("time."):
-            try:
-                return int(file.name[5:])
-            except ValueError:
-                return 0
-        return 0
-
-    # Using ThreadPoolExecutor to parallelize the file processing
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [
-            executor.submit(process_file, file) for file in case.scratch_path.iterdir()
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            timestep = future.result()
-            current_timestep = max(current_timestep, timestep)
-
-    ini_file = mht.Read_namelist(case.ini_path)
-    max_timestep = int(ini_file["time"]["endtime"])
-
-    return current_timestep, max_timestep
-
-
 def delete_empty_folders(scratch_path: Union[str, Path]):
     """
     Finds and prints empty directories on your personal scratch. If the user
@@ -516,3 +507,44 @@ def delete_empty_folders(scratch_path: Union[str, Path]):
 
     else:
         print("No empty folder found")
+
+
+def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
+    """Get current simulation progress of a MicroHH simulation based on the
+    binary grid files generated when running the model.
+
+    Args:
+        case (init.Case):
+            Case for which the simulation progress should be returned.
+
+    Returns:
+        Tuple[int, int]:
+            Current and max time step of a simulation.
+    """
+    # only import the dependencies if this function is called
+    sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
+    import microhh_tools as mht
+
+    current_timestep = 0
+
+    def process_file(file):
+        if file.is_file() and file.name.startswith("time."):
+            try:
+                return int(file.name[5:])
+            except ValueError:
+                return 0
+        return 0
+
+    # Using ThreadPoolExecutor to parallelize the file processing
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(process_file, file) for file in case.scratch_path.iterdir()
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            timestep = future.result()
+            current_timestep = max(current_timestep, timestep)
+
+    ini_file = mht.Read_namelist(case.ini_path)
+    max_timestep = int(ini_file["time"]["endtime"])
+
+    return current_timestep, max_timestep
