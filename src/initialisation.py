@@ -65,7 +65,7 @@ class Case:
         self.case_name = case_name
         self.suffix = suffix
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
-        self.scratch_path = Path(scratch_path, self.user, self.case_path)
+        self.scratch_path = Path(os.environ.get('SCRATCH'), scratch_path, self.case_path)
         self.store_path = Path(store_path, self.case_path)
 
         self._handle_file_directory(location)
