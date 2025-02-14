@@ -42,7 +42,11 @@ gas_mass = {
 
 
 class PreProcessing:
-    def __init__(self, case: init.Case, alps_setup: cscs.AlpsSetup):
+    def __init__(
+        self,
+        case: init.Case,
+        alps_setup: cscs.AlpsSetup,
+    ):
         """Class used for pre-processing and running MicroHH cases
 
         Args:
@@ -59,6 +63,7 @@ class PreProcessing:
         self.case_path = case.case_path
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
+        self.microhh_executable_path = case.microhh_executable_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
         self.processor = alps_setup.processor
@@ -324,9 +329,8 @@ class PreProcessing:
         processor = self.processor
         version = "mpi" if self.alps_setup.mpi else "nompi"
 
-        microhh_executable_path = Path(
-            "/users", self.user, "microhh", f"build.{processor}.{version}", "microhh"
-        )
+        microhh_executable_path = self.microhh_executable_path / "microhh"
+
         shutil.copy(microhh_executable_path, self.scratch_path)
 
 

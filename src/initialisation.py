@@ -38,6 +38,7 @@ class Case:
         suffix: str,
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
+        microhh_executable_path: Union[str, Path],
         location: str,
     ):
         """Define a case for MicroHH.
@@ -65,8 +66,11 @@ class Case:
         self.case_name = case_name
         self.suffix = suffix
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
-        self.scratch_path = Path(os.environ.get('SCRATCH'), scratch_path, self.case_path)
+        self.scratch_path = Path(
+            os.environ.get("SCRATCH"), scratch_path, self.case_path
+        )
         self.store_path = Path(store_path, self.case_path)
+        self.microhh_executable_path = Path(microhh_executable_path)
 
         self._handle_file_directory(location)
         self.ini_path = Path(self.file_directory, f"{self.case_name}.ini")

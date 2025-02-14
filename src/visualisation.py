@@ -1,4 +1,4 @@
-import cartopy
+# import cartopy
 import matplotlib.figure
 import os
 import scipy.stats
@@ -274,6 +274,7 @@ class Visualisation:
 
     def plot_side_views(
         self,
+        data: xr.Dataset,
         variable: str,
         timestep: int,
         fig_width: Union[int, float] = 15,
@@ -286,6 +287,8 @@ class Visualisation:
             Added text information of the model resolution and wind properties.
 
         Args:
+            data (xr.Dataset):
+                Dataset containing the variable
             variable (str):
                 Name of the variable to be plotted.
             timestep (int):
@@ -298,15 +301,6 @@ class Visualisation:
         Returns:
             matplotlib.figure.Figure: Figure with subplots and text
         """
-
-        # variable = variable.upper()
-
-        try:
-            data = self.post.open_3d_prognostic_variable(
-                f"{self.case_name}_output_vars"
-            )
-        except:
-            data = self.post.open_3d_prognostic_variable(variable)
 
         xdim, ydim, zdim = (
             self.wind_dims[variable]
@@ -460,162 +454,22 @@ class Visualisation:
 
         return "\n".join(text)
 
+    def plot_stats(self, variables: Union[str, list]):
+        stats = init.read_statistics(self.case)
 
-def plot_ime_result(
-    gas: str,
-    data: xr.Dataset,
-    winds: xr.Dataset,
-    line_densities: xr.Dataset,
-    curves: ddeq.plume_coords.Poly2D,
-    source: str,
-    domain=None,
-    crs=None,
-    scaling: Union[int, float] = None,
-    vmin: Union[int, float] = None,
-    vmax: Union[int, float] = None,
-    title=None,
-):
+        if isinstance(variables, str):
+            variables = list(variables)
 
-    if domain is None:
-        domain = ddeq.misc.Domain(
-            name="",
-            startlat=data.lat.min() - 0.2,
-            stoplat=data.lat.max() + 0.2,
-            startlon=data.lon.min() - 0.2,
-            stoplon=data.lon.max() + 0.2,
-        )
+        for var in variables:
+            fig, axs = plt.subplots(1, 1, figsize=(12, 6))
 
-    with plt.style.context({"font.size": 10}):
-        fig_scaling = 1.0
-        figsize = (13.94 * fig_scaling, 7.45 * fig_scaling)
+            if any(dim in stats[var].dims for dim in ["z", "zh"]):
+                stats[var].T.plot(ax=axs)
+            else:
+                stats[var].plot(ax=axs)
 
-        # create canvas for the subfigures
-        fig = plt.figure(figsize=figsize)
-        subfigs = fig.subfigures(1, 2, width_ratios=[2, 1])
-
-        vmin = None if vmin is None else vmin
-        vmax = None if vmax is None else vmax
-        scaling = 1.0 if scaling is None else scaling
-
-        # set titles
-        subfigs[0].suptitle("a")
-        subfigs[1].suptitle("b")
-
-        # plot satellite image(s)
-        axs_left = subfigs[0].add_subplot(111, projection=domain.proj)
-
-        axs_left.set_aspect("equal", adjustable="box")
-        axs_left.set_xlim(domain.startlon, domain.stoplon)
-        axs_left.set_ylim(domain.startlat, domain.stoplat)
-        ddeq.vis.add_lines(axs_left)
-
-        with xr.set_options(keep_attrs=True):
-            scaled_data = scaling * data[gas]
-
-        # plot map with detected plume
-        sat = ddeq.vis.show_detected_plumes(
-            data,
-            curves,
-            scaled_data,
-            gas=gas,
-            add_polygons=False,
-            winds=winds,
-            domain=domain,
-            zoom_on=source,
-            do_zoom=False,
-            ax=axs_left,
-            cax=None,
-            vmin=vmin,
-            vmax=vmax,
-            crs=crs,
-        )
-
-        # adjust margins
-        # subfigs[0].subplots_adjust(left=0.0,
-        #                            right=0.93,
-        #                            bottom=ax_bottom,
-        #                            top=ax_top)
-
-        # add retrieval information
-        text = add_ime_text(gas, data.sel(source=source), line_densities, title=title)
-        subfigs[1].text(0.0, 0.75, text, va="top", linespacing=1.1)
-
-        return fig
-
-
-def add_ime_text(
-    gas: str, data: xr.Dataset, result: xr.Dataset, title: str = None
-) -> list:
-    """Add retrieval information to a plot
-
-    Args:
-        gas (str):
-            Gas which was processed.
-        data (xr.Dataset):
-            Dataset containing the retrieval information
-        result (xr.Dataset):
-            Dataset containing the results of the retrieval.
-        title (str, optional):
-            Title of the retrieval information. Defaults to None.
-
-    Returns:
-        list: Formatted retrieval information.
-    """
-
-    time = pd.Timestamp(data.time.values)
-    plume_size = np.nansum(data.detected_plume)
-
-    text = []
-    detection_gas = data.attrs["trace_gas"]
-
-    if title is not None:
-        text.append(title)
-
-    text.append("\nInstrument:")
-    text.append(f'• Time: {time.round(freq="S")}')
-    text.append(
-        f'• Resolution: {np.sqrt(np.mean(data.pixel_area.values)):.1f} {data.pixel_area.attrs.get("units", "-")[:-1]}'
-    )
-
-    noise = data[gas].attrs["noise_level"]
-    units = data[gas].attrs["units"]
-    text.append(f"• {ddeq.vis.sub_numbers(gas)} noise: {noise:.3g} {units}")
-
-    text.append("")
-    text.append("Plume detection:")
-    text.append(f"• Trace gas: {ddeq.vis.sub_numbers(detection_gas)}")
-    text.append(f'• z-value: {data.attrs.get("probability for z-value", "-"):g}')
-    text.append(f'• Filter size: {data.attrs.get("filter_size", "-"):g}')
-    text.append(f"• Plume size: {plume_size:d} px")
-    text.append(
-        f'• Plume length: {result.L_max.values[0]:.1f} {result.L_max.attrs.get("units", "a.u.")}'
-    )
-
-    wind_method = result.wind_speed.attrs.get("method", None)
-
-    text.append("\nWind:")
-    if wind_method is not None:
-        text.append(f"• Method: {wind_method}")
-    text.append(f"• Speed: {np.nanmean(result.wind_speed):.1f} m/s")
-    text.append(
-        f"• Direction: {scipy.stats.circmean(result.wind_direction, high=360):.0f}°"
-    )
-
-    text.append(f"\n{ddeq.vis.sub_numbers(gas)} emissions:")
-
-    estimated_emissions = result[f"{gas}_estimated_emissions"].values[0] * 3600
-    estimated_emissions_unc = (
-        result[f"{gas}_estimated_emissions_precision"].values[0] * 3600
-    )
-
-    if "strength" in result.data_vars:
-        true_emissions = result.strength.values[0]
-        text.append(f"• Reported: {true_emissions:.3g} kg/h")
-    text.append(
-        f"• Estimated: {estimated_emissions:.3g} ± {estimated_emissions_unc:.2g} kg/h"
-    )
-
-    return "\n".join(text)
+            plt.tight_layout()
+            plt.show()
 
 
 def plot_gas_weight(

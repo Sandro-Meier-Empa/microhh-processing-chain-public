@@ -63,6 +63,7 @@ class AlpsSetup:
         cpus_per_task: int = 1,
         large_memory: bool = False,
         partition: str = "debug",
+        uenv: str = "",
     ):
         """A calss handling everything around the worklow on cscs's supercomputers.
         Is used to create and submit job scripts.
@@ -111,10 +112,11 @@ class AlpsSetup:
         self.run_time = run_time
         self.nodes = nodes
         self.ntasks_per_core = ntasks_per_core
+        self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
         self.cpus_per_task = cpus_per_task
         self.large_memory = large_memory
         self.partition = partition
-        self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
+        self.uenv = uenv
 
         self._check_cscs_setup_valid()
 
@@ -295,7 +297,9 @@ class AlpsSetup:
             header += f"#SBATCH --constraint={constraint}\n"
             header += f"#SBATCH --hint={multithread}\n"
             header += f"#SBATCH --output={job_name}_%j.out\n"
-            header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
+            header += f"#SBATCH --chdir={str(scratch_path)}\n"
+            if self.uenv:
+                header += f"#SBATCH --uenv={self.uenv}\n\n"
 
             header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
             if self.processor == "gpu":
@@ -361,6 +365,7 @@ def jobs_in_queue(
         "SCHEDNODES",
     ],
     add_progress: bool = False,
+    scratch_path: str = None,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 
@@ -394,8 +399,8 @@ def jobs_in_queue(
     df = pd.DataFrame([row.split("|") for row in rows], columns=headers)
 
     # add simulation progress
-    if add_progress:
-        df = add_progress_to_df(df)
+    if add_progress and scratch_path is not None:
+        df = add_progress_to_df(df, scratch_path)
 
     # remove omitted columns
     df = df.drop(columns=omit)
@@ -409,7 +414,7 @@ def cancel_all() -> None:
     subprocess.run(["scancel -u", user], check=True)
 
 
-def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
+def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
     """Add MicroHH simulation progress to the DataFrame containing the jobs in the queue.
 
     Args:
@@ -423,27 +428,24 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     progress_percentages = []
 
     for index, row in df.iterrows():
-        job_name = row["NAME"]
         job_dir = row["WORK_DIR"]
-        if "microhh" in job_name:
-            try:
-                parts = job_dir.split(".")
-                case_name = parts[-2].split("/")[-1]
-                case_suffix = parts[-1] if len(parts) > 1 else ""
-                # create case
-                case = init.Case(
-                    case_name=case_name,
-                    suffix=case_suffix,
-                    scratch_path=Path("/scratch/snx3000"),
-                    store_path=Path(""),
-                    location="scratch",
-                )
-                current_timestep, max_timestep = get_simulation_progress(case)
-                progress_percentage = current_timestep / max_timestep * 100
-                progress_percentages.append(int(progress_percentage))
-            except:
-                progress_percentages.append("NA")
-        else:
+        try:
+            parts = job_dir.split(".", 1)
+            case_name = parts[-2].split("/")[-1]
+            case_suffix = parts[-1] if len(parts) > 1 else ""
+            # create case
+            case = init.Case(
+                case_name=case_name,
+                suffix=case_suffix,
+                scratch_path=Path(scratch_path),
+                store_path=Path(""),
+                microhh_executable_path="",
+                location="scratch",
+            )
+            current_timestep, max_timestep = get_simulation_progress(case)
+            progress_percentage = current_timestep / max_timestep * 100
+            progress_percentages.append(int(progress_percentage))
+        except:
             progress_percentages.append("NA")
 
     df["PROGRESS (%)"] = progress_percentages
@@ -468,45 +470,6 @@ def print_simulation_progress(case: init.Case):
     print(
         f"{color}Simulation progress of {case.case_path}: {progress_percentage}% ({current_timestep}s ouf of {max_timestep}s){print_colors.ENDC}"
     )
-
-
-def delete_empty_folders(scratch_path: Union[str, Path]):
-    """
-    Finds and prints empty directories on your personal scratch. If the user
-    agrees, all directories found are deleted.
-
-    Args:
-        scratch_path (str):
-            The path to search for empty directories. Default is your personal scratch.
-    """
-
-    personal_scratch_path = Path(scratch_path, os.environ["USER"])
-
-    print_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-print"]
-    delete_command = ["find", personal_scratch_path, "-type", "d", "-empty", "-delete"]
-
-    # list empty folders
-    list_folders = subprocess.run(print_command, capture_output=True, text=True)
-
-    count = len(list_folders.stdout.split("\n")) - 1
-
-    if count > 0:
-        print(list_folders.stdout)
-
-        ask_delete = input("Should these folders be deleted? (y/n)").lower()
-        while ask_delete not in ["yes", "y", "no", "n"]:
-            ask_delete = input("Enter 'y' (delete) or 'n' (don't delete).").lower()
-
-        if ask_delete in ["yes", "y"]:
-            delete_folders = subprocess.run(
-                delete_command, capture_output=True, text=True
-            )
-            print("deleting...")
-        else:
-            print("No folder has been deleted.")
-
-    else:
-        print("No empty folder found")
 
 
 def get_simulation_progress(case: init.Case) -> Tuple[int, int]:

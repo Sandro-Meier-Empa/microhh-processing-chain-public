@@ -1,1 +1,3 @@
 netCDF4
+cartopy
+ipympl # for matplotlib widget
