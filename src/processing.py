@@ -16,7 +16,6 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 
-import ddeq
 import ucat
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
@@ -365,6 +364,7 @@ class PostProcessing:
         height: Union[int, float] = None,
         overwrite: bool = False,
         save: bool = True,
+        chunks: Union[str, dict] = None,
     ):
         """Run all post-processing steps to...
             ... create netCDF files from grid output files
@@ -420,6 +420,7 @@ class PostProcessing:
             default_p_and_t=default_p_and_t,
             save=save,
             overwrite=overwrite,
+            chunks=chunks,
         )
         wind_processing = wind_proc.WindProcessing(self.case)
         wind_2D = wind_processing.create_2D_wind(
@@ -428,6 +429,7 @@ class PostProcessing:
             height=height,
             save=save,
             overwrite=overwrite,
+            chunks=chunks,
         )
         print(f"########## FINISH PROCESSING OF {self.case_path} ##########")
 
@@ -477,7 +479,7 @@ class PostProcessing:
         # only process missing variables
         if vars_to_process:
             post_command = (
-                f"python 3d_to_nc.py -d {self.scratch_path} "
+                f"{sys.executable} 3d_to_nc.py -d {self.scratch_path} "
                 f"-f {self.case_name}.ini -v {' '.join(vars_to_process)} "
                 f"-p {precision} -t0 {start_time} -t1 {end_time} "
                 f"-tstep {sample_time}"
@@ -606,8 +608,7 @@ class PostProcessing:
             zip_filename.unlink()
 
     def open_3d_prognostic_variable(
-        self,
-        variable: str,
+        self, variable: str, chunks: Union[str, dict] = None
     ) -> xr.Dataset:
         """Open 3D output netCDF file of 'variable' from model output.
 
@@ -623,14 +624,16 @@ class PostProcessing:
         if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
 
-        data = self.open_microhh_nc(file_path)
+        data = self.open_microhh_nc(file_path, chunks=chunks)
 
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
 
         return data
 
-    def open_microhh_nc(self, file_path: Union[str, Path]) -> xr.Dataset:
+    def open_microhh_nc(
+        self, file_path: Union[str, Path], chunks: Union[str, dict] = None
+    ) -> xr.Dataset:
         """Open a .nc file related to MicroHH output.
 
         Args:
@@ -638,9 +641,9 @@ class PostProcessing:
                 Path of the file including file name.
         """
         try:
-            data = xr.open_dataset(file_path)
+            data = xr.open_dataset(file_path, chunks=chunks)
         except ValueError:
-            data = xr.open_dataset(file_path, decode_times=False)
+            data = xr.open_dataset(file_path, chunks=chunks, decode_times=False)
 
         return data
 
@@ -704,6 +707,7 @@ class PostProcessing:
         filename: str,
         overwrite: bool = False,
         save: bool = True,
+        chunks: Union[str, dict] = None,
     ) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
 
@@ -726,13 +730,14 @@ class PostProcessing:
         # Check if the output file already exists
         if file_path.exists() and not overwrite:
             # If the file exists, open and return it
-            return self.open_microhh_nc(file_path)
+            return self.open_microhh_nc(file_path, chunks=chunks)
 
         # combine the prognostic variables into one dataset
-        combined_dataset = self.combine_prognostic_variables(vars=vars)
+        combined_dataset = self.combine_prognostic_variables(vars=vars, chunks=chunks)
 
         # Save the combined dataset to a new NetCDF file
         if save:
+            print(f"Saving {file_path}")
             combined_dataset.to_netcdf(file_path)
 
         return combined_dataset
@@ -741,6 +746,7 @@ class PostProcessing:
         self,
         vars: Union[str, list],
         data: xr.Dataset = None,
+        chunks: Union[str, dict] = None,
     ) -> xr.Dataset:
         """Combine multiple prognostic variables of the MicroHH output to one
         dataset. Specify either the variables to combine or give a dataset to
@@ -761,7 +767,7 @@ class PostProcessing:
         datasets = [] if data is None else [data]
 
         for var in vars:
-            dataset = self.open_3d_prognostic_variable(var)
+            dataset = self.open_3d_prognostic_variable(var, chunks=chunks)
 
             # homogenise dimensions
             dataset = self.interpolate_to_grid_midpoint(dataset)
@@ -827,6 +833,7 @@ class PostProcessing:
         default_p_and_t: bool = True,
         save: bool = True,
         overwrite: bool = False,
+        chunks: Union[str, dict] = None,
     ) -> xr.Dataset:
         """Convert 3D MicroHH model output to vertically integrated columns.
         Assumes that the vertical dimension is in units m.
@@ -856,9 +863,9 @@ class PostProcessing:
                 os.remove(file_path)
                 print(f"Overwriting {file_path}")
             else:
-                return self.open_microhh_nc(file_path)
+                return self.open_microhh_nc(file_path, chunks=chunks)
 
-        data = self.open_3d_prognostic_variable(variable.lower())
+        data = self.open_3d_prognostic_variable(variable.lower(), chunks=chunks)
 
         to_unit = ucat.format_unit(to_unit, sep=" ")
         volume_unit = ucat.col_unit2vol_unit(to_unit)
@@ -1266,6 +1273,7 @@ class PostProcessing:
         data: xr.Dataset,
         gas: str = "ch4",
         to_unit: str = "kg m-3",
+        chunks: Union[str, dict] = None,
     ) -> xr.Dataset:
         """Convert the gas given in data to concentrations using modelled pressure
         and potential temperature.
@@ -1285,7 +1293,9 @@ class PostProcessing:
         for var in required_prognostic_vars:
             if var not in data.data_vars:
                 print(f"Adding '{var}' to the dataset.")
-                data = self.combine_prognostic_variables(vars=var, data=data)
+                data = self.combine_prognostic_variables(
+                    vars=var, data=data, chunks=chunks
+                )
 
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
@@ -1393,8 +1403,7 @@ class PostProcessing:
         return absolute_temperature
 
     def calculate_3D_tke(
-        self,
-        data: xr.Dataset,
+        self, data: xr.Dataset, chunks: Union[str, dict] = None
     ) -> xr.Dataset:
         """Calculate the TKE based on the 3D prognostic variables of MicroHH
 
@@ -1411,7 +1420,9 @@ class PostProcessing:
 
         for var in wind_components:
             if var not in data.data_vars:
-                data = self.combine_prognostic_variables(vars=var, data=data)
+                data = self.combine_prognostic_variables(
+                    vars=var, data=data, chunks=chunks
+                )
 
         # compute temporal deviation for each wind component
         for wind_component in wind_components:

@@ -150,6 +150,7 @@ class WindProcessing:
         height: Union[int, float] = None,
         save: bool = True,
         overwrite: bool = False,
+        chunks: Union[str, dict] = None,
     ) -> xr.Dataset:
         """Create a 2D wind dataset from 3D MicroHH wind fields.
 
@@ -182,11 +183,13 @@ class WindProcessing:
                 os.remove(wind_nc_path)
                 print(f"Overwriting {wind_nc_path}")
             else:
-                return self.post.open_microhh_nc(wind_nc_path)
+                return self.post.open_microhh_nc(wind_nc_path, chunks=chunks)
 
         self._check_wind_integration(method, gas, height)
 
-        wind_data = self.post.combine_prognostic_variables(vars=wind_vars)
+        wind_data = self.post.combine_prognostic_variables(
+            vars=wind_vars, chunks=chunks
+        )
 
         wind_data = self.vertically_integrate_wind(wind_data, method, gas, height)
 
@@ -359,13 +362,17 @@ class WindProcessing:
         return data_subset.mean(dim="z")
 
     def concentration_weighted_mean_wind(
-        self, data: xr.Dataset, gas: str = "ch4", mixing_ratio_threshold: float = None
+        self,
+        data: xr.Dataset,
+        gas: str = "ch4",
+        wind_vars: Union[str, list] = ["u", "v"],
+        mixing_ratio_threshold: float = None,
     ) -> xr.Dataset:
         """_summary_
 
         Args:
             data (xr.Dataset):
-                Dataset containing the wind information.
+                Dataset containing the variables 'u', 'v' and {gas}.
             gas (str, optional):
                 Gas which should be used to weight the 3D wind fields.
                 Defaults to "ch4".
@@ -376,18 +383,25 @@ class WindProcessing:
         Returns:
             xr.Dataset: Dataset containing the weighted wind.
         """
+        if isinstance(wind_vars, str):
+            wind_vars = [wind_vars]
 
-        wind_components = ["u", "v"]
+        if not all(var in data for var in wind_vars):
+            raise KeyError(
+                f"Not all variables '{wind_vars}' are in the dataset. Variables on the dataset include {list(data.data_vars)}"
+            )
 
         # calculate weight profile
         data = self.calculate_weight_profile(data, gas, mixing_ratio_threshold)
 
-        for wind_component in wind_components:
-            data[wind_component] = data[f"{gas}_weight"] * data[wind_component]
+        for wind_component in wind_vars:
+            data[f"{wind_component}_weighted"] = (
+                data[f"{gas}_weight"] * data[wind_component]
+            )
 
         data = data.integrate(coord="z")
 
-        return data[wind_components]
+        return data
 
     def calculate_weight_profile(
         self, data: xr.Dataset, gas: str = "CH4", mixing_ratio_threshold: float = None
@@ -458,71 +472,9 @@ class WindProcessing:
 
 class EffectiveWind:
 
-    _SLOPES = {
-        "stable": {
-            "wind_speed": 0.617019,
-            "emission_height": 0.115684,
-            "surface_roughness": -2.948321,
-        },
-        "neutral": {
-            "wind_speed": 0.792523,
-            "emission_height": 0.043337,
-            "surface_roughness": -1.287769,
-        },
-        "instable": {
-            "wind_speed": 0.836352,
-            "emission_height": 0.044841,
-            "surface_roughness": -0.680651,
-        },
-    }
-
-    _STD_ERR = {
-        "stable": {
-            "wind_speed": 0.003964,
-            "emission_height": 0.001533,
-            "surface_roughness": 0.063785,
-        },
-        "neutral": {
-            "wind_speed": 0.001557,
-            "emission_height": 0.000568,
-            "surface_roughness": 0.026411,
-        },
-        "instable": {
-            "wind_speed": 0.002279,
-            "emission_height": 0.001016,
-            "surface_roughness": 0.049216,
-        },
-    }
-
-    _RESID_STD_ERR = {"stable": 0.3808, "neutral": 0.3396, "instable": 0.4077}
-
-    def __init__(
-        self,
-        stability: str = None,
-        MO_length: Union[int, float] = None,
-    ) -> None:
-
-        if stability is not None:
-            self.slopes = EffectiveWind._SLOPES[stability]
-            self.std_err = EffectiveWind._STD_ERR[stability]
-        elif MO_length is not None:
-            stability = determine_stability(L=MO_length)
-            self.slopes = EffectiveWind._SLOPES[stability]
-            self.std_err = EffectiveWind._STD_ERR[stability]
-        else:
-            raise ValueError("Invalid input.")
-
-    def get_effective_wind_speed(
-        self, u10: float, emission_height: float, surface_roughness: float
-    ) -> Tuple[float, float]:
-
-        u_eff = (
-            self.slopes["wind_speed"] * u10
-            + self.slopes["emission_height"] * emission_height
-            + self.slopes["surface_roughness"] * surface_roughness
-        )
-
-        return u_eff, self.std_err
+    # TODO
+    def _init__():
+        return None
 
 
 ################ other functions ################

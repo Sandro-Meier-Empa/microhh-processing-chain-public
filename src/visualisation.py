@@ -475,6 +475,10 @@ class Visualisation:
 def plot_gas_weight(
     data: xr.Dataset, gas: str = "CH4", fig_width: Union[int, float] = 15
 ):
+    """
+    Plot the vertical distribution of a gas as well as the 2D plume that
+    contributes to it.
+    """
 
     if "time" in data.sizes:
         raise ValueError("Select only one time step.")
@@ -549,6 +553,9 @@ def plot_tke(
     tke_der_threshold: bool = False,
     threshold_value=0,
 ):
+    """
+    Plot the behaviour of the TKE over time to determine the spin-up time of turbulence.
+    """
     stats = init.read_statistics(case)
     _, threshold_time = proc.get_2D_tke_threshold_time(
         stats, tke_threshold, tke_der_threshold, threshold_value
