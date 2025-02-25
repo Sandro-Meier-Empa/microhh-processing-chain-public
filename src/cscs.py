@@ -102,6 +102,9 @@ class AlpsSetup:
         partition (str, optional. Default: 'debug')
             ['debug', 'normal', 'prepost', 'low']:
             Queue to be used on alps.
+        uven (str, optional):
+            User environment to be used for running a job
+            e.g. 'prgenv-gnu'
         """
         self._cluster = cluster
         self._processor = processor

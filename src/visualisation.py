@@ -191,6 +191,10 @@ class Visualisation:
         colorful: bool = True,
         time_format: str = "h",
     ):
+        """
+        Plot the prognostic variables
+        """
+
         variables = proc.vars_to_list(variables)
 
         # define factor for time format
@@ -455,6 +459,13 @@ class Visualisation:
         return "\n".join(text)
 
     def plot_stats(self, variables: Union[str, list]):
+        """
+        Plot variables from the statistics netcdf file.
+
+        Args:
+            variables (str, list(str)):
+                Variables within the statistics file to plot.
+        """
         stats = init.read_statistics(self.case)
 
         if isinstance(variables, str):
@@ -550,7 +561,7 @@ def plot_gas_weight(
 def plot_tke(
     case,
     tke_threshold: bool = False,
-    tke_der_threshold: bool = False,
+    tke_derivative_threshold: bool = False,
     threshold_value=0,
 ):
     """
@@ -558,7 +569,7 @@ def plot_tke(
     """
     stats = init.read_statistics(case)
     _, threshold_time = proc.get_2D_tke_threshold_time(
-        stats, tke_threshold, tke_der_threshold, threshold_value
+        stats, tke_threshold, tke_derivative_threshold, threshold_value
     )
 
     # Calculate the median of tke over the 'z' dimension
@@ -652,7 +663,7 @@ def plot_tke(
     ax[1, 1].set_title("Relative Derivative of Median TKE over Time [%]")
     ax[1, 1].set_xlabel("Time")
 
-    if tke_der_threshold:
+    if tke_derivative_threshold:
         ax[1, 1].axhline(
             y=threshold_value * 100,
             color="black",
