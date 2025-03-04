@@ -366,9 +366,12 @@ class WindProcessing:
         data: xr.Dataset,
         gas: str = "ch4",
         wind_vars: Union[str, list] = ["u", "v"],
-        mixing_ratio_threshold: float = None,
+        threshold: float = None,
+        threshold_unit: str = None,
     ) -> xr.Dataset:
-        """_summary_
+        """Compute the concentration weighted wind speed from the 3D fields
+        of 'gas' and the 3D wind fields with variable(s) 'wind_vars'.
+        Remove data below a threshold of avoid division by 0.
 
         Args:
             data (xr.Dataset):
@@ -376,8 +379,8 @@ class WindProcessing:
             gas (str, optional):
                 Gas which should be used to weight the 3D wind fields.
                 Defaults to "ch4".
-            mixing_ratio_threshold (float, optional):
-                Threshold in mol mol-1 below which the gas values are not used
+            threshold (float, optional):
+                Threshold below which the gas values are not used
                 to compute the weight profile. Defaults to None.
 
         Returns:
@@ -392,31 +395,42 @@ class WindProcessing:
             )
 
         # calculate weight profile
-        data = self.calculate_weight_profile(data, gas, mixing_ratio_threshold)
+        data = self.calculate_weight_profile(
+            data, gas=gas, threshold=threshold, threshold_unit=threshold_unit
+        )
 
         for wind_component in wind_vars:
             data[f"{wind_component}_weighted"] = (
                 data[f"{gas}_weight"] * data[wind_component]
-            )
-
-        data = data.integrate(coord="z")
+            ).sum(dim="z")
+            data[f"{wind_component}_weighted"].attrs["units"] = "m/s"
+            data[f"{wind_component}_weighted"].attrs[
+                "description"
+            ] = f"{gas} concentration weighted wind speed"
 
         return data
 
     def calculate_weight_profile(
-        self, data: xr.Dataset, gas: str = "CH4", mixing_ratio_threshold: float = None
+        self,
+        data: xr.Dataset,
+        gas: str = "CH4",
+        threshold: float = None,
+        threshold_unit: str = "kg m-2",
     ) -> xr.Dataset:
         """Calculate a weight profile for 3D wind speed based on the concentration
-        distribution of a gas.
+        distribution of a gas. Remove data below 'threshold' to avoid division by 0.
 
         Args:
             data (xr.Dataset):
                 Dataset to which the weight profile should be added.
+            threshold (float):
+                Threshold below which the gas values are not used
+                to compute the weight profile to avoid division by 0.
+            threshold_unit (str, optional):
+                Unit of the threshold value
             gas (str, optional):
                 Gas which is used to compute the weight profile. Defaults to "CH4".
-            mixing_ratio_threshold (float, optional):
-                Threshold in mol mol-1 below which the gas values are not used
-                to compute the weight profile. Defaults to None.
+
 
         Returns:
             xr.Dataset: Dataset containing the weight profile.
@@ -437,27 +451,28 @@ class WindProcessing:
             data = self.post.add_statistics_variable(data, "phydroh")
             data = self.post.convert_to_concentration(data, gas, to_unit="kg m-3")
 
-        # calculate threshold. Default is 1 ppb
-        mixing_ratio_threshold = (
-            1e-9 if mixing_ratio_threshold is None else mixing_ratio_threshold
-        )
-        threshold = ucat.convert_points(
-            mixing_ratio_threshold,
-            from_unit="mol mol-1",
-            to_unit=unit,
-            molar_mass=gas,
-        )
+        data_integrated = data[gas].integrate(coord="z")
+
+        if threshold is None:
+            threshold = np.nanquantile(data_integrated, q=0.8)
+        else:
+            threshold = ucat.convert_columns(
+                threshold,
+                from_unit=threshold_unit,
+                to_unit=unit,
+                molar_mass=gas,
+            )
 
         # filter out values with low gas concentration to avoid erroneous weights
-        data = data.where(data[gas].integrate(coord="z") > threshold)
+        data = data.where(data_integrated > threshold)
 
         # create weight profile
-        data[f"{gas}_weight"] = data[f"{gas}"] / data[f"{gas}"].integrate(coord="z")
+        data[f"{gas}_weight"] = data[gas] / data[gas].sum(dim="z")
         data[f"{gas}_weight"].attrs["units"] = "-"
         data[f"{gas}_weight"].attrs[
             "long_name"
         ] = f"normalised {gas} concentration profile"
-        data[f"{gas}_weight"].attrs["threshold"] = f"{mixing_ratio_threshold} mol mol-1"
+        data[f"{gas}_weight"].attrs["threshold"] = f"{threshold} {threshold_unit}"
 
         return data
 

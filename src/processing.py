@@ -248,13 +248,23 @@ class PreProcessing:
 
     def _check_grid_match(self):
         """Check if the grid size matches the number of processes."""
-        itot, jtot = self.ini_file["grid"]["itot"], self.ini_file["grid"]["jtot"]
+        itot, jtot, ktot = (
+            self.ini_file["grid"]["itot"],
+            self.ini_file["grid"]["jtot"],
+            self.ini_file["grid"]["ktot"],
+        )
         npx, npy = self.ini_file["master"]["npx"], self.ini_file["master"]["npy"]
 
         if itot % npx != 0:
             raise ValueError(f"itot ({itot}) is not divisible by npx ({npx})")
-        elif jtot % npy != 0:
+        if itot % npy != 0:
+            raise ValueError(f"itot ({itot}) is not divisible by npy ({npy})")
+        if jtot % npx != 0:
+            raise ValueError(f"jtot ({jtot}) is not divisible by npx ({npx})")
+        if jtot % npy != 0:
             raise ValueError(f"jtot ({jtot}) is not divisible by npy ({npy})")
+        if ktot % npx != 0:
+            raise ValueError(f"ktot ({ktot}) is not divisible by npx ({npx})")
 
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
@@ -780,7 +790,7 @@ class PostProcessing:
         return combined_dataset
 
     def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset) -> xr.Dataset:
-        """Interpolate variables at grid edges '_h' to the middle of the grid.
+        """Interpolate variables at grid edges 'h' to the middle of the grid.
 
         Args:
             nc_file (xr.Dataset): Dataset with the variables to interpolate.
@@ -795,9 +805,9 @@ class PostProcessing:
 
         print(f"Interpolating {dim} to {dim[:-1]}")
 
-        midpoints = nc_file[dim][:-1].values + np.diff(nc_file[dim].values) / 2
+        midpoints = nc_file[dim].values + np.nanmedian(np.diff(nc_file[dim].values) / 2)
         new_coords = {dim: midpoints}
-        nc_file_interpolated = nc_file.interp(**new_coords)
+        nc_file_interpolated = nc_file.interp(**new_coords, kwargs={"fill_value": "extrapolate"})
 
         # Create a new dimension name without the 'h' at the end
         new_dim_name = dim[:-1]
@@ -1338,6 +1348,9 @@ class PostProcessing:
             if dim not in data.dims or dim not in data.coords:
                 data = data.assign_coords({dim: stats[dim]})
 
+        # get dask chunks
+        chunks = dict(data.chunks)
+
         if "time" in stats[variable].dims and "z" in stats[variable].dims:
             variable_values = np.tile(
                 stats[variable].values[:, :, np.newaxis, np.newaxis],
@@ -1358,6 +1371,11 @@ class PostProcessing:
                 variable_values,
                 stats[variable].attrs,
             )
+            if "z" in chunks:
+                chunks["zh"] = (chunks["z"][0] + 1,)  # zh has dim z + 1
+                chunks.pop("z")
+
+        data[variable] = data[variable].chunk(chunks)
 
         data[variable] = data[variable].chunk(data.chunks)
 
@@ -1372,10 +1390,12 @@ class PostProcessing:
         Returns:
             xr.Dataset: _description_
         """
+        required_vars = ["phydro", "phydroh"]
 
-        if "phydroh" not in data.data_vars:
-            print(f"Adding 'phydroh' to the dataset.")
-            data = self.add_statistics_variable(data, "phydroh")
+        for var in required_vars:
+            if var not in data.data_vars:
+                print(f"Adding '{var}' to the dataset.")
+                data = self.add_statistics_variable(data, variable=var)
 
         # Calculate absolute temperature
         data["ta"] = PostProcessing.calculate_absolute_temperature(
