@@ -1359,6 +1359,8 @@ class PostProcessing:
                 stats[variable].attrs,
             )
 
+        data[variable] = data[variable].chunk(data.chunks)
+
         return data
 
     def add_absolute_temperature(self, data: xr.Dataset) -> xr.Dataset:
