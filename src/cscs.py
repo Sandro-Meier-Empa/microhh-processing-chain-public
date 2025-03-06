@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Union, Tuple
 
 import pandas as pd
+import numpy as np
 
 
 sys.path.append(os.path.join("/users", os.environ["USER"]))
@@ -29,10 +30,10 @@ class AlpsSetup:
 
     # define number of cores used on Alps
     PROCESSOR_VERSIONS = {
-        # no gpu feature, cpu = cores per socket (64) * threads (2)
+        # no gpu feature, cpu = cores per socket (64) * sockets (2)
         "eiger": {"cpu": 128},
-        # no cpu frature, gpu = cores per socket (72) * threads (1)
-        "santis": {"gpu": 72},
+        # no cpu frature, gpu = cores per socket (72) * sockets (4)
+        "santis": {"gpu": 288},
         # not implemented
         "daint": {None},
         # not implemented
@@ -43,9 +44,10 @@ class AlpsSetup:
 
     PARTITION_CONDITIONS = {
         "debug": {"time_limit": 30 * 60, "max_nodes": 10},
-        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
+        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": np.inf},
+        "xfer": {"time_limit": 24 * 60 * 60, "max_nodes": 1},
         "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
-        "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
+        "low": {"time_limit": 24 * 30 * 60, "max_nodes": np.inf},
     }
 
     def __init__(
@@ -300,7 +302,7 @@ class AlpsSetup:
             header += f"#SBATCH --constraint={constraint}\n"
             header += f"#SBATCH --hint={multithread}\n"
             header += f"#SBATCH --output={job_name}_%j.out\n"
-            header += f"#SBATCH --chdir={str(scratch_path)}\n"
+            header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
             if self.uenv:
                 header += f"#SBATCH --uenv={self.uenv}\n\n"
 
