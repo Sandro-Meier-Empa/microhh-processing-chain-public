@@ -14,7 +14,7 @@ def process_case(case_name, case_suffix):
         case_name=case_name,
         suffix=case_suffix,
         scratch_path="/scratch/snx3000",
-        store_path="/store/empa/em05/smeier/microhh_output",
+        store_path="/capstor/store/cscs/empa/em05/smeier/microhh_output",
         location="scratch",
     )
 

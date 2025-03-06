@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 
 # read in the data
 dd = pd.read_csv(
-    r"/scratch/snx3000/smeier/eff_wind_regression/effective_wind_const.csv"
+    r"/capstor/scratch/cscs/smeier/eff_wind_regression/effective_wind_const.csv"
 )
 
 # format the columns
@@ -61,7 +61,7 @@ tpot.fit(X_train, y_train)
 tpot.score(X_test, y_test)
 
 # Define the base filename
-base_filename = "/scratch/snx3000/smeier/eff_wind_regression/tpot_ueff_pipeline"
+base_filename = "/capstor/scratch/cscs/smeier/eff_wind_regression/tpot_ueff_pipeline"
 file_extension = ".py"
 filename = base_filename + file_extension
 

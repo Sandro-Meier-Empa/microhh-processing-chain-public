@@ -13,7 +13,7 @@
 #SBATCH --constraint=gpu
 #SBATCH --hint=nomultithread
 #SBATCH --output=run_tpot_%j.out
-#SBATCH --chdir=/scratch/snx3000/smeier/eff_wind_regression
+#SBATCH --chdir=/capstor/scratch/cscs/smeier/eff_wind_regression
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export CRAY_CUDA_MPS=1
