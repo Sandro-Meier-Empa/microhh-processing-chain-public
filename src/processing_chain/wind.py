@@ -15,8 +15,7 @@ import ucat
 sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
 import ls2d
 
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.initialisation as init
+import processing_chain.initialisation as init
 
 
 class WindProcessing:
@@ -27,7 +26,7 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        import processing_chain.src.processing as proc
+        import processing_chain.processing as proc
 
         self.post = proc.PostProcessing(case)
         self.file_directory = case.file_directory

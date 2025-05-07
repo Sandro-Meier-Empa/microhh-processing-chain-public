@@ -18,9 +18,8 @@ import numpy as np
 
 import ddeq
 
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.processing as proc
-import processing_chain.src.initialisation as init
+import processing_chain.processing as proc
+import processing_chain.initialisation as init
 
 
 class Visualisation:

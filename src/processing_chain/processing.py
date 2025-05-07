@@ -21,10 +21,9 @@ import ucat
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
 import microhh_tools as mht
 
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.initialisation as init
-import processing_chain.src.cscs as cscs
-import processing_chain.src.wind as wind_proc
+import processing_chain.initialisation as init
+import processing_chain.cscs as cscs
+import processing_chain.wind as wind_proc
 
 # molar mass (g/mol)
 gas_mass = {
@@ -807,7 +806,9 @@ class PostProcessing:
 
         midpoints = nc_file[dim].values + np.nanmedian(np.diff(nc_file[dim].values) / 2)
         new_coords = {dim: midpoints}
-        nc_file_interpolated = nc_file.interp(**new_coords, kwargs={"fill_value": "extrapolate"})
+        nc_file_interpolated = nc_file.interp(
+            **new_coords, kwargs={"fill_value": "extrapolate"}
+        )
 
         # Create a new dimension name without the 'h' at the end
         new_dim_name = dim[:-1]
@@ -1349,7 +1350,7 @@ class PostProcessing:
                 data = data.assign_coords({dim: stats[dim]})
 
         # get dask chunks
-        chunks = dict(data.chunks)
+        # chunks = dict(data.chunks)
 
         if "time" in stats[variable].dims and "z" in stats[variable].dims:
             variable_values = np.tile(
@@ -1371,13 +1372,13 @@ class PostProcessing:
                 variable_values,
                 stats[variable].attrs,
             )
-            if "z" in chunks:
-                chunks["zh"] = (chunks["z"][0] + 1,)  # zh has dim z + 1
-                chunks.pop("z")
+        #     if "z" in chunks:
+        #         chunks["zh"] = (chunks["z"][0] + 1,)  # zh has dim z + 1
+        #         chunks.pop("z")
 
-        data[variable] = data[variable].chunk(chunks)
+        # data[variable] = data[variable].chunk(chunks)
 
-        data[variable] = data[variable].chunk(data.chunks)
+        # data[variable] = data[variable].chunk(data.chunks)
 
         return data
 

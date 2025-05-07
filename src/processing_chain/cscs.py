@@ -9,9 +9,7 @@ from typing import Union, Tuple
 import pandas as pd
 import numpy as np
 
-
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.initialisation as init
+import processing_chain.initialisation as init
 
 
 class print_colors:
@@ -33,7 +31,9 @@ class AlpsSetup:
         # no gpu feature, cpu = cores per socket (64) * sockets (2)
         "eiger": {"cpu": 128},
         # no cpu frature, gpu = cores per socket (72) * sockets (4)
-        "santis": {"gpu": 288},
+        # due to low noise mode, one core per socket cannot be used
+        # (see https://eth-cscs.github.io/cscs-docs/guides/gb2025/)
+        "santis": {"gpu": 284},
         # not implemented
         "daint": {None},
         # not implemented
@@ -277,7 +277,7 @@ class AlpsSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        import processing_chain.src.processing as proc_pc
+        import processing_chain.processing as proc_pc
 
         commands = proc_pc.object_to_list(commands)
 
@@ -304,7 +304,8 @@ class AlpsSetup:
             header += f"#SBATCH --output={job_name}_%j.out\n"
             header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
             if self.uenv:
-                header += f"#SBATCH --uenv={self.uenv}\n\n"
+                header += f"#SBATCH --uenv={self.uenv}\n"
+                header += "export LD_LIBRARY_PATH='/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH'\n\n"
 
             header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
             if self.processor == "gpu":

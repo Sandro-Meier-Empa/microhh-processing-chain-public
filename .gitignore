@@ -2,5 +2,7 @@ images/
 notebooks/
 data/
 
+*.egg-info
+
 *.pyc
 __pycache__

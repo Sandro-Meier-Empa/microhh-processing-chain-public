@@ -7,11 +7,10 @@ import cartopy.crs as ccrs
 import numpy as np
 import xarray as xr
 
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.initialisation as init
-import processing_chain.src.processing as ch4_proc
-import processing_chain.src.wind as wind_proc
-import processing_chain.src.ime_v2 as ime
+import processing_chain.initialisation as init
+import processing_chain.processing as ch4_proc
+import processing_chain.wind as wind_proc
+import processing_chain.ime_v2 as ime
 
 
 sys.path.append(f"/users/smeier/ddeq/src/")

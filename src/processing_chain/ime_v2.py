@@ -21,9 +21,8 @@ import ucat
 sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
 import microhh_tools as mht
 
-sys.path.append(os.path.join("/users", os.environ["USER"]))
-import processing_chain.src.initialisation as init
-import processing_chain.src.processing as proc
+import processing_chain.initialisation as init
+import processing_chain.processing as proc
 
 
 def estimate_emissions(
