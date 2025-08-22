@@ -127,38 +127,6 @@ class PreProcessing:
             # Launch the job on alps
             self.alps_setup.execute_bash_script(job_file, wait)
 
-    def restart_simulation(
-        self,
-        reuse_bash_script: bool = True,
-        start_jobs: bool = False,
-        wait: bool = False,
-    ):
-
-        # List of files to keep
-        files_to_keep = [
-            f"{self.case_name}.ini",
-            f"{self.case_name}_input.nc",
-            "microhh",
-        ]
-
-        # create bash script if needed
-        if reuse_bash_script:
-            files_to_keep.append("run_microhh.sbash")
-        else:
-            job_file = self.create_run_script()
-
-        # delete existing files except {case_name}.ini, {case_name}_input.nc and executable
-        for file_path in self.scratch_path.iterdir():
-            if file_path.name not in files_to_keep:
-                file_path.unlink()
-                print(f"Deleted {file_path}")
-
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
-
-        if start_jobs:
-            # Launch the job on alps
-            self.alps_setup.execute_bash_script(job_file, wait)
 
     def rerun_simulation(
         self,
@@ -1230,30 +1198,6 @@ class PostProcessing:
 
         return data
 
-    @staticmethod
-    def add_corners(
-        data: xr.Dataset,
-        var: Tuple[str, str] = ("lon", "lat"),
-        dims: Tuple[str, str] = ("nrows", "nobs"),
-    ) -> xr.Dataset:
-        """
-        Add corner coordinates for 'var'.
-        """
-        ic = np.arange(data[dims[1]].size + 1) - 0.5
-        jc = np.arange(data[dims[0]].size + 1) - 0.5
-
-        bbox = [-0.5, data[dims[0]].size, -0.5, data[dims[1]].size]
-
-        for name in var:
-            interpolator = scipy.interpolate.RectBivariateSpline(
-                data[dims[0]], data[dims[1]], data[name], kx=1, ky=1, bbox=bbox
-            )
-            xc = interpolator(jc, ic)
-            xc = np.moveaxis([xc[:-1, :-1], xc[:-1, 1:], xc[1:, 1:], xc[1:, :-1]], 0, 2)
-            data[f"{name}c"] = xr.DataArray(xc, dims=dims + ("corners",))
-
-        return data
-
     def model_emissions_to_kg_per_h(self) -> np.ndarray:
         """
         Convert the prescribed emissions from the .ini file to kg/h
@@ -1349,9 +1293,6 @@ class PostProcessing:
             if dim not in data.dims or dim not in data.coords:
                 data = data.assign_coords({dim: stats[dim]})
 
-        # get dask chunks
-        # chunks = dict(data.chunks)
-
         if "time" in stats[variable].dims and "z" in stats[variable].dims:
             variable_values = np.tile(
                 stats[variable].values[:, :, np.newaxis, np.newaxis],
@@ -1372,13 +1313,6 @@ class PostProcessing:
                 variable_values,
                 stats[variable].attrs,
             )
-        #     if "z" in chunks:
-        #         chunks["zh"] = (chunks["z"][0] + 1,)  # zh has dim z + 1
-        #         chunks.pop("z")
-
-        # data[variable] = data[variable].chunk(chunks)
-
-        # data[variable] = data[variable].chunk(data.chunks)
 
         return data
 
@@ -1467,77 +1401,6 @@ class PostProcessing:
         data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
 
         return data
-
-    def parse_slurm_output(self) -> pd.DataFrame:
-        """Parse the output of the 'slurm.out' script to get the job information.
-
-        Returns:
-            pd.DataFrame: Data frame containing the job information.
-        """
-        counter = 0
-        job_info = False
-        headers = []
-        values = []
-
-        out_files = list(self.file_directory.glob("run_microhh_*.out"))
-
-        if not out_files:
-            raise FileNotFoundError(
-                f"No slurm output script found in {self.file_directory}"
-            )
-
-        # FIXME: Handle case with multiple files
-
-        for out_file in out_files:
-            with open(out_file, "r") as f:
-                for line in f:
-                    # use the lines after "job information"
-                    if "Job information" in line:
-                        counter = 0
-                        job_info = True
-                        continue
-
-                    if counter == 1 and job_info:  # first line defines the header
-                        header = line
-                    elif (
-                        counter == 2 and job_info
-                    ):  # second line defines the length of the content
-                        separator = line
-                        sep_len = [len(i) for i in separator.split()]
-                    elif counter == 3 and job_info:  # third line defines the value
-                        value = line
-                    elif counter == 4 and job_info:  # reset for next job info
-                        job_info = False
-                        startIndex = 0
-
-                        # parse header and values
-                        for l in sep_len:
-                            headers.append(header[startIndex : startIndex + l].strip())
-                            values.append(value[startIndex : startIndex + l].strip())
-                            startIndex += l + 1
-                            df = pd.DataFrame([values], columns=headers)
-
-                    counter += 1
-
-        # Format columns
-        timedelta_cols = ["Elapsed", "Time limit"]
-        datetime_cols = ["Submit", "Eligible", "Start", "End"]
-        df[timedelta_cols] = df[timedelta_cols].apply(pd.to_timedelta)
-        df[datetime_cols] = df[datetime_cols].apply(pd.to_datetime)
-
-        # Extracting integer part and unit part from usage and memory
-        df[["Energy", "Energy unit"]] = df["Energy"].str.split(expand=True)
-        df["Energy"] = df["Energy"].astype(float)
-
-        try:  # only available for simulations on GPU
-            df["Execution time"] = df["Execution time"].apply(pd.to_timedelta)
-            df[["Usage", "Usage unit"]] = df["Usage"].str.split(expand=True)
-            df[["Max mem", "Max mem unit"]] = df["Max mem"].str.split(expand=True)
-            df[["Usage", "Max mem"]] = df[["Usage", "Max mem"]].astype(float)
-        except:
-            pass
-
-        return df
 
 
 ############# other functions #############

@@ -656,7 +656,7 @@ def get_wind_profile(
         T_v_mean = calculate_virtual_temperature(t, q).mean()
         L = calculate_monin_obukhov_length(u_star, T_v_mean, H_turb)
 
-    stability = determine_stability(L)
+    stability = _determine_stability(L)
 
     if stability == "stable":
         stability_correction = _correction_stable(z - displacement_height, L, beta)
@@ -671,7 +671,7 @@ def get_wind_profile(
         np.log((z - displacement_height) / z0) - stability_correction
     )
 
-    uz = replace_by_majority_sign(uz)
+    uz = _replace_by_majority_sign(uz)
 
     return uz
 
@@ -737,7 +737,7 @@ def calculate_monin_obukhov_length(
     return L
 
 
-def determine_stability(L: float, threshold: float = 500) -> str:
+def _determine_stability(L: float, threshold: float = 500) -> str:
     """
     Determine the stability regime based on the Monin-Obukhov length (L).
 
@@ -887,7 +887,7 @@ def compute_u_star_stable(
     return u_star
 
 
-def replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
+def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
     """Replace wind speed in array with 0 if it does not have the same sign as
     the majority of wind values in the array.
 
@@ -913,3 +913,14 @@ def replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
     arr[~majority_mask] = 0
 
     return arr
+
+
+def compute_effective_wind_speed(
+    data: xr.Dataset, true_emissions: Union[int, float]
+) -> xr.Dataset:
+    data["effective_wind_speed"] = (
+        true_emissions * data.L_max
+    ) / data.integrated_CH4_mass
+    data["effective_wind_speed"].attrs["units"] = "m s-1"
+
+    return data
