@@ -1,3 +1,3 @@
-__all__ = ["cscs", "ime_v2", "initialisation", "processing", "visualisation"]
+__all__ = ["cscs", "initialisation", "processing", "visualisation"]
 
-from . import cscs, ime_v2, initialisation, processing, visualisation
+from . import cscs, initialisation, processing, visualisation

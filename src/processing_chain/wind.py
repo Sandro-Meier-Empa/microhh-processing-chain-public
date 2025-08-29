@@ -12,7 +12,6 @@ import xarray as xr
 import ddeq
 import ucat
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
 import ls2d
 
 import processing_chain.initialisation as init

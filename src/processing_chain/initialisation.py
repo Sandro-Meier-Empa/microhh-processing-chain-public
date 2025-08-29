@@ -4,15 +4,13 @@ import subprocess
 import sys
 
 from pathlib import Path
-from typing import Union
+from typing import Union, Literal
 
 import netCDF4 as nc
 import xarray as xr
 import numpy as np
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-sys.path.append(os.path.join("/users", os.environ["USER"], "LS2D"))
-import microhh_tools as mht
+import microhh_py.microhh_tools as mht
 import ls2d
 
 
@@ -39,7 +37,7 @@ class Case:
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
         microhh_executable_path: Union[str, Path],
-        location: str,
+        location: Literal["scratch", "store"],
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -58,7 +56,7 @@ class Case:
                 Path of personal folder on 'scratch'.
             store_path (str):
                 Path of personal folder on 'store'.
-            location (str):
+            location (Literal["scratch", "store"]):
                 Location where the case should be handled (read and write)
                 Options are 'scratch' and 'store'.
         """
@@ -66,9 +64,7 @@ class Case:
         self.case_name = case_name
         self.suffix = suffix
         self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
-        self.scratch_path = Path(
-            os.environ.get("SCRATCH"), scratch_path, self.case_path
-        )
+        self.scratch_path = Path(scratch_path, self.case_path)
         self.store_path = Path(store_path, self.case_path)
         self.microhh_executable_path = Path(microhh_executable_path)
 
@@ -86,18 +82,18 @@ class Case:
 
     def initialise(
         self,
-        method: str = "new",
+        method: Literal["default", "interactive", "rerun"] = "interactive",
         overwrite: bool = False,
     ):
         """Initialise a case by creating or reading in a directory.
 
         Args:
-            method (str, default: 'new'):
+            method (str, default: 'interactive'):
                 Method of how the case should be set up.
                 Options are...
                     ...'default': use python script to create .ini file and
                     initial conditions.
-                    ...'new': create .ini file and initial conditions object
+                    ...'interactive': create .ini file and initial conditions object
                     oriented.
                     ...'rerun': use .ini file and initial condition from store.
             overwrite (bool, default: False):
@@ -117,7 +113,6 @@ class Case:
         """
 
         # set up directory on scratch
-
         if not self.file_directory.exists():
             print(f"Creating {self.file_directory}")
             os.makedirs(self.file_directory)
@@ -130,7 +125,7 @@ class Case:
         """Check if the running method is correct.
         Accepted values are
             'default': Create .ini file and initial conditions by running a python script.
-            'new': Create .ini file and initial conditions object oriented.
+            'interactive': Create .ini file and initial conditions object oriented.
             'rerun': Rerun a case which is stored on store.
         """
         # check if the case is set up in the directory 'microhh/cases/'
@@ -138,12 +133,12 @@ class Case:
             self._check_case_setup()
             self._provide_ini()
             self._create_initial()
-        elif self.method == "new":
+        elif self.method == "interactive":
             self._provide_ini()
         elif self.method == "rerun":
             pass
         else:
-            raise ValueError(f"{self.method} is not available. Use 'default' or 'new'.")
+            raise ValueError(f"{self.method} is not available. Use 'default' or 'interactive'.")
 
     def _check_case_setup(self):
         """Check if the case is set up.
@@ -172,7 +167,7 @@ class Case:
     def _provide_ini(self):
         """Provide .ini file based on the selected method when initialising a case.
         If method="default", it will be created by running a pyhton file.
-        If method="new", an empty file is created which can be modified later."""
+        If method="interactive", an empty file is created which can be modified later."""
 
         # default: copy .ini file from 'microhh/cases/'
         if self.method == "default":
@@ -183,8 +178,8 @@ class Case:
                 # Copy the existing file to the scratch path
                 shutil.copy(str(ini_file_path), str(self.scratch_path))
 
-        # new: fill .ini file using LS2D package
-        if self.method == "new":
+        # interactive: fill .ini file using LS2D package
+        if self.method == "interactive":
             # Create an empty file in the scratch path
             self.ini_path.touch()
 
@@ -226,7 +221,7 @@ class Case:
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
-    def delete_scratch_folder(self):
+    def delete_on_scratch(self):
         """Delete the scratch directory"""
         shutil.rmtree(self.scratch_path)
         print(f"Deleting {self.case_path} from scratch.")
@@ -299,7 +294,7 @@ def interpolate_to_model_profile(
 
 def read_initial_cond(case: Case) -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
-    of a model run ({case_name}_input.nc).
+    of a model run (<case_name>_input.nc).
 
     Args:
         case (Case):
@@ -315,8 +310,8 @@ def read_initial_cond(case: Case) -> xr.Dataset:
 
 
 def read_statistics(case: Case) -> xr.Dataset:
-    """Read the netCDF file containing the initial conditions
-    of a model run ({case_name}_input.nc).
+    """Read the netCDF file containing the statistics of a model run
+    (<case_name>_statistics.nc).
 
     Args:
         case (Case):

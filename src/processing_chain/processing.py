@@ -10,7 +10,7 @@ import warnings
 import zipfile
 
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Literal, Union, Tuple
 
 import pandas as pd
 import xarray as xr
@@ -18,8 +18,7 @@ import numpy as np
 
 import ucat
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-import microhh_tools as mht
+import microhh_py.microhh_tools as mht
 
 import processing_chain.initialisation as init
 import processing_chain.cscs as cscs
@@ -331,14 +330,16 @@ class PostProcessing:
 
     def run_postprocessing(
         self,
-        gas: str,
-        precision: str = "double",
+        gas: Union[str, list] = None,
+        prognostic_vars = ["u", "v", "thl"],
+        precision: Literal["single", "double"] = "double",
         start_time=None,
         end_time=None,
         to_unit: str = "kg m-2",
         default_p_and_t: bool = False,
-        method: str = "height",
+        method: Literal["mean", "median", "height", "concentration_weighted"] = "height",
         height: Union[int, float] = None,
+        profile_gas: str = None,
         overwrite: bool = False,
         save: bool = True,
         chunks: Union[str, dict] = None,
@@ -350,8 +351,12 @@ class PostProcessing:
             ... vertically integrate wind data
 
         Args:
-            gas (str):
-                Gas which should be processed to concentrations and vertically integrated.
+            gas (Union[str, list]):
+                Gas or list of gases to process to concentrations and vertically integrate.
+                If not given it will process all gases specified in the .ini file.
+            prognostic_vars (list, optional):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "qt", "thl"]
             precision (str, optional):
                 Precision used for the created .nc file. Defaults to "double".
             start_time (int, optional. Default: None):
@@ -369,12 +374,21 @@ class PostProcessing:
                 "mean", "median", "height", "concentration_weighted". Defaults to "height".
             height (Union[int, float], optional):
                 Height at which the wind speed should be used if method = 'height'. Defaults to None.
+            profile_gas (str, optional):
+                Gas used to weight the wind speed if method = 'concentration_weighted'.
             overwrite (bool, optional):
                 Specify if the resulting dataset should be overwritten if it exists. Defaults to False.
             save (bool, optional):
                 Specify if the resulting dataset should be saved. Defaults to True.
+            chunks (Union[str, dict], optional):
+                Chunks used when opening the netCDF files with xarray. Defaults to None.
         """
-        vars = ["u", "v", "thl", gas]
+        if gases is None:
+            gases = self.ini_file["fields"]["slist"]
+        else:
+            gases = object_to_list(gas)
+
+        vars = prognostic_vars + gases
 
         print(f"########## START PROCESSING OF {self.case_path} ##########")
 
@@ -391,18 +405,27 @@ class PostProcessing:
             start_time=start_time,
             end_time=end_time,
         )
-        gas_2D = self.convert_to_columns(
-            variable=gas,
-            to_unit=to_unit,
-            default_p_and_t=default_p_and_t,
-            save=save,
-            overwrite=overwrite,
-            chunks=chunks,
-        )
+
+        for gas_name in gases:
+            gas_2D = self.convert_to_columns(
+                variable=gas_name,
+                to_unit=to_unit,
+                default_p_and_t=default_p_and_t,
+                save=save,
+                overwrite=overwrite,
+                chunks=chunks,
+            )
+
+        if profile_gas is None and method == "concentration_weighted":
+            profile_gas = gases[0]
+            warnings.warn(
+                f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
+            )
+            
         wind_processing = wind_proc.WindProcessing(self.case)
         wind_2D = wind_processing.create_2D_wind(
             method=method,
-            gas=gas,
+            gas=profile_gas,
             height=height,
             save=save,
             overwrite=overwrite,

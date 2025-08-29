@@ -9,9 +9,6 @@ from typing import Union, Tuple
 import pandas as pd
 import numpy as np
 
-import processing_chain.initialisation as init
-
-
 class print_colors:
     CYAN = "\033[96m"
     VIOLET = "\033[95m"
@@ -203,7 +200,7 @@ class AlpsSetup:
 
     def process_case_on_alps(
         self,
-        case: init.Case,
+        case,
         py_file_path: str,
         job_name: str,
         python_path: str = "python",
@@ -431,6 +428,8 @@ def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
         pd.DataFrame:
             DataFrame containing the jobs in the queue with simulation progress.
     """
+    import processing_chain.initialisation as init
+
     progress_percentages = []
 
     for index, row in df.iterrows():
@@ -459,7 +458,7 @@ def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
     return df
 
 
-def print_simulation_progress(case: init.Case):
+def print_simulation_progress(case):
     """Print the progress of a simulation based on the saved binary output
     files of MicroHH"""
 
@@ -478,7 +477,7 @@ def print_simulation_progress(case: init.Case):
     )
 
 
-def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
+def get_simulation_progress(case) -> Tuple[int, int]:
     """Get current simulation progress of a MicroHH simulation based on the
     binary grid files generated when running the model.
 
@@ -491,8 +490,7 @@ def get_simulation_progress(case: init.Case) -> Tuple[int, int]:
             Current and max time step of a simulation.
     """
     # only import the dependencies if this function is called
-    sys.path.append(os.path.join("/users", os.environ["USER"], "microhh", "python"))
-    import microhh_tools as mht
+    import microhh_py.microhh_tools as mht
 
     current_timestep = 0
 
