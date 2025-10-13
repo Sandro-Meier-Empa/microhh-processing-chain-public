@@ -16,10 +16,8 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
 
-import ddeq
-
-import processing_chain.processing as proc
-import processing_chain.initialisation as init
+import microhh_processing.processing as proc
+import microhh_processing.initialisation as init
 
 
 class Visualisation:

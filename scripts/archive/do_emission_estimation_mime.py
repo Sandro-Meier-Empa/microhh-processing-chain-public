@@ -7,10 +7,10 @@ import cartopy.crs as ccrs
 import numpy as np
 import xarray as xr
 
-import processing_chain.initialisation as init
-import processing_chain.processing as ch4_proc
-import processing_chain.wind as wind_proc
-import processing_chain.ime_v2 as ime
+import microhh_processing.initialisation as init
+import microhh_processing.processing as ch4_proc
+import microhh_processing.wind as wind_proc
+import microhh_processing.ime_v2 as ime
 
 
 sys.path.append(f"/users/smeier/ddeq/src/")

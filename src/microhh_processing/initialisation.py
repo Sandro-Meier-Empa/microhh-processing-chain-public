@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Union, Literal
 
-import netCDF4 as nc
+import netCDF4 as nc4
 import xarray as xr
 import numpy as np
 
@@ -138,7 +138,9 @@ class Case:
         elif self.method == "rerun":
             pass
         else:
-            raise ValueError(f"{self.method} is not available. Use 'default' or 'interactive'.")
+            raise ValueError(
+                f"{self.method} is not available. Use 'default' or 'interactive'."
+            )
 
     def _check_case_setup(self):
         """Check if the case is set up.
@@ -167,7 +169,8 @@ class Case:
     def _provide_ini(self):
         """Provide .ini file based on the selected method when initialising a case.
         If method="default", it will be created by running a pyhton file.
-        If method="interactive", an empty file is created which can be modified later."""
+        If method="interactive", an empty file is created which can be modified later.
+        """
 
         # default: copy .ini file from 'microhh/cases/'
         if self.method == "default":
@@ -328,7 +331,7 @@ def read_statistics(case: Case) -> xr.Dataset:
 
 
 def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
-    groups = [""] + list(nc.Dataset(file_path).groups.keys())
+    groups = [""] + list(nc4.Dataset(file_path).groups.keys())
     merged_dataset = xr.Dataset()
     for group in groups:
         ds = xr.open_dataset(file_path, group=group, decode_times=False)
@@ -420,3 +423,99 @@ def convert_to_kmol_per_s(value: Union[int, float], unit: str, gas: str) -> floa
     value /= time_factors[time_unit]  # mol/s
 
     return value * 1e3  # kmol/s
+
+
+def write_netcdf_input(
+    case_name,
+    float_type,
+    init_profiles,
+    tdep_surface=None,
+    tdep_ls=None,
+    radiation=None,
+    soil=None,
+):
+    """
+    Function for writing the MicroHH2 NetCDF input
+    """
+
+    def add_variable(nc_group, name, dims, data, float_type):
+        """
+        Add variable to NetCDF file (or group), and write data
+        """
+        if dims is None:
+            var = nc_group.createVariable(name, float_type)
+            var[:] = data
+        else:
+            var = nc_group.createVariable(name, float_type, dims)
+            var[:] = data[:]
+
+    def is_array(data):
+        """
+        Check if value if array or scalar
+        """
+        if isinstance(data, np.ndarray) or isinstance(data, xr.DataArray):
+            return True
+        return False
+
+    # Define new NetCDF file
+    nc_file = nc4.Dataset(
+        "{}_input.nc".format(case_name), mode="w", datamodel="NETCDF4"
+    )
+
+    # Create height dimension, and set height coordinate
+    nc_file.createDimension("z", init_profiles["z"].size)
+    add_variable(nc_file, "z", ("z"), init_profiles["z"], float_type)
+
+    # Create a group called "init" for the initial profiles.
+    nc_group_init = nc_file.createGroup("init")
+
+    # Set the initial profiles
+    for name, data in init_profiles.items():
+        # Switch between vector and scalar values
+        dims = "z" if is_array(data) else None
+        add_variable(nc_group_init, name, dims, data, float_type)
+
+    # Create a group called "timedep" for the time dependent input
+    if tdep_surface is not None or tdep_ls is not None:
+        nc_group_timedep = nc_file.createGroup("timedep")
+
+    # Write the time dependent surface values
+    if tdep_surface is not None:
+        nc_group_timedep.createDimension(
+            "time_surface", tdep_surface["time_surface"].size
+        )
+
+        for name, data in tdep_surface.items():
+            add_variable(nc_group_timedep, name, ("time_surface"), data, float_type)
+
+    # Write the time dependent atmospheric values
+    if tdep_ls is not None:
+        nc_group_timedep.createDimension("time_ls", tdep_ls["time_ls"].size)
+
+        for name, data in tdep_ls.items():
+            dims = ("time_ls") if name == "time_ls" else ("time_ls", "z")
+            add_variable(nc_group_timedep, name, dims, data, float_type)
+
+    if radiation is not None:
+        nc_group_rad = nc_file.createGroup("radiation")
+
+        nc_group_rad.createDimension("lay", radiation["p_lay"].size)
+        nc_group_rad.createDimension("lev", radiation["p_lev"].size)
+
+        for name, data in radiation.items():
+            # Switch between vector and scalar values
+            if not is_array(data):
+                dims = None
+            else:
+                dims = ("lay") if data.size == radiation["p_lay"].size else ("lev")
+
+            add_variable(nc_group_rad, name, dims, data, float_type)
+
+    if soil is not None:
+        nc_group_soil = nc_file.createGroup("soil")
+        nc_group_soil.createDimension("z", soil["z"].size)
+
+        for name, data in soil.items():
+            add_variable(nc_group_soil, name, "z", data, float_type)
+
+    nc_file.close()

@@ -14,7 +14,7 @@ import ucat
 
 import ls2d
 
-import processing_chain.initialisation as init
+import microhh_processing.initialisation as init
 
 
 class WindProcessing:
@@ -25,7 +25,7 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        import processing_chain.processing as proc
+        import microhh_processing.processing as proc
 
         self.post = proc.PostProcessing(case)
         self.file_directory = case.file_directory

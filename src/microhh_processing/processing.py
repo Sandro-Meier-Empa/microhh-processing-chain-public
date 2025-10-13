@@ -20,9 +20,9 @@ import ucat
 
 import microhh_py.microhh_tools as mht
 
-import processing_chain.initialisation as init
-import processing_chain.cscs as cscs
-import processing_chain.wind as wind_proc
+import microhh_processing.initialisation as init
+import microhh_processing.cscs as cscs
+import microhh_processing.wind as wind_proc
 
 # molar mass (g/mol)
 gas_mass = {
@@ -125,7 +125,6 @@ class PreProcessing:
         if start_jobs:
             # Launch the job on alps
             self.alps_setup.execute_bash_script(job_file, wait)
-
 
     def rerun_simulation(
         self,
@@ -331,13 +330,15 @@ class PostProcessing:
     def run_postprocessing(
         self,
         gas: Union[str, list] = None,
-        prognostic_vars = ["u", "v", "thl"],
+        prognostic_vars=["u", "v", "thl"],
         precision: Literal["single", "double"] = "double",
         start_time=None,
         end_time=None,
         to_unit: str = "kg m-2",
         default_p_and_t: bool = False,
-        method: Literal["mean", "median", "height", "concentration_weighted"] = "height",
+        method: Literal[
+            "mean", "median", "height", "concentration_weighted"
+        ] = "height",
         height: Union[int, float] = None,
         profile_gas: str = None,
         overwrite: bool = False,
@@ -421,7 +422,7 @@ class PostProcessing:
             warnings.warn(
                 f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
             )
-            
+
         wind_processing = wind_proc.WindProcessing(self.case)
         wind_2D = wind_processing.create_2D_wind(
             method=method,

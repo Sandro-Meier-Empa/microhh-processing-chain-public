@@ -1,13 +1,13 @@
 import concurrent.futures
 import os
 import subprocess
-import sys
 
 from pathlib import Path
 from typing import Union, Tuple
 
 import pandas as pd
 import numpy as np
+
 
 class print_colors:
     CYAN = "\033[96m"
@@ -274,7 +274,7 @@ class AlpsSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        import processing_chain.processing as proc_pc
+        import microhh_processing.processing as proc_pc
 
         commands = proc_pc.object_to_list(commands)
 
@@ -428,7 +428,7 @@ def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
         pd.DataFrame:
             DataFrame containing the jobs in the queue with simulation progress.
     """
-    import processing_chain.initialisation as init
+    import microhh_processing.initialisation as init
 
     progress_percentages = []
 
