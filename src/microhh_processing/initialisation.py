@@ -32,7 +32,7 @@ class Case:
 
     def __init__(
         self,
-        case_name: str,
+        name: str,
         suffix: str,
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
@@ -47,11 +47,11 @@ class Case:
             ...visualisation (module 'Visualisation')
 
         Args:
-            case_name (str):
+            name (str):
                 Name of the case. Must be set up in microhh/cases
             suffix (str):
                 Suffix for the specific model run.
-                Is combined as {case_name}.{suffix}.
+                Is combined as {name}.{suffix}.
             scratch_path (str):
                 Path of personal folder on 'scratch'.
             store_path (str):
@@ -61,15 +61,34 @@ class Case:
                 Options are 'scratch' and 'store'.
         """
         self.user = os.environ["USER"]
-        self.case_name = case_name
+        self.name = name
         self.suffix = suffix
-        self.case_path = f"{case_name}.{suffix}" if suffix else f"{case_name}"
-        self.scratch_path = Path(scratch_path, self.case_path)
-        self.store_path = Path(store_path, self.case_path)
+        self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
+        self.scratch_path = Path(scratch_path, self.name_spec)
+        self.store_path = Path(store_path, self.name_spec)
         self.microhh_executable_path = Path(microhh_executable_path)
 
         self._handle_file_directory(location)
-        self.ini_path = Path(self.file_directory, f"{self.case_name}.ini")
+        self.ini_path = Path(self.file_directory, f"{self.name}.ini")
+
+    # add method when printing case
+    def __repr__(self):
+        # format ini file content as string
+        # read ini file and format content
+        ini_content = ""
+        if self.ini_path.exists():
+            with open(self.ini_path, "r") as f:
+                ini_content = f.read()
+
+        return (
+            f"Case(\n"
+            f"  name='{self.name}',\n"
+            f"  suffix='{self.suffix}',\n"
+            f"  path='{self.file_directory}'\n"
+            f"  ini_file=\n"
+            f"{ini_content}\n"
+            f")"
+        )
 
     def _handle_file_directory(self, location):
         # check if the case is set up in the directory 'microhh/cases/'
@@ -136,7 +155,9 @@ class Case:
         elif self.method == "interactive":
             self._provide_ini()
         elif self.method == "rerun":
-            pass
+            raise NotImplementedError(
+                "Rerunning a case is not implemented yet. Please use 'default' or 'interactive'."
+            )
         else:
             raise ValueError(
                 f"{self.method} is not available. Use 'default' or 'interactive'."
@@ -148,22 +169,22 @@ class Case:
         Raises:
             FileNotFoundError: If the case does not exist or required files are missing.
         """
-        case_setup_path = Path("/users", self.user, "microhh", "cases", self.case_name)
+        case_setup_path = Path("/users", self.user, "microhh", "cases", self.name)
         if not case_setup_path.exists():
-            raise FileNotFoundError(f"Case '{self.case_name}' does not exist.")
+            raise FileNotFoundError(f"Case '{self.name}' does not exist.")
 
-        # Check for the existence of {case_name}_input.py and {case_name}.ini files
-        input_py_path = Path(case_setup_path, f"{self.case_name}_input.py")
-        ini_file_path = Path(case_setup_path, f"{self.case_name}.ini")
+        # Check for the existence of {name}_input.py and {name}.ini files
+        input_py_path = Path(case_setup_path, f"{self.name}_input.py")
+        ini_file_path = Path(case_setup_path, f"{self.name}.ini")
 
         if not input_py_path.exists():
             raise FileNotFoundError(
-                f"{self.case_name}_input.py does not exist in the case directory."
+                f"{self.name}_input.py does not exist in the case directory."
             )
 
         if not ini_file_path.exists():
             raise FileNotFoundError(
-                f"{self.case_name}.ini does not exist in the case directory."
+                f"{self.name}.ini does not exist in the case directory."
             )
 
     def _provide_ini(self):
@@ -174,8 +195,8 @@ class Case:
 
         # default: copy .ini file from 'microhh/cases/'
         if self.method == "default":
-            case_path = Path("/users", self.user, "microhh", "cases", self.case_name)
-            ini_file_path = case_path / f"{self.case_name}.ini"
+            name_spec = Path("/users", self.user, "microhh", "cases", self.name)
+            ini_file_path = name_spec / f"{self.name}.ini"
 
             if ini_file_path.exists():
                 # Copy the existing file to the scratch path
@@ -189,15 +210,15 @@ class Case:
         self.ini_file = mht.Read_namelist(self.ini_path)
 
     def _create_initial(self):
-        # default: use {case_name}_input.py to create {case_name}_input.nc
+        # default: use {name}_input.py to create {name}_input.nc
         if self.method == "default":
             py_script_path = Path(
                 "/users",
                 self.user,
                 "microhh",
                 "cases",
-                self.case_name,
-                f"{self.case_name}_input.py",
+                self.name,
+                f"{self.name}_input.py",
             )
 
             if py_script_path.exists():
@@ -205,8 +226,22 @@ class Case:
             else:
                 print(f"{py_script_path} not found.")
 
+    def overwrite_ini(self, settings: dict = {}, overwrite: bool = True):
+        """Write the .ini file of a case.
+        If the .ini file already exists, it will be overwritten.
+
+        Args:
+            overwrite (bool, optional. Default: True):
+                Specify if the .ini file should be overwritten.
+        """
+        self.ini_file.groups = {}
+
+        self.modify_ini(settings=settings, overwrite=overwrite)
+
     def modify_ini(self, settings: dict, overwrite: bool = True):
-        """Modify the .ini file of a case on scratch.
+        """Modify the .ini file of a case.
+        Values populated with None will be removed from the .ini file.
+        Values which are not specified will remain unchanged.
 
         Args:
             settings (dict):
@@ -224,10 +259,14 @@ class Case:
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
+    def open_ini_vscode(self):
+        """Open the .ini file of a case in VS Code."""
+        subprocess.run(["code", str(self.ini_path)])
+
     def delete_on_scratch(self):
         """Delete the scratch directory"""
         shutil.rmtree(self.scratch_path)
-        print(f"Deleting {self.case_path} from scratch.")
+        print(f"Deleting {self.name_spec} from scratch.")
 
 
 def interpolate_to_model_profile(
@@ -238,24 +277,33 @@ def interpolate_to_model_profile(
         ls2d.grid.Grid_stretched,
         ls2d.grid.Grid_stretched_manual,
     ],
+    variable_value: Union[float, int] = 0.0,
     variable_profile: Union[list, np.ndarray] = None,
     input_profile: Union[list, np.ndarray] = None,
 ) -> np.ndarray:
     """Interpolate a given vertical profile to the height levels of
-    the MicroHH model.
+    the MicroHH model. Can also be used to create a constant profile
 
     Args:
         grid: MicroHH grid created using the LS2D module.
-        variable_profile (Union[list, np.array], optional. Default: None):
-            Value of the variable at these heights. If not specified,
-            the variable is set to 0.
-        input_profile (Union[list, np.array], optional. Default: None):
-            Original height levels of the data.
+        variable_value (Union[float, int], optional. Default: 0.0):
+            Constant value of the variable.
+            Used if no variable profile is provided.
+        variable_profile (Union[list, np.ndarray], optional. Default: None):
+            Vertical profile of the variable.
+        input_profile (Union[list, np.ndarray], optional. Default: None):
+            Height levels of the provided variable profile.
 
     Returns:
         np.array: Values interpolated to the height levels of
         the MicroHH model.
     """
+    # check if variable value or variable profile is provided
+    if variable_value is None and variable_profile is None:
+        raise ValueError(
+            "Please provide either a variable value or a variable profile."
+        )
+
     if isinstance(grid, np.ndarray):
         model_profile = grid
     elif isinstance(
@@ -273,31 +321,23 @@ def interpolate_to_model_profile(
             "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
         )
 
+    # convert model profile and variable profile to numpy arrays
     if variable_profile is not None:
-        # Convert variable_profile to a NumPy array if it's a list
-        if isinstance(variable_profile, list):
-            variable_profile = np.array(variable_profile)
+        variable_profile = np.array(variable_profile)
+    if input_profile is not None:
+        input_profile = np.array(input_profile)
 
-        # Convert input_profile to a NumPy array if it's a list
-        if isinstance(input_profile, list):
-            input_profile = np.array(input_profile)
-
-        # Handle the case where variable_profile is a single value
-        if np.isscalar(variable_profile):
-            model_var_profile = np.full(len(model_profile), variable_profile)
-        else:
-            model_var_profile = np.interp(
-                model_profile, input_profile, variable_profile
-            )
+    if variable_profile is None:
+        model_var_profile = np.full(len(model_profile), variable_value)
     else:
-        model_var_profile = np.zeros(len(model_profile))
+        model_var_profile = np.interp(model_profile, input_profile, variable_profile)
 
     return model_var_profile
 
 
 def read_initial_cond(case: Case) -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
-    of a model run (<case_name>_input.nc).
+    of a model run (<name>_input.nc).
 
     Args:
         case (Case):
@@ -307,27 +347,9 @@ def read_initial_cond(case: Case) -> xr.Dataset:
         xr.Dataset: netCDF of initial conditions.
     """
 
-    fname = Path(case.file_directory, f"{case.case_name}_input.nc")
+    fname = Path(case.file_directory, f"{case.name}_input.nc")
 
     return _combine_nc_groups(fname)
-
-
-def read_statistics(case: Case) -> xr.Dataset:
-    """Read the netCDF file containing the statistics of a model run
-    (<case_name>_statistics.nc).
-
-    Args:
-        case (Case):
-            Case for which the initial conditions should be read.
-
-
-    Returns:
-        xr.Dataset: netCDF of initial conditions.
-    """
-
-    file_path = Path(case.file_directory, f"{case.case_name}.default.0000000.nc")
-
-    return _combine_nc_groups(file_path)
 
 
 def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
@@ -426,7 +448,8 @@ def convert_to_kmol_per_s(value: Union[int, float], unit: str, gas: str) -> floa
 
 
 def write_netcdf_input(
-    case_name,
+    name,
+    name_spec,
     float_type,
     init_profiles,
     tdep_surface=None,
@@ -458,9 +481,14 @@ def write_netcdf_input(
         return False
 
     # Define new NetCDF file
-    nc_file = nc4.Dataset(
-        "{}_input.nc".format(case_name), mode="w", datamodel="NETCDF4"
-    )
+    fname = os.path.join(name_spec, f"{name}_input.nc")
+
+    # Check if the file exists and remove it if yes
+    if os.path.exists(fname):
+        os.remove(fname)
+
+    # Create a new NetCDF file
+    nc_file = nc4.Dataset(fname, mode="w", datamodel="NETCDF4")
 
     # Create height dimension, and set height coordinate
     nc_file.createDimension("z", init_profiles["z"].size)

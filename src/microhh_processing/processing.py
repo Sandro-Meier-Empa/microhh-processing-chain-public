@@ -19,6 +19,7 @@ import numpy as np
 import ucat
 
 import microhh_py.microhh_tools as mht
+import microhh_py.convert_3d_to_nc as convert_3d_to_nc
 
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
@@ -55,9 +56,9 @@ class PreProcessing:
         """
         self.case = case
         self.user = case.user
-        self.case_name = case.case_name
+        self.name = case.name
         self.suffix = case.suffix
-        self.case_path = case.case_path
+        self.name_spec = case.name_spec
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
         self.microhh_executable_path = case.microhh_executable_path
@@ -78,13 +79,14 @@ class PreProcessing:
         if self.alps_setup.processor == "gpu" and self.alps_setup.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
 
-    def run_simulation(
+    def prepare_simulation(
         self,
+        overwrite: bool = False,
         start_jobs: bool = False,
         wait: bool = False,
     ):
         """Prepare MicroHH for running a simulation and executes the simulation.
-        - Copy the initial conditions {case_name}_input.nc
+        - Copy the initial conditions {name}_input.nc
         - Copy the specified build of MicroHH to scratch
         - Create bash script and execute it to run the model
 
@@ -104,8 +106,8 @@ class PreProcessing:
 
         # check if all files are present
         files_required = [
-            f"{self.case_name}_input.nc",
-            f"{self.case_name}.ini",
+            f"{self.name}_input.nc",
+            f"{self.name}.ini",
             "microhh",
         ]
 
@@ -117,14 +119,20 @@ class PreProcessing:
                 )
 
         # Create bash script if it does not exist
-        job_file = self.create_run_script()
+        self.job_file = self.create_run_script(overwrite)
 
         # check if the .ini setup is valid
         self._check_ini_setup_valid()
 
         if start_jobs:
             # Launch the job on alps
-            self.alps_setup.execute_bash_script(job_file, wait)
+            self.start_simulation(wait)
+
+    def start_simulation(self, wait: bool = False):
+        self.alps_setup.execute_bash_script(self.job_file, wait)
+
+    def open_jobscript_vscode(self):
+        self.alps_setup.open_bash_script_vscode(self.job_file)
 
     def rerun_simulation(
         self,
@@ -133,12 +141,14 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ):
-        # Re-run simulation based on run_microhh.sbash, {case_name}.ini and {case_name}_input.nc.
+        # Re-run simulation based on run_microhh.sbash, {name}.ini and {name}_input.nc.
+
+        # TODO: has not been tested and used yet
 
         # List of files to copy
         files_to_copy = [
-            f"{self.case_name}.ini",
-            f"{self.case_name}_input.nc",
+            f"{self.name}.ini",
+            f"{self.name}_input.nc",
         ]
 
         if reuse_bash_script:
@@ -162,15 +172,15 @@ class PreProcessing:
 
         if start_jobs:
             # Launch the job on alps
-            self.alps_setup.execute_bash_script(job_file, wait)
+            self.start_simulation(wait)
 
-    def create_run_script(self) -> Path:
+    def create_run_script(self, overwrite: bool = False) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
-        if not job_file.exists():
+        if not job_file.exists() or overwrite:
             job_file = self.alps_setup.create_bash_script(
                 commands=[
-                    f"srun {self.scratch_path}/microhh init {self.case_name}",
-                    f"srun {self.scratch_path}/microhh run {self.case_name}",
+                    f"srun {self.scratch_path}/microhh init {self.name}",
+                    f"srun {self.scratch_path}/microhh run {self.name}",
                 ],
                 job_name="run_microhh",
                 file_path=job_file,
@@ -197,7 +207,7 @@ class PreProcessing:
     def _check_ini_content(self):
         """check if the .ini file is not empty"""
         if len(self.ini_file.groups) == 0:
-            raise ValueError(f"{self.case_name}.ini is empty.")
+            raise ValueError(f"{self.name}.ini is empty.")
 
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
@@ -318,9 +328,9 @@ class PostProcessing:
         """
         self.case = case
         self.user = case.user
-        self.case_name = case.case_name
+        self.name = case.name
         self.suffix = case.suffix
-        self.case_path = case.case_path
+        self.name_spec = case.name_spec
         self.scratch_path = case.scratch_path
         self.store_path = case.store_path
         self.ini_path = case.ini_path
@@ -329,8 +339,9 @@ class PostProcessing:
 
     def run_postprocessing(
         self,
+        py_file_path: Union[str, Path],
         gas: Union[str, list] = None,
-        prognostic_vars=["u", "v", "thl"],
+        prognostic_vars=["u", "v", "th"],
         precision: Literal["single", "double"] = "double",
         start_time=None,
         end_time=None,
@@ -357,7 +368,7 @@ class PostProcessing:
                 If not given it will process all gases specified in the .ini file.
             prognostic_vars (list, optional):
                 Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "qt", "thl"]
+                E.g. ["u", "v", "w", "qt", "th"]
             precision (str, optional):
                 Precision used for the created .nc file. Defaults to "double".
             start_time (int, optional. Default: None):
@@ -391,7 +402,7 @@ class PostProcessing:
 
         vars = prognostic_vars + gases
 
-        print(f"########## START PROCESSING OF {self.case_path} ##########")
+        print(f"########## START PROCESSING OF {self.name_spec} ##########")
 
         # skip post-processing if simulation failed at start
         current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
@@ -401,6 +412,7 @@ class PostProcessing:
 
         self.create_3d_output(
             vars=vars,
+            py_file_path=py_file_path,
             overwrite=overwrite,
             precision=precision,
             start_time=start_time,
@@ -432,7 +444,7 @@ class PostProcessing:
             overwrite=overwrite,
             chunks=chunks,
         )
-        print(f"########## FINISH PROCESSING OF {self.case_path} ##########")
+        print(f"########## FINISH PROCESSING OF {self.name_spec} ##########")
 
     def create_3d_output(
         self,
@@ -441,13 +453,16 @@ class PostProcessing:
         precision: str = "double",
         start_time=None,
         end_time=None,
+        py_file_path: Union[str, Path] = None,
     ):
         """Create 3D netCDF files for the variables specified
 
         Args:
             vars (Union[str, list]):
                 Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+                E.g. ["u", "v", "w", "ch4", "qt", "th"]
+            py_file_path (Union[str, Path]):
+                Path to the directory withing /microhh containing the 3d_to_nc.py file.
             overwrite (bool, option. Default: False):
                 Specify if existing files on 'scratch' and
                 'store' should be overwritten.
@@ -477,19 +492,32 @@ class PostProcessing:
                 else:
                     vars_to_process.remove(var)
 
-        # only process missing variables
-        if vars_to_process:
-            post_command = (
-                f"{sys.executable} 3d_to_nc.py -d {self.scratch_path} "
-                f"-f {self.case_name}.ini -v {' '.join(vars_to_process)} "
-                f"-p {precision} -t0 {start_time} -t1 {end_time} "
-                f"-tstep {sample_time}"
-            )
-            subprocess.run(
-                post_command,
-                shell=True,
-                cwd=Path("/users", self.user, "microhh", "python"),
-            )
+        if py_file_path is not None:
+            # run as python script
+            if vars_to_process:
+                post_command = (
+                    f"{sys.executable} 3d_to_nc.py -d {self.scratch_path} "
+                    f"-f {self.name}.ini -v {' '.join(vars_to_process)} "
+                    f"-p {precision} -t0 {start_time} -t1 {end_time} "
+                    f"-tstep {sample_time}"
+                )
+                subprocess.run(
+                    post_command,
+                    shell=True,
+                    cwd=py_file_path,
+                )
+        else:
+            # run as module
+            if vars_to_process:
+                convert_3d_to_nc.run(
+                    directory=self.scratch_path,
+                    filename=f"{self.name}.ini",
+                    vars=vars_to_process,
+                    precision=precision,
+                    starttime=start_time,
+                    endtime=end_time,
+                    sampletime=sample_time,
+                )
 
     def move_to_store(
         self,
@@ -522,10 +550,10 @@ class PostProcessing:
 
         # Copy files for reproducibility
         file_patterns = [
-            "*" + self.case_name + ".ini",
-            "*" + self.case_name + "_input.nc",
-            "*" + self.case_name + ".out",
-            "*" + self.case_name + ".default.*.nc",
+            "*" + self.name + ".ini",
+            "*" + self.name + "_input.nc",
+            "*" + self.name + ".out",
+            "*" + self.name + ".default.*.nc",
             "run_microhh_*.out",
             "run_microhh.sbash",
             "microhh",
@@ -625,15 +653,14 @@ class PostProcessing:
         if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
 
-        data = self.open_microhh_nc(file_path, chunks=chunks)
-
+        data = self.open_microhh_nc(variable=variable, chunks=chunks)
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
 
         return data
 
     def open_microhh_nc(
-        self, file_path: Union[str, Path], chunks: Union[str, dict] = None
+        self, variable: str, chunks: Union[str, dict] = None
     ) -> xr.Dataset:
         """Open a .nc file related to MicroHH output.
 
@@ -641,12 +668,43 @@ class PostProcessing:
             file_path (Union[str, Path]):
                 Path of the file including file name.
         """
+        file_path = Path(self.file_directory, f"{variable.lower()}.nc")
+
+        if not file_path.exists():
+            # List all .nc files in the directory
+            nc_files = [f.name for f in Path(self.file_directory).glob("*.nc")]
+            nc_list = ", ".join(nc_files) if nc_files else "No .nc files found."
+
+            raise FileNotFoundError(
+                f"Variable '{variable}' not found in {self.file_directory}. "
+                f"Available .nc files: {nc_list}"
+            )
+
         try:
             data = xr.open_dataset(file_path, chunks=chunks)
         except ValueError:
             data = xr.open_dataset(file_path, chunks=chunks, decode_times=False)
 
         return data
+
+    def open_statistics(self) -> xr.Dataset:
+        """Read the netCDF file containing the statistics of a model run
+        (<name>_statistics.nc).
+
+        Args:
+            case (Case):
+                Case for which the initial conditions should be read.
+
+
+        Returns:
+            xr.Dataset: netCDF of initial conditions.
+        """
+
+        file_path = Path(
+            self.case.file_directory, f"{self.case.name}.default.0000000.nc"
+        )
+
+        return init._combine_nc_groups(file_path)
 
     def _nc_assign_names_and_attributes(self, data: xr.Dataset) -> xr.Dataset:
         """Assign long_name and unit attributes to variables in a .nc file.
@@ -661,6 +719,7 @@ class PostProcessing:
         }
         variables.update(
             {
+                "th": ("potential temperature", "K"),
                 "thl": ("liquid water potential temperature", "K"),
                 "qt": ("total water mixing ratio", "kg kg-1"),
                 "u": ("zonal wind component", "m s-1"),
@@ -715,7 +774,7 @@ class PostProcessing:
         Args:
             vars (Union[str, list]):
                 Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "ch4", "qt", "thl"]
+                E.g. ["u", "v", "w", "ch4", "qt", "th"]
             filename (str):
                 Name of the file without path or file extension.
             overwrite (bool. Default: False):
@@ -731,7 +790,7 @@ class PostProcessing:
         # Check if the output file already exists
         if file_path.exists() and not overwrite:
             # If the file exists, open and return it
-            return self.open_microhh_nc(file_path, chunks=chunks)
+            return self.open_microhh_nc(variable=filename, chunks=chunks)
 
         # combine the prognostic variables into one dataset
         combined_dataset = self.combine_prognostic_variables(vars=vars, chunks=chunks)
@@ -866,7 +925,7 @@ class PostProcessing:
                 os.remove(file_path)
                 print(f"Overwriting {file_path}")
             else:
-                return self.open_microhh_nc(file_path, chunks=chunks)
+                return self.open_microhh_nc(variable=variable, chunks=chunks)
 
         data = self.open_3d_prognostic_variable(variable.lower(), chunks=chunks)
 
@@ -1129,7 +1188,7 @@ class PostProcessing:
             grid_y = source_data.source_y0.values
         else:
             raise ValueError(
-                f"Provide 'lat' and 'lon' in the {self.case_name} "
+                f"Provide 'lat' and 'lon' in the {self.name} "
                 f"file or 'source' and 'sources' as arguments"
             )
 
@@ -1266,7 +1325,7 @@ class PostProcessing:
                 Concentration units to which the gas should be converted.
                 Defaults to "kg m-3".
         """
-        required_prognostic_vars = [gas, "thl"]
+        required_prognostic_vars = [gas, "th"]
 
         # check if all required prognostic variables are in the dataset
         for var in required_prognostic_vars:
@@ -1306,7 +1365,7 @@ class PostProcessing:
 
     def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
         # read in statistics file
-        stats = init.read_statistics(self.case)
+        stats = self.open_statistics()
 
         # check if variable is in statistics file
         if variable not in stats.data_vars:
@@ -1358,7 +1417,7 @@ class PostProcessing:
 
         # Calculate absolute temperature
         data["ta"] = PostProcessing.calculate_absolute_temperature(
-            theta=data.thl, p=data.phydro, p0=data.phydroh.sel(zh=0)
+            theta=data.th, p=data.phydro, p0=data.phydroh.sel(zh=0)
         )
 
         # Add attributes to 'ta' variable
@@ -1425,6 +1484,87 @@ class PostProcessing:
         data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
 
         return data
+
+    def calculate_mass_budget(
+        self, read_method: Literal["binary", "netcdf"] = "binary"
+    ) -> dict:
+        """Calculate the mass budget of the modelled scalars.
+
+        Args:
+            read_method (Literal['binary', 'netcdf'], optional. Default: 'binary'):
+                Method to read the modelled scalar fields. Choose 'binary' to read
+                the binary output files or 'netcdf' to read the netCDF output files.
+        """
+
+        stats = self.open_statistics()
+        rhoref = stats.rhoref.values
+        zh = stats.zh.values
+        dz = zh[1:] - zh[:-1]
+
+        itot = self.case.ini_file["grid"]["itot"]
+        jtot = self.case.ini_file["grid"]["jtot"]
+        ktot = self.case.ini_file["grid"]["ktot"]
+
+        xsize = self.case.ini_file["grid"]["xsize"]
+        ysize = self.case.ini_file["grid"]["ysize"]
+
+        dx = xsize / itot
+        dy = ysize / jtot
+
+        scalars = self.case.ini_file["source"]["sourcelist"]
+        strength = np.array(self.case.ini_file["source"]["strength"])
+
+        time_range = list(
+            range(
+                0,
+                self.case.ini_file["time"]["endtime"] + 1,
+                self.case.ini_file["time"]["savetime"],
+            )
+        )
+
+        def read_mass_from_binary(scalar, time_range):
+            mass_array = []
+            dtype = get_dtype()
+            for time in time_range:
+                fld = np.fromfile(
+                    f"{self.case.scratch_path}/{scalar}.{time:07d}", dtype
+                )
+                fld = fld.reshape((ktot, jtot, itot))
+                mass = np.sum(rhoref[:, None, None] * fld * dx * dy * dz[:, None, None])
+                mass_array.append(float(mass))
+            return mass_array
+
+        def read_mass_from_netcdf(scalar, time_range):
+            nc_path = Path(self.case.scratch_path) / f"{scalar}.nc"
+            ds = xr.open_dataset(nc_path)
+            # Assume variable name matches scalar, dimensions (time, z, y, x)
+            arr = ds[scalar].values
+            mass_array = []
+            for i, time in enumerate(time_range):
+                fld = arr[i]
+                mass = np.sum(rhoref[:, None, None] * fld * dx * dy * dz[:, None, None])
+                mass_array.append(float(mass))
+            ds.close()
+            return mass_array
+
+        def get_dtype():
+            grid = mht.Read_grid(itot, jtot, ktot)
+
+            if grid.prec == "d":
+                return np.float64
+            else:
+                return np.float32
+
+        mass_dict = {"time": time_range}
+        for i, scalar in enumerate(scalars):
+            if read_method == "binary":
+                mass_dict[scalar] = read_mass_from_binary(scalar, time_range)
+            elif read_method == "netcdf":
+                mass_dict[scalar] = read_mass_from_netcdf(scalar, time_range)
+            else:
+                raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
+
+        return mass_dict
 
 
 ############# other functions #############

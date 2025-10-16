@@ -37,15 +37,15 @@ class Visualisation:
 
         """
         self.case = case
-        self.case_name = case.case_name
+        self.name = case.name
         self.suffix = case.suffix
-        self.case_path = case.case_path
+        self.name_spec = case.name_spec
         self.file_directory = case.file_directory
 
         self.post = proc.PostProcessing(self.case)
 
     def plot_initial_conditions(
-        self, case: init.Case, ncols: int = 4, figsize: tuple[int, int] = (15, 10)
+        self, ncols: int = 4, figsize: tuple[int, int] = (15, 10)
     ) -> None:
         """
         Visualize initial conditions for different groups in a NetCDF dataset.
@@ -64,7 +64,7 @@ class Visualisation:
             ValueError: If no data groups are found in the file.
         """
 
-        file_path = Path(self.file_directory) / f"{case.case_name}_input.nc"
+        file_path = Path(self.file_directory) / f"{self.name}_input.nc"
 
         if not file_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {file_path}")
@@ -182,8 +182,8 @@ class Visualisation:
 
     def plot_prognostic_variables(
         self,
-        data: xr.Dataset = None,
-        variables: list = ["u", "v", "thl", "qt"],
+        data: xr.Dataset,
+        variables: list = ["u", "v", "th"],
         n_lines: int = 5,
         colorful: bool = True,
         time_format: str = "h",
@@ -192,7 +192,7 @@ class Visualisation:
         Plot the prognostic variables
         """
 
-        variables = proc.vars_to_list(variables)
+        variables = proc.object_to_list(variables)
 
         # define factor for time format
         if time_format == "s":
@@ -204,12 +204,6 @@ class Visualisation:
         else:
             raise ValueError(
                 f"Time format {time_format} is not supported. Use 's', 'min' or 'h' instead."
-            )
-        # read in simulated data
-        if data is None:
-            post_processing = proc.PostProcessing(self.case)
-            data = post_processing.handle_prognostic_variables(
-                ["u", "v", "w", "thl", "ch4"]
             )
 
         # read in initial conditions
@@ -271,7 +265,7 @@ class Visualisation:
             labels = ["initial", "simulated"]
             ax[-1].legend(lines, labels, loc="upper right")
 
-        return fig, ax
+        return fig
 
     def plot_side_views(
         self,

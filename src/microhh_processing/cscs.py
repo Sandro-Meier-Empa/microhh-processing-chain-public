@@ -3,7 +3,7 @@ import os
 import subprocess
 
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Union, Tuple, Literal
 
 import pandas as pd
 import numpy as np
@@ -49,22 +49,22 @@ class AlpsSetup:
 
     def __init__(
         self,
-        cluster: str,
-        processor: str,
+        cluster: Literal["clariden", "daint", "eiger", "santis", "todi"],
+        processor: Literal["cpu", "gpu"],
         mpi: bool,
         account: str,
-        mail_type: str,
-        email: str,
+        mail_type: Literal["NONE", "BEGIN", "END", "FAIL", "REQUEUE", "ALL"] = "NONE",
+        email: str = None,
         run_time: str = "00:30:00",
         nodes: int = 1,
         ntasks_per_core: int = 1,
         ntasks_per_node: int = None,
         cpus_per_task: int = 1,
         large_memory: bool = False,
-        partition: str = "debug",
+        partition: Literal["debug", "normal", "prepost", "low"] = "debug",
         uenv: str = "",
     ):
-        """A calss handling everything around the worklow on cscs's supercomputers.
+        """A class handling everything around the workflow on cscs's supercomputers.
         Is used to create and submit job scripts.
 
         cluster (str) ['clariden', 'daint', 'eiger', 'santis', 'todi']:
@@ -121,6 +121,7 @@ class AlpsSetup:
         self.uenv = uenv
 
         self._check_cscs_setup_valid()
+        self._check_mail_setup_valid()
 
     @property
     def cluster(self):
@@ -178,6 +179,12 @@ class AlpsSetup:
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
 
+    def _check_mail_setup_valid(self):
+        if self.mail_type != "NONE" and self.email is None:
+            raise ValueError(
+                "Please provide an email address to receive notifications."
+            )
+
     def _parse_run_time(self, run_time: str) -> pd.Timedelta:
         """Parse the run_time string and return a timedelta object
 
@@ -228,7 +235,7 @@ class AlpsSetup:
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        command = f"srun {python_path} {py_file_path} --case-name {case.case_name} --case-suffix {case.suffix}"
+        command = f"srun {python_path} {py_file_path} --case-name {case.name} --case-suffix {case.suffix}"
 
         if additional_args:
             additional_args_str = " ".join(
@@ -287,7 +294,8 @@ class AlpsSetup:
             header += f"#SBATCH --job-name={job_name} \n"
             header += f"#SBATCH --account={self.account}\n"
             header += f"#SBATCH --mail-type={self.mail_type}\n"
-            header += f"#SBATCH --mail-user={self.email}\n"
+            if self.email is not None:
+                header += f"#SBATCH --mail-user={self.email}\n"
             header += f"#SBATCH --time={self.run_time}\n"
             header += f"#SBATCH --nodes={self.nodes}\n"
             header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
@@ -299,10 +307,12 @@ class AlpsSetup:
             header += f"#SBATCH --constraint={constraint}\n"
             header += f"#SBATCH --hint={multithread}\n"
             header += f"#SBATCH --output={job_name}_%j.out\n"
-            header += f"#SBATCH --chdir={str(scratch_path)}\n\n"
+            header += f"#SBATCH --chdir={str(scratch_path)}\n"
             if self.uenv:
-                header += f"#SBATCH --uenv={self.uenv}\n"
-                header += "export LD_LIBRARY_PATH='/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH'\n\n"
+                header += f"#SBATCH --uenv={self.uenv}\n\n"
+                header += "export LD_LIBRARY_PATH='/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH'\n"
+            else:
+                header += "\n"
 
             header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
             if self.processor == "gpu":
@@ -332,6 +342,15 @@ class AlpsSetup:
 
         print(f"Starting {str(job_file)}")
         os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
+
+    def open_bash_script_vscode(self, job_file: Path):
+        """Open the bash script in VS Code.
+
+        Args:
+            job_file (Path):
+                Specify the path of the bash script which should be opened.
+        """
+        subprocess.run(["code", str(job_file)])
 
 
 def jobs_in_queue(
@@ -402,8 +421,8 @@ def jobs_in_queue(
     df = pd.DataFrame([row.split("|") for row in rows], columns=headers)
 
     # add simulation progress
-    if add_progress and scratch_path is not None:
-        df = add_progress_to_df(df, scratch_path)
+    if add_progress:
+        df = add_progress_to_df(df)
 
     # remove omitted columns
     df = df.drop(columns=omit)
@@ -417,7 +436,7 @@ def cancel_all() -> None:
     subprocess.run(["scancel -u", user], check=True)
 
 
-def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
+def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     """Add MicroHH simulation progress to the DataFrame containing the jobs in the queue.
 
     Args:
@@ -436,11 +455,13 @@ def add_progress_to_df(df: pd.DataFrame, scratch_path) -> pd.DataFrame:
         job_dir = row["WORK_DIR"]
         try:
             parts = job_dir.split(".", 1)
-            case_name = parts[-2].split("/")[-1]
+            name = parts[-2].split("/")[-1]
             case_suffix = parts[-1] if len(parts) > 1 else ""
+            scratch_path = parts[-2].rsplit("/", 1)[0]
+
             # create case
             case = init.Case(
-                case_name=case_name,
+                name=name,
                 suffix=case_suffix,
                 scratch_path=Path(scratch_path),
                 store_path=Path(""),
@@ -473,7 +494,7 @@ def print_simulation_progress(case):
         color = print_colors.YELLOW
 
     print(
-        f"{color}Simulation progress of {case.case_path}: {progress_percentage}% ({current_timestep}s ouf of {max_timestep}s){print_colors.ENDC}"
+        f"{color}Simulation progress of {case.name_spec}: {progress_percentage}% ({current_timestep}s ouf of {max_timestep}s){print_colors.ENDC}"
     )
 
 
