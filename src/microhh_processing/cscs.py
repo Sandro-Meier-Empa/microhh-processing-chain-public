@@ -261,7 +261,7 @@ class AlpsSetup:
 
         if start_jobs:
             # Launch the job on alps
-            self.execute_bash_script(job_file, wait=False)
+            execute_bash_script(job_file, wait=False)
 
     def create_bash_script(
         self,
@@ -328,29 +328,20 @@ class AlpsSetup:
 
         return file_path
 
-    @staticmethod
-    def execute_bash_script(job_file: Path, wait: bool = True):
-        """Run a simulation using sbatch
 
-        Args:
-            job_file (Path):
-                Specify the path of the bash script which should be run.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-        """
+def execute_bash_script(job_file: Path, wait: bool = True):
+    """Run a simulation using sbatch
 
-        print(f"Starting {str(job_file)}")
-        os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
+    Args:
+        job_file (Path):
+            Specify the path of the bash script which should be run.
+        wait (bool, optional. Default: False):
+            Specify if the next job should only be submitted
+            after the previous one has stopped.
+    """
 
-    def open_bash_script_vscode(self, job_file: Path):
-        """Open the bash script in VS Code.
-
-        Args:
-            job_file (Path):
-                Specify the path of the bash script which should be opened.
-        """
-        subprocess.run(["code", str(job_file)])
+    print(f"Starting {str(job_file)}")
+    os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
 
 
 def jobs_in_queue(
@@ -387,7 +378,6 @@ def jobs_in_queue(
         "SCHEDNODES",
     ],
     add_progress: bool = False,
-    scratch_path: str = None,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 
@@ -536,3 +526,60 @@ def get_simulation_progress(case) -> Tuple[int, int]:
     max_timestep = int(ini_file["time"]["endtime"])
 
     return current_timestep, max_timestep
+
+
+import subprocess
+import pandas as pd
+from io import StringIO
+
+
+def get_sacct_info(jobid, fields=None):
+    """
+    Query Slurm accounting (sacct) for a given job ID and return a pandas DataFrame.
+
+    Parameters
+    ----------
+    jobid : int or str
+        The Slurm job ID to query.
+    fields : list of str, optional
+        List of sacct fields to include.
+        Defaults to ['JobID', 'JobName', 'NNodes', 'NCPUS', 'Elapsed', 'State'].
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing the sacct output.
+    """
+    if fields is None:
+        fields = ["JobID", "JobName", "NNodes", "NCPUS", "Elapsed", "State"]
+
+    # Build sacct command
+    cmd = [
+        "sacct",
+        "-j",
+        str(jobid),
+        "-P",  # pipe-delimited
+        f"--format={','.join(fields)}",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Error running sacct: {e.stderr.strip()}")
+
+    # Load into pandas
+    data = StringIO(result.stdout.strip())
+    df = pd.read_csv(data, sep="|")
+
+    # Clean up whitespace in column names and values
+    df.columns = df.columns.str.strip()
+    df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+
+    # remove rows with JobID.batch or JobID.extern or JobID.0
+    df = df[~df["JobID"].str.contains(r"\.batch$|\.extern$|\.0$", regex=True)]
+
+    return df
+
+
+def get_jobID():
+    pass

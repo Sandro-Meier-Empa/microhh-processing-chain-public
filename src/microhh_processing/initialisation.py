@@ -13,6 +13,8 @@ import numpy as np
 import microhh_py.microhh_tools as mht
 import ls2d
 
+import microhh_processing.misc as misc
+
 
 # molar mass (g/mol)
 gas_mass = {
@@ -259,9 +261,33 @@ class Case:
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
 
-    def open_ini_vscode(self):
-        """Open the .ini file of a case in VS Code."""
-        subprocess.run(["code", str(self.ini_path)])
+    def open_mhh_in_vscode(self, filetype: Literal["ini", "out", "sbash", "sbash_out"]):
+        """Open the specified file in VS Code.
+        filetype can be "ini", "out", "sbash", "sbash_out"
+        """
+        if filetype == "ini":
+            filename = f"{self.name}.ini"
+        elif filetype == "out":
+            filename = f"{self.name}.out"
+        elif filetype == "sbash":
+            filename = f"run_microhh.sbash"
+        elif filetype == "sbash_out":
+            # Use wildcard matching
+            matches = list(Path(self.path).glob("run_microhh*.out"))
+            if not matches:
+                raise FileNotFoundError("No sbash_out files found.")
+            filename = max(matches, key=lambda f: f.stat().st_mtime)
+        else:
+            raise ValueError(
+                f"{filetype} is not available. Use 'ini', 'out', 'sbash' or 'sbash_out'."
+            )
+
+        file_path = self.file_directory / filename
+
+        if file_path.exists():
+            misc.open_in_vscode(file_path)
+        else:
+            print(f"{file_path} does not exist.")
 
     def delete_on_scratch(self):
         """Delete the scratch directory"""

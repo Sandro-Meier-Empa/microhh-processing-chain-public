@@ -24,6 +24,7 @@ import microhh_py.convert_3d_to_nc as convert_3d_to_nc
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
 import microhh_processing.wind as wind_proc
+import microhh_processing.misc as misc
 
 # molar mass (g/mol)
 gas_mass = {
@@ -130,9 +131,6 @@ class PreProcessing:
 
     def start_simulation(self, wait: bool = False):
         self.alps_setup.execute_bash_script(self.job_file, wait)
-
-    def open_jobscript_vscode(self):
-        self.alps_setup.open_bash_script_vscode(self.job_file)
 
     def rerun_simulation(
         self,
@@ -656,34 +654,6 @@ class PostProcessing:
         data = self.open_microhh_nc(variable=variable, chunks=chunks)
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
-
-        return data
-
-    def open_microhh_nc(
-        self, variable: str, chunks: Union[str, dict] = None
-    ) -> xr.Dataset:
-        """Open a .nc file related to MicroHH output.
-
-        Args:
-            file_path (Union[str, Path]):
-                Path of the file including file name.
-        """
-        file_path = Path(self.file_directory, f"{variable.lower()}.nc")
-
-        if not file_path.exists():
-            # List all .nc files in the directory
-            nc_files = [f.name for f in Path(self.file_directory).glob("*.nc")]
-            nc_list = ", ".join(nc_files) if nc_files else "No .nc files found."
-
-            raise FileNotFoundError(
-                f"Variable '{variable}' not found in {self.file_directory}. "
-                f"Available .nc files: {nc_list}"
-            )
-
-        try:
-            data = xr.open_dataset(file_path, chunks=chunks)
-        except ValueError:
-            data = xr.open_dataset(file_path, chunks=chunks, decode_times=False)
 
         return data
 
@@ -1512,6 +1482,7 @@ class PostProcessing:
         dy = ysize / jtot
 
         scalars = self.case.ini_file["source"]["sourcelist"]
+        scalars = object_to_list(scalars)
         strength = np.array(self.case.ini_file["source"]["strength"])
 
         time_range = list(
@@ -1565,6 +1536,21 @@ class PostProcessing:
                 raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
 
         return mass_dict
+
+    def case_get_sacct_info(self) -> pd.DataFrame:
+        """Get SLURM sacct information for the current case.
+
+        Returns:
+            pd.DataFrame: DataFrame with sacct information.
+        """
+        if self.case.job_id is None:
+            raise ValueError("No job_id found in the case.")
+
+        try:
+            df = cscs.get_sacct_info(self.case.job_id)
+            return df
+        except Exception as e:
+            raise RuntimeError(f"Error retrieving sacct information: {e}")
 
 
 ############# other functions #############

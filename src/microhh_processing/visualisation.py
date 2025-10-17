@@ -5,16 +5,19 @@ import scipy.stats
 import sys
 
 from pathlib import Path
-from typing import Union
+from typing import Literal, Union
 from matplotlib.lines import Line2D
 from matplotlib import cm
 from matplotlib.colors import Normalize
+from IPython.display import display
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import netCDF4 as nc
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
+import ipywidgets as widgets
 
 import microhh_processing.processing as proc
 import microhh_processing.initialisation as init
@@ -472,6 +475,175 @@ class Visualisation:
 
             plt.tight_layout()
             plt.show()
+
+
+class VariableViewer:
+    """
+    Class to visualise variables from a microHH dataset.
+    """
+
+    def __init__(
+        self,
+        data: xr.Dataset,
+        variable: str,
+        time_dim: str = "time",
+        figsize: tuple = (10, 6),
+        fixed_cbar: bool = True,
+        cmap: str = "viridis",
+        vmin: float = None,
+        vmax: float = None,
+        time_format: Literal["s", "min", "h"] = "s",
+    ):
+        """
+        Initialise the VariableViewer with a microHH dataset.
+
+        Args:
+            data (xr.Dataset):
+                Dataset containing microHH model output.
+        """
+        self.data = data
+        self.variable = variable
+        self.time_dim = time_dim
+
+        self.fig_output = widgets.Output()
+        self.fig = None
+        self.ax = None
+        self.figsize = figsize
+        self.fixed_cbar = fixed_cbar
+        self.cmap = cmap
+        self.vmin = vmin
+        self.vmax = vmax
+        self.time_format = time_format
+
+        self.time_step = 0
+
+        self._check_data_vars()
+        self._check_data_shape()
+        self._check_time_dim()
+        self._create_widgets()
+        self._init_plot()
+        self._handle_cbar()
+        self._wrap_widgets()
+        self._connect_events()
+
+    def _check_data_vars(self):
+        """Check if variable is in data."""
+        if self.variable not in self.data.data_vars:
+            raise ValueError(f"Variable '{self.variable}' not found in dataset.")
+
+    def _check_data_shape(self):
+        """Check the shape of the data."""
+        if self.data[self.variable].ndim > 3:
+            raise ValueError(
+                "Data has more than 3 dimensions. Please integrate or select dimensions accordingly."
+            )
+
+    def _check_time_dim(self):
+        """Check if time dimension is in data."""
+        if self.time_dim not in self.data[self.variable].dims:
+            raise ValueError(
+                f"Time dimension '{self.time_dim}' not found in variable dimensions."
+            )
+
+    def _init_plot(self):
+        """Initialise the plot."""
+        self.fig, self.ax = plt.subplots(nrows=1, ncols=1, figsize=self.figsize)
+        self.fig.canvas.header_visible = False
+
+        data_init = self.data[self.variable].isel(time=0)
+        ydim, xdim = data_init.dims
+
+        with self.fig_output:
+            self.ax.set_aspect("equal")
+
+            self.mesh = self.ax.pcolormesh(
+                self.data[xdim].values,
+                self.data[ydim].values,
+                data_init,
+                cmap=self.cmap,
+            )
+
+            # set labels
+            self.ax.set_xlabel(f"{xdim} [{self.data[xdim].attrs.get('units', '-')}]")
+            self.ax.set_ylabel(f"{ydim} [{self.data[ydim].attrs.get('units', '-')}]")
+
+            # create cax
+            divider = make_axes_locatable(self.ax)
+            cax = divider.append_axes("right", size="3%", pad=0.1)
+            units = self.data[self.variable].attrs.get("units", "-")
+            cbar = self.fig.colorbar(
+                self.mesh,
+                cax=cax,
+                label=f"{self.variable} [{units}]",
+            )
+
+            # set title
+            self.ax.set_title(self._get_title())
+
+            plt.show()
+
+    def _handle_cbar(self):
+        """Handle fixed colorbar limits."""
+        if self.vmin is None:
+            self.vmin = np.nanquantile(self.data[self.variable].values, 0.001)
+
+        if self.vmax is None:
+            self.vmax = np.nanquantile(self.data[self.variable].values, 0.999)
+
+        if self.fixed_cbar:
+            data_min = self.vmin
+            data_max = self.vmax
+            self.mesh.set_clim(data_min, data_max)
+
+    def _get_title(self) -> str:
+        time = (
+            self.data[self.time_dim]
+            .isel({self.time_dim: self.time_slider.value})
+            .values
+        )
+        if self.time_format == "min":
+            time = time / 60
+        elif self.time_format == "h":
+            time = time / 3600
+        return f"Time: {time:.1f} {self.time_format}"
+
+    def _update_plot(self, change: dict):
+        """Update the plot based on the time slider."""
+        timestep = change["new"]
+
+        data_subset = self.data[self.variable].isel({self.time_dim: timestep}).values
+
+        # set the new data
+        self.mesh.set_array(data_subset.ravel())
+
+        # update cbar
+        if not self.fixed_cbar:
+            self.mesh.set_clim(np.nanmin(data_subset), np.nanmax(data_subset))
+
+        # update title
+        self.ax.set_title(self._get_title())
+
+        self.fig.canvas.draw_idle()
+
+    def _create_widgets(self):
+        self.time_slider = widgets.IntSlider(
+            value=0,
+            min=0,
+            max=self.data.sizes[self.time_dim] - 1,
+            step=1,
+            description="Time Step:",
+            continuous_update=True,
+        )
+
+    def _wrap_widgets(self):
+        self.ui = widgets.VBox([self.time_slider, self.fig_output])
+
+    def _connect_events(self):
+        self.time_slider.observe(self._update_plot, names="value")
+
+    def display(self):
+        """Display the variable."""
+        display(self.ui)
 
 
 def plot_gas_weight(
