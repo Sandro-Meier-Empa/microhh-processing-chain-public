@@ -25,6 +25,7 @@ import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
 import microhh_processing.wind as wind_proc
 import microhh_processing.misc as misc
+import microhh_processing.io as io
 
 # molar mass (g/mol)
 gas_mass = {
@@ -130,7 +131,7 @@ class PreProcessing:
             self.start_simulation(wait)
 
     def start_simulation(self, wait: bool = False):
-        self.alps_setup.execute_bash_script(self.job_file, wait)
+        cscs.execute_bash_script(self.job_file, wait)
 
     def rerun_simulation(
         self,
@@ -198,6 +199,7 @@ class PreProcessing:
         self._check_grid_match()
         self._check_nodes_match()
         self._check_source_position()
+        self._check_source_height()
         self._check_source_sigma()
         self._check_buffer_height()
         self._check_surface_roughness_height()
@@ -262,6 +264,19 @@ class PreProcessing:
                         f"{coord}-positioning conflicts with the domain size."
                     )
 
+    def _check_source_height(self):
+        """Check if source height is greater than vertical resolution"""
+        if "source" in self.ini_file.groups:
+            source_height = self.ini_file["source"]["source_z0"]
+            vert_grid_extent = self.ini_file["grid"]["zsize"]
+            vert_grid_n = self.ini_file["grid"]["ktot"]
+            vert_res = vert_grid_extent / vert_grid_n
+            if source_height < vert_res:
+                raise ValueError(
+                    f"Source height of {source_height}m "
+                    f"is smaller than vertical resolution of {vert_res}m"
+                )
+
     def _check_source_sigma(self):
         """Check if the source std is greater than zero."""
         if "source" in self.ini_file.groups:
@@ -283,7 +298,7 @@ class PreProcessing:
     def _check_surface_roughness_height(self):
         """Check if the surface roughness is smaller than the lowest vertical grid level."""
         # read in {case}_input.nc file:
-        initial_cond = init.read_initial_cond(self.case)
+        initial_cond = io.open_initial_cond(self.case)
         grid_values = initial_cond.z.values
         non_neg_grid_values = [value for value in grid_values if value >= 0]
         lowest_grid_level = min(non_neg_grid_values)
@@ -651,30 +666,11 @@ class PostProcessing:
         if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
 
-        data = self.open_microhh_nc(variable=variable, chunks=chunks)
+        data = io.open_microhh_nc(case=self.case, variable=variable, chunks=chunks)
         data = self._nc_assign_names_and_attributes(data)
         data = self._capitalise_variable_names(data)
 
         return data
-
-    def open_statistics(self) -> xr.Dataset:
-        """Read the netCDF file containing the statistics of a model run
-        (<name>_statistics.nc).
-
-        Args:
-            case (Case):
-                Case for which the initial conditions should be read.
-
-
-        Returns:
-            xr.Dataset: netCDF of initial conditions.
-        """
-
-        file_path = Path(
-            self.case.file_directory, f"{self.case.name}.default.0000000.nc"
-        )
-
-        return init._combine_nc_groups(file_path)
 
     def _nc_assign_names_and_attributes(self, data: xr.Dataset) -> xr.Dataset:
         """Assign long_name and unit attributes to variables in a .nc file.
@@ -737,7 +733,7 @@ class PostProcessing:
         filename: str,
         overwrite: bool = False,
         save: bool = True,
-        chunks: Union[str, dict] = None,
+        chunks: dict = None,
     ) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
 
@@ -751,6 +747,8 @@ class PostProcessing:
                 Indicate if an existing file should be overwritten.
             save (bool. Default: True):
                 Indicate if the created file should be saved.
+            chunks (dict):
+                Chunks used when processing the netCDF files with xarray.
 
         Returns:
             xr.Dataset: Dataset with combined variables.
@@ -760,7 +758,7 @@ class PostProcessing:
         # Check if the output file already exists
         if file_path.exists() and not overwrite:
             # If the file exists, open and return it
-            return self.open_microhh_nc(variable=filename, chunks=chunks)
+            return io.open_microhh_nc(case=self.case, variable=filename, chunks=chunks)
 
         # combine the prognostic variables into one dataset
         combined_dataset = self.combine_prognostic_variables(vars=vars, chunks=chunks)
@@ -787,7 +785,8 @@ class PostProcessing:
                 Variable(s) to add together or to assign to the given dataset.
             data (xr.Dataset):
                 If given, the variable(s) are added to this dataset
-
+            chunks (Union[str, dict], optional):
+                Chunks used when processing the netCDF files with xarray.
 
         Returns:
             xr.Dataset:
@@ -895,7 +894,9 @@ class PostProcessing:
                 os.remove(file_path)
                 print(f"Overwriting {file_path}")
             else:
-                return self.open_microhh_nc(variable=variable, chunks=chunks)
+                return io.open_microhh_nc(
+                    case=self.case, variable=variable, chunks=chunks
+                )
 
         data = self.open_3d_prognostic_variable(variable.lower(), chunks=chunks)
 
@@ -1335,7 +1336,7 @@ class PostProcessing:
 
     def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
         # read in statistics file
-        stats = self.open_statistics()
+        stats = io.open_statistics(case=self.case)
 
         # check if variable is in statistics file
         if variable not in stats.data_vars:
@@ -1466,7 +1467,7 @@ class PostProcessing:
                 the binary output files or 'netcdf' to read the netCDF output files.
         """
 
-        stats = self.open_statistics()
+        stats = io.open_statistics(case=self.case)
         rhoref = stats.rhoref.values
         zh = stats.zh.values
         dz = zh[1:] - zh[:-1]

@@ -1,9 +1,11 @@
 import concurrent.futures
 import os
 import subprocess
+import re
 
 from pathlib import Path
 from typing import Union, Tuple, Literal
+from io import StringIO
 
 import pandas as pd
 import numpy as np
@@ -528,9 +530,17 @@ def get_simulation_progress(case) -> Tuple[int, int]:
     return current_timestep, max_timestep
 
 
-import subprocess
-import pandas as pd
-from io import StringIO
+def extract_job_id(case) -> int | None:
+    """
+    Extracts the number represented by '*' in a pattern like 'run_microhh_*.out'.
+    Returns the number as an integer, or None if not found.
+    """
+    files = case.file_directory.glob("run_microhh_*.out")
+    for file in files:
+        match = re.search(r"run_microhh_(\d+)\.out", file.name)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def get_sacct_info(jobid, fields=None):
@@ -581,5 +591,21 @@ def get_sacct_info(jobid, fields=None):
     return df
 
 
-def get_jobID():
-    pass
+def get_sacct_case(case) -> pd.DataFrame:
+    """
+    Get sacct information for a given case.
+
+    Parameters
+    ----------
+    case : init.Case
+        The case object containing job information.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing the sacct output for the case.
+    """
+    jobid = extract_job_id(case)
+    if jobid is None:
+        raise ValueError("Job ID could not be extracted from the case.")
+    return get_sacct_info(jobid)

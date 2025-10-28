@@ -21,6 +21,8 @@ import ipywidgets as widgets
 
 import microhh_processing.processing as proc
 import microhh_processing.initialisation as init
+import microhh_processing.misc as misc
+import microhh_processing.io as io
 
 
 class Visualisation:
@@ -210,7 +212,7 @@ class Visualisation:
             )
 
         # read in initial conditions
-        data_initial = init.read_initial_cond(self.case)
+        data_initial = io.open_initial_cond(self.case)
 
         fig, ax = plt.subplots(ncols=len(variables), sharey=True)
 
@@ -234,13 +236,9 @@ class Visualisation:
             color_init = "C3" if colorful else "C0"
 
             # loop over x dimension
-            for x in np.arange(
-                int(data.x.min().item()), int(data.x.max().item()), x_step
-            ):
+            for x in np.arange(data.x.size, step=x_step):
                 # loop over y dimension
-                for y in np.arange(
-                    int(data.y.min().item()), int(data.y.max().item()), y_step
-                ):
+                for y in np.arange(data.y.size, step=y_step):
                     subset = data.isel(time=t, x=x, y=y)
                     for c, component in enumerate(variables):
                         ax[c].plot(subset[component], subset.z, color=color_sim)

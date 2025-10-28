@@ -14,6 +14,7 @@ import microhh_py.microhh_tools as mht
 import ls2d
 
 import microhh_processing.misc as misc
+import microhh_processing.io as io
 
 
 # molar mass (g/mol)
@@ -285,7 +286,7 @@ class Case:
         file_path = self.file_directory / filename
 
         if file_path.exists():
-            misc.open_in_vscode(file_path)
+            io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")
 
@@ -359,33 +360,6 @@ def interpolate_to_model_profile(
         model_var_profile = np.interp(model_profile, input_profile, variable_profile)
 
     return model_var_profile
-
-
-def read_initial_cond(case: Case) -> xr.Dataset:
-    """Read the netCDF file containing the initial conditions
-    of a model run (<name>_input.nc).
-
-    Args:
-        case (Case):
-            Case for which the initial conditions should be read.
-
-    Returns:
-        xr.Dataset: netCDF of initial conditions.
-    """
-
-    fname = Path(case.file_directory, f"{case.name}_input.nc")
-
-    return _combine_nc_groups(fname)
-
-
-def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
-    groups = [""] + list(nc4.Dataset(file_path).groups.keys())
-    merged_dataset = xr.Dataset()
-    for group in groups:
-        ds = xr.open_dataset(file_path, group=group, decode_times=False)
-        merged_dataset = xr.merge([merged_dataset, ds], compat="override")
-
-    return merged_dataset
 
 
 def convert_to_kmol_per_s(value: Union[int, float], unit: str, gas: str) -> float:
@@ -474,17 +448,27 @@ def convert_to_kmol_per_s(value: Union[int, float], unit: str, gas: str) -> floa
 
 
 def write_netcdf_input(
-    name,
-    name_spec,
-    float_type,
-    init_profiles,
-    tdep_surface=None,
-    tdep_ls=None,
-    radiation=None,
-    soil=None,
+    name: str,
+    path: Union[str, Path],
+    float_type: str,
+    init_profiles: dict,
+    tdep_surface: dict = None,
+    tdep_ls: dict = None,
+    radiation: dict = None,
+    soil: dict = None,
 ):
     """
-    Function for writing the MicroHH2 NetCDF input
+    Function for writing the MicroHH NetCDF input
+
+    Args:
+        name (str): Name of the simulated case
+        path (Union[str, Path]): Path where the NetCDF file should be stored
+        float_type (str): Float type for the NetCDF file ('f4' or 'f8')
+        init_profiles (dict): Dictionary containing the initial profiles
+        tdep_surface (dict, optional): Dictionary containing the time dependent surface values
+        tdep_ls (dict, optional): Dictionary containing the time dependent atmospheric values
+        radiation (dict, optional): Dictionary containing the radiation values
+        soil (dict, optional): Dictionary containing the soil values
     """
 
     def add_variable(nc_group, name, dims, data, float_type):
@@ -507,11 +491,11 @@ def write_netcdf_input(
         return False
 
     # Define new NetCDF file
-    fname = os.path.join(name_spec, f"{name}_input.nc")
+    fname = Path(path) / f"{name}_input.nc"
 
     # Check if the file exists and remove it if yes
-    if os.path.exists(fname):
-        os.remove(fname)
+    if fname.exists():
+        fname.unlink()
 
     # Create a new NetCDF file
     nc_file = nc4.Dataset(fname, mode="w", datamodel="NETCDF4")
@@ -550,6 +534,7 @@ def write_netcdf_input(
             dims = ("time_ls") if name == "time_ls" else ("time_ls", "z")
             add_variable(nc_group_timedep, name, dims, data, float_type)
 
+    # Write the radiation values
     if radiation is not None:
         nc_group_rad = nc_file.createGroup("radiation")
 
@@ -565,6 +550,7 @@ def write_netcdf_input(
 
             add_variable(nc_group_rad, name, dims, data, float_type)
 
+    # Write the soil values
     if soil is not None:
         nc_group_soil = nc_file.createGroup("soil")
         nc_group_soil.createDimension("z", soil["z"].size)
