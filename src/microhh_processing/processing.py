@@ -134,46 +134,6 @@ class PreProcessing:
         os.chdir(str(self.case.file_directory))
         cscs.execute_bash_script(self.job_file, wait)
 
-    def rerun_simulation(
-        self,
-        reuse_bash_script: bool = True,
-        reuse_microhh: bool = True,
-        start_jobs: bool = False,
-        wait: bool = False,
-    ):
-        # Re-run simulation based on run_microhh.sbash, {name}.ini and {name}_input.nc.
-
-        # TODO: has not been tested and used yet
-
-        # List of files to copy
-        files_to_copy = [
-            f"{self.name}.ini",
-            f"{self.name}_input.nc",
-        ]
-
-        if reuse_bash_script:
-            files_to_copy.append("run_microhh.sbash")
-        else:
-            job_file = self.create_run_script()
-
-        if reuse_microhh:
-            files_to_copy.append("microhh")
-        else:
-            self.copy_executable()
-
-        # copy files from store to scratch
-        for filename in files_to_copy:
-            for file in glob.glob(Path(self.store_path, filename)):
-                shutil.copy(file, self.scratch_path)
-                print(f"Successfully copied '{file}' to '{self.scratch_path}'.")
-
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
-
-        if start_jobs:
-            # Launch the job on alps
-            self.start_simulation(wait)
-
     def create_run_script(self, overwrite: bool = False) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
         if not job_file.exists() or overwrite:
@@ -254,7 +214,7 @@ class PreProcessing:
 
     def _check_forcing(self):
         """Check if the specified forcing is valid."""
-        if "forcing" in self.ini_file.groups:
+        if "force" in self.ini_file.groups:
             force = self.ini_file["force"].get("swlspres", None)
 
             if force == "geo":

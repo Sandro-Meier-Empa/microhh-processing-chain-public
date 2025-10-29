@@ -40,7 +40,7 @@ class Case:
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
         microhh_executable_path: Union[str, Path],
-        location: Literal["scratch", "store"],
+        file_directory: Union[str, Path] = None,
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -55,13 +55,14 @@ class Case:
             suffix (str):
                 Suffix for the specific model run.
                 Is combined as {name}.{suffix}.
-            scratch_path (str):
+            scratch_path (Union[str, Path]):
                 Path of personal folder on 'scratch'.
-            store_path (str):
+            store_path (Union[str, Path]):
                 Path of personal folder on 'store'.
-            location (Literal["scratch", "store"]):
-                Location where the case should be handled (read and write)
-                Options are 'scratch' and 'store'.
+            microhh_executable_path (Union[str, Path]):
+                Path to the MicroHH executable.
+            file_directory (Union[str, Path], optional):
+                Directory where the model output files are stored.
         """
         self.user = os.environ["USER"]
         self.name = name
@@ -70,9 +71,10 @@ class Case:
         self.scratch_path = Path(scratch_path, self.name_spec)
         self.store_path = Path(store_path, self.name_spec)
         self.microhh_executable_path = Path(microhh_executable_path)
-
-        self._handle_file_directory(location)
-        self.ini_path = Path(self.file_directory, f"{self.name}.ini")
+        self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
+        self.file_directory = (
+            Path(file_directory) if file_directory else self.scratch_path
+        )
 
     # add method when printing case
     def __repr__(self):
@@ -87,24 +89,16 @@ class Case:
             f"Case(\n"
             f"  name='{self.name}',\n"
             f"  suffix='{self.suffix}',\n"
-            f"  path='{self.file_directory}'\n"
+            f"  path='{self.scratch_path}'\n"
             f"  ini_file=\n"
             f"{ini_content}\n"
             f")"
         )
 
-    def _handle_file_directory(self, location):
-        # check if the case is set up in the directory 'microhh/cases/'
-        if location == "scratch":
-            self.file_directory = self.scratch_path
-        elif location == "store":
-            self.file_directory = self.store_path
-        else:
-            raise ValueError(f"{location} is not available. Use 'scratch' or 'store'.")
-
     def initialise(
         self,
         method: Literal["default", "interactive", "rerun"] = "interactive",
+        init_from: Union[str, Path] = None,
         overwrite: bool = False,
     ):
         """Initialise a case by creating or reading in a directory.
@@ -121,10 +115,30 @@ class Case:
             overwrite (bool, default: False):
                 Specify if existing case should be overwritten.
         """
-        self.method = method
-
+        self._handle_method(method, init_from, overwrite)
         self._handle_directory(overwrite)
         self._handle_running_method()
+
+    def _handle_method(
+        self,
+        method: Literal["default", "interactive", "rerun"],
+        init_from: Union[str, Path] = None,
+        overwrite: bool = False,
+    ):
+        self.method = method
+        self.init_from = init_from
+
+        if self.method in ["default", "rerun"] and init_from is None:
+            raise ValueError(
+                "When using 'default' or 'rerun' method, please provide "
+                "the path of the directory containing `.ini` and initial condition files."
+            )
+
+        if self.method == "rerun" and overwrite:
+            raise ValueError(
+                "When using 'rerun' method, overwriting existing files is not allowed. "
+                "Please rename your case."
+            )
 
     def _handle_directory(self, overwrite: bool = False):
         """Create the case by creating a directory on 'scratch'.
@@ -135,104 +149,137 @@ class Case:
         """
 
         # set up directory on scratch
-        if not self.file_directory.exists():
-            print(f"Creating {self.file_directory}")
-            os.makedirs(self.file_directory)
+        if not self.scratch_path.exists():
+            print(f"Creating {self.scratch_path}")
+            os.makedirs(self.scratch_path)
         elif overwrite:
             # ask for user input to confirm overwriting
             user_input = input(
-                f"Are you sure you want to overwrite {self.file_directory}? (y/n): "
+                f"Are you sure you want to overwrite {self.scratch_path}? (y/n): "
             )
             if user_input.lower() == "y":
-                shutil.rmtree(self.file_directory)
-                print(f"Overwriting {self.file_directory}")
-                os.makedirs(self.file_directory)
+                shutil.rmtree(self.scratch_path)
+                print(f"Overwriting {self.scratch_path}")
+                os.makedirs(self.scratch_path)
 
     def _handle_running_method(self):
         """Check if the running method is correct.
         Accepted values are
             'default': Create .ini file and initial conditions by running a python script.
             'interactive': Create .ini file and initial conditions object oriented.
-            'rerun': Rerun a case which is stored on store.
+            'rerun': Rerun a case which is on store or scratch.
         """
-        # check if the case is set up in the directory 'microhh/cases/'
         if self.method == "default":
-            self._check_case_setup()
-            self._provide_ini()
+            case_path = Path(self.init_from)
+            self._check_case_setup(case_path)
+            self._copy_ini(case_path)
             self._create_initial()
         elif self.method == "interactive":
-            self._provide_ini()
+            self.ini_path.touch()
         elif self.method == "rerun":
-            raise NotImplementedError(
-                "Rerunning a case is not implemented yet. Please use 'default' or 'interactive'."
-            )
+            case_path = Path(self.init_from)
+            self._copy_ini(case_path)
+            self._copy_initial(case_path)
         else:
             raise ValueError(
-                f"{self.method} is not available. Use 'default' or 'interactive'."
+                f"{self.method} is not available. Use 'default', 'interactive' or 'rerun'."
             )
+        self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def _check_case_setup(self):
+    def _check_case_setup(self, case_path: Union[str, Path]):
         """Check if the case is set up.
 
         Raises:
             FileNotFoundError: If the case does not exist or required files are missing.
         """
-        case_setup_path = Path("/users", self.user, "microhh", "cases", self.name)
-        if not case_setup_path.exists():
+        if not case_path.exists():
             raise FileNotFoundError(f"Case '{self.name}' does not exist.")
 
-        # Check for the existence of {name}_input.py and {name}.ini files
-        input_py_path = Path(case_setup_path, f"{self.name}_input.py")
-        ini_file_path = Path(case_setup_path, f"{self.name}.ini")
+        self._check_required_files(case_path)
 
-        if not input_py_path.exists():
+    def _check_required_files(self, case_path: Union[str, Path]):
+        """Check for the existence of {name}_input.py and {name}.ini files"""
+        input_py_path = Path(case_path, f"{self.name}_input.py")
+        ini_file_path = Path(case_path, f"{self.name}.ini")
+
+        for required_file in [input_py_path, ini_file_path]:
+            if not required_file.exists():
+                raise FileNotFoundError(
+                    f"Required file '{required_file.name}' is missing"
+                )
+
+    def _copy_single_file(
+        self,
+        case_path: Union[str, Path],
+        pattern: str,
+        new_filename: str,
+    ):
+        """Generic helper to copy a single file matching a pattern from case_path to scratch."""
+        case_path = Path(case_path)
+        matched_files = list(case_path.rglob(pattern))
+
+        if len(matched_files) != 1:
             raise FileNotFoundError(
-                f"{self.name}_input.py does not exist in the case directory."
+                f"Expected one file in '{case_path}', found {len(matched_files)}."
             )
 
-        if not ini_file_path.exists():
-            raise FileNotFoundError(
-                f"{self.name}.ini does not exist in the case directory."
-            )
+        src = matched_files[0]
+        dst = self.scratch_path / new_filename
+        shutil.copy(str(src), str(dst))
 
-    def _provide_ini(self):
-        """Provide .ini file based on the selected method when initialising a case.
-        If method="default", it will be created by running a pyhton file.
-        If method="interactive", an empty file is created which can be modified later.
-        """
+    def _copy_ini(self, case_path: Union[str, Path]):
+        """Provide .ini file based on the default method when initialising a case."""
+        self._copy_single_file(
+            case_path=case_path,
+            pattern="*.ini",
+            new_filename=f"{self.name}.ini",
+        )
 
-        # default: copy .ini file from 'microhh/cases/'
-        if self.method == "default":
-            name_spec = Path("/users", self.user, "microhh", "cases", self.name)
-            ini_file_path = name_spec / f"{self.name}.ini"
+    def _copy_initial(self, case_path: Union[str, Path]):
+        """Provide initial conditions file based on the default method when initialising a case."""
+        self._copy_single_file(
+            case_path=case_path,
+            pattern="*_input.nc",
+            new_filename=f"{self.name}_input.nc",
+        )
 
-            if ini_file_path.exists():
-                # Copy the existing file to the scratch path
-                shutil.copy(str(ini_file_path), str(self.scratch_path))
+    def _remove_existing_files(self):
+        """Remove all existing files except microhh, .ini and _input.nc files"""
+        files_to_keep = [
+            f"{self.name}.ini",
+            f"{self.name}_input.nc",
+            "microhh",
+        ]
+        user_input = input(
+            "Are you sure you want to remove all "
+            f"files in {self.scratch_path}? (y/n): "
+        )
+        if user_input.lower() != "y":
+            return
 
-        # interactive: fill .ini file using LS2D package
-        if self.method == "interactive":
-            # Create an empty file in the scratch path
-            self.ini_path.touch()
-
-        self.ini_file = mht.Read_namelist(self.ini_path)
+        for item in self.scratch_path.iterdir():
+            if item.name not in files_to_keep:
+                if item.is_file():
+                    item.unlink()
 
     def _create_initial(self):
-        # default: use {name}_input.py to create {name}_input.nc
-        if self.method == "default":
-            py_script_path = Path(
-                "/users",
-                self.user,
-                "microhh",
-                "cases",
-                self.name,
-                f"{self.name}_input.py",
-            )
+        """Create the initial conditions for a case.
+        Uses the python script located in 'microhh/cases/{name}/'
+        to create the initial conditions.
+        """
+        py_script_path = Path(
+            "/users",
+            self.user,
+            "microhh",
+            "cases",
+            self.name,
+            f"{self.name}_input.py",
+        )
 
-            if py_script_path.exists():
-                subprocess.run(["python", str(py_script_path)], cwd=self.scratch_path)
-            else:
-                print(f"{py_script_path} not found.")
+        if py_script_path.exists():
+            subprocess.run(["python", str(py_script_path)], cwd=self.scratch_path)
+        else:
+            print(f"{py_script_path} not found.")
 
     def overwrite_ini(self, settings: dict = {}, overwrite: bool = True):
         """Write the .ini file of a case.
@@ -279,7 +326,7 @@ class Case:
             filename = f"run_microhh.sbash"
         elif filetype == "sbash_out":
             # Use wildcard matching
-            matches = list(Path(self.file_directory).glob("run_microhh*.out"))
+            matches = list(Path(self.scratch_path).glob("run_microhh*.out"))
             if not matches:
                 raise FileNotFoundError("No sbash_out files found.")
             filename = max(matches, key=lambda f: f.stat().st_mtime)
@@ -288,18 +335,13 @@ class Case:
                 f"{filetype} is not available. Use 'ini', 'out', 'sbash' or 'sbash_out'."
             )
 
-        file_path = self.file_directory / filename
+        file_path = self.scratch_path / filename
 
         if file_path.exists():
-            os.chdir(self.file_directory)
+            os.chdir(self.scratch_path)
             io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")
-
-    def delete_on_scratch(self):
-        """Delete the scratch directory"""
-        shutil.rmtree(self.scratch_path)
-        print(f"Deleting {self.name_spec} from scratch.")
 
 
 def interpolate_to_model_profile(
