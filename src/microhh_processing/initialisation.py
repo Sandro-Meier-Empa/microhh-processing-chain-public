@@ -139,9 +139,14 @@ class Case:
             print(f"Creating {self.file_directory}")
             os.makedirs(self.file_directory)
         elif overwrite:
-            shutil.rmtree(self.file_directory)
-            print(f"Overwriting {self.file_directory}")
-            os.makedirs(self.file_directory)
+            # ask for user input to confirm overwriting
+            user_input = input(
+                f"Are you sure you want to overwrite {self.file_directory}? (y/n): "
+            )
+            if user_input.lower() == "y":
+                shutil.rmtree(self.file_directory)
+                print(f"Overwriting {self.file_directory}")
+                os.makedirs(self.file_directory)
 
     def _handle_running_method(self):
         """Check if the running method is correct.
@@ -274,7 +279,7 @@ class Case:
             filename = f"run_microhh.sbash"
         elif filetype == "sbash_out":
             # Use wildcard matching
-            matches = list(Path(self.path).glob("run_microhh*.out"))
+            matches = list(Path(self.file_directory).glob("run_microhh*.out"))
             if not matches:
                 raise FileNotFoundError("No sbash_out files found.")
             filename = max(matches, key=lambda f: f.stat().st_mtime)
@@ -286,6 +291,7 @@ class Case:
         file_path = self.file_directory / filename
 
         if file_path.exists():
+            os.chdir(self.file_directory)
             io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")

@@ -341,9 +341,8 @@ def execute_bash_script(job_file: Path, wait: bool = True):
             Specify if the next job should only be submitted
             after the previous one has stopped.
     """
-
-    print(f"Starting {str(job_file)}")
     os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
+    print(f"Starting {str(job_file)}")
 
 
 def jobs_in_queue(

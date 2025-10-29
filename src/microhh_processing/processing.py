@@ -131,6 +131,7 @@ class PreProcessing:
             self.start_simulation(wait)
 
     def start_simulation(self, wait: bool = False):
+        os.chdir(str(self.case.file_directory))
         cscs.execute_bash_script(self.job_file, wait)
 
     def rerun_simulation(
@@ -198,6 +199,7 @@ class PreProcessing:
         self._adjust_mpi_settings()
         self._check_grid_match()
         self._check_nodes_match()
+        self._check_forcing()
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
@@ -249,6 +251,37 @@ class PreProcessing:
                 f"Task per node ({self.alps_setup.ntasks_per_node}) does "
                 f"not match the expected value."
             )
+
+    def _check_forcing(self):
+        """Check if the specified forcing is valid."""
+        if "forcing" in self.ini_file.groups:
+            force = self.ini_file["force"].get("swlspres", None)
+
+            if force == "geo":
+                fc = self.ini_file["force"].get("fc", None)
+                if fc is None or fc == 0:
+                    raise ValueError(
+                        "Coriolis parameter 'fc' must be specified and non-zero "
+                        "when using 'swlspres = geo' forcing."
+                    )
+            elif force == "dpdx":
+                dpdx = self.ini_file["force"].get("dpdx", None)
+                if dpdx is None:
+                    raise ValueError(
+                        "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
+                    )
+            elif force == "uflux":
+                uflux = self.ini_file["force"].get("uflux", None)
+                if uflux is None:
+                    raise ValueError(
+                        "'uflux' must be specified when using "
+                        "'swlspres = uflux' forcing."
+                    )
+            else:
+                raise ValueError(
+                    f"Invalid value for 'swlspres': {force}. "
+                    "Valid options are 'geo', 'dpdx', or 'uflux'."
+                )
 
     def _check_source_position(self):
         """Check if the source position conflicts with the domain size."""

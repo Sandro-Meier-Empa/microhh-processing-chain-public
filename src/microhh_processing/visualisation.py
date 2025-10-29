@@ -23,6 +23,7 @@ import microhh_processing.processing as proc
 import microhh_processing.initialisation as init
 import microhh_processing.misc as misc
 import microhh_processing.io as io
+import microhh_processing.wind as wind_proc
 
 
 class Visualisation:
@@ -473,6 +474,32 @@ class Visualisation:
 
             plt.tight_layout()
             plt.show()
+
+    def compare_wind_profiles(self, timestep: int):
+
+        initial_cond = io.open_initial_cond(self.case)
+        stats = io.open_statistics(self.case)
+
+        ustar = stats.ustar.isel(time=timestep).values
+        obuk = stats.obuk.isel(time=timestep).values
+
+        u_prof = wind_proc.get_wind_profile(
+            z=initial_cond.z.values,
+            z0=self.case.ini_file["boundary"]["z0m"],
+            u_star=ustar,
+            L=obuk,
+            t=initial_cond.th.values,
+        )
+
+        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(8, 6))
+
+        ax.plot(u_prof, initial_cond.z.values, label="theory")
+        ax.plot(stats.isel(time=timestep).u.values, stats.z.values, label="simulation")
+        ax.set_xlabel("Wind speed [m/s]")
+        ax.set_ylabel("Height [m]")
+        ax.legend()
+
+        return fig
 
 
 class VariableViewer:
