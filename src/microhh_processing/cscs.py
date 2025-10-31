@@ -457,7 +457,6 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
                 scratch_path=Path(scratch_path),
                 store_path=Path(""),
                 microhh_executable_path="",
-                location="scratch",
             )
             current_timestep, max_timestep = get_simulation_progress(case)
             progress_percentage = current_timestep / max_timestep * 100

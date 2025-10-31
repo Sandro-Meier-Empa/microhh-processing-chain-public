@@ -40,7 +40,6 @@ class Case:
         scratch_path: Union[str, Path],
         store_path: Union[str, Path],
         microhh_executable_path: Union[str, Path],
-        file_directory: Union[str, Path] = None,
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -71,17 +70,16 @@ class Case:
         self.scratch_path = Path(scratch_path, self.name_spec)
         self.store_path = Path(store_path, self.name_spec)
         self.microhh_executable_path = Path(microhh_executable_path)
-        self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
-        self.file_directory = (
-            Path(file_directory) if file_directory else self.scratch_path
-        )
+        self.file_directory = self.scratch_path
 
     # add method when printing case
     def __repr__(self):
         # format ini file content as string
         # read ini file and format content
         ini_content = ""
-        if self.ini_path.exists():
+        if not hasattr(self, "ini_path"):
+            pass
+        elif self.ini_path.exists():
             with open(self.ini_path, "r") as f:
                 ini_content = f.read()
 
@@ -115,9 +113,24 @@ class Case:
             overwrite (bool, default: False):
                 Specify if existing case should be overwritten.
         """
+        self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
+
         self._handle_method(method, init_from, overwrite)
-        self._handle_directory(overwrite)
-        self._handle_running_method()
+        self._handle_scratch_dir(overwrite)
+        self._handle_running_method(init_from)
+
+    def read(self, read_from: Union[str, Path]):
+        """Read in an existing case"""
+
+        self.file_directory = read_from
+        self.ini_path = Path(self.file_directory, f"{self.name}.ini")
+
+        if not self.ini_path.exists():
+            raise FileNotFoundError(
+                f".ini file for case '{self.name}' does not exist in {self.scratch_path}."
+            )
+
+        self.ini_file = mht.Read_namelist(self.ini_path)
 
     def _handle_method(
         self,
@@ -126,7 +139,6 @@ class Case:
         overwrite: bool = False,
     ):
         self.method = method
-        self.init_from = init_from
 
         if self.method in ["default", "rerun"] and init_from is None:
             raise ValueError(
@@ -140,7 +152,7 @@ class Case:
                 "Please rename your case."
             )
 
-    def _handle_directory(self, overwrite: bool = False):
+    def _handle_scratch_dir(self, overwrite: bool = False):
         """Create the case by creating a directory on 'scratch'.
 
         Args:
@@ -162,7 +174,7 @@ class Case:
                 print(f"Overwriting {self.scratch_path}")
                 os.makedirs(self.scratch_path)
 
-    def _handle_running_method(self):
+    def _handle_running_method(self, init_from: Union[str, Path]):
         """Check if the running method is correct.
         Accepted values are
             'default': Create .ini file and initial conditions by running a python script.
@@ -170,14 +182,14 @@ class Case:
             'rerun': Rerun a case which is on store or scratch.
         """
         if self.method == "default":
-            case_path = Path(self.init_from)
+            case_path = Path(init_from)
             self._check_case_setup(case_path)
             self._copy_ini(case_path)
             self._create_initial()
         elif self.method == "interactive":
             self.ini_path.touch()
         elif self.method == "rerun":
-            case_path = Path(self.init_from)
+            case_path = Path(init_from)
             self._copy_ini(case_path)
             self._copy_initial(case_path)
         else:

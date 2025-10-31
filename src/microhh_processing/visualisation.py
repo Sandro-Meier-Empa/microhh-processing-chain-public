@@ -276,6 +276,7 @@ class Visualisation:
         timestep: int,
         fig_width: Union[int, float] = 15,
         cbar_width: Union[int, float] = 0.01,
+        cmap: str = "viridis",
     ) -> matplotlib.figure.Figure:
         """Plot 3D Model output in a figure with 3 subplots.
             1. YZ-View (integrated along x axis)
@@ -338,17 +339,19 @@ class Visualisation:
 
         # Side view along X
 
-        im = axs[0, 0].pcolormesh(dd_yz[zdim], dd_yz[ydim], dd_yz[variable].T)
+        im = axs[0, 0].pcolormesh(
+            dd_yz[zdim], dd_yz[ydim], dd_yz[variable].T, cmap=cmap
+        )
         axs[0, 0].set_xlabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
         axs[0, 0].set_ylabel(f"{ydim} [{data[ydim].attrs.get('units', '-')}]")
 
         # Top-down view
-        im = axs[0, 1].pcolormesh(dd_xy[xdim], dd_xy[ydim], dd_xy[variable])
+        im = axs[0, 1].pcolormesh(dd_xy[xdim], dd_xy[ydim], dd_xy[variable], cmap=cmap)
         axs[0, 1].set_xticklabels([])
         axs[0, 1].set_yticklabels([])
 
         # Side view along Y
-        im = axs[1, 1].pcolormesh(dd_xz[xdim], dd_xz[zdim], dd_xz[variable])
+        im = axs[1, 1].pcolormesh(dd_xz[xdim], dd_xz[zdim], dd_xz[variable], cmap=cmap)
         axs[1, 1].set_xlabel(f"{xdim} [{data[xdim].attrs.get('units', '-')}]")
         axs[1, 1].set_ylabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
 
@@ -431,7 +434,7 @@ class Visualisation:
         # Information about sources
         try:
             source_strength = self.post.model_emissions_to_kg_per_h()
-            source_height = self.post.ini_file["source"]["source_z0"]
+            source_height = self.case.ini_file["source"]["source_z0"]
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append(f"\nSources")
