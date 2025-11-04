@@ -37,9 +37,6 @@ class Case:
         self,
         name: str,
         suffix: str,
-        scratch_path: Union[str, Path],
-        store_path: Union[str, Path],
-        microhh_executable_path: Union[str, Path],
     ):
         """Define a case for MicroHH.
         Can be used for...
@@ -67,10 +64,6 @@ class Case:
         self.name = name
         self.suffix = suffix
         self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
-        self.scratch_path = Path(scratch_path, self.name_spec)
-        self.store_path = Path(store_path, self.name_spec)
-        self.microhh_executable_path = Path(microhh_executable_path)
-        self.file_directory = self.scratch_path
 
     # add method when printing case
     def __repr__(self):
@@ -87,14 +80,16 @@ class Case:
             f"Case(\n"
             f"  name='{self.name}',\n"
             f"  suffix='{self.suffix}',\n"
-            f"  path='{self.scratch_path}'\n"
+            f"  path='{self.file_directory}'\n"
             f"  ini_file=\n"
             f"{ini_content}\n"
             f")"
         )
 
-    def initialise(
+    def _initialise(
         self,
+        scratch_path: Union[str, Path],
+        microhh_executable_path: Union[str, Path],
         method: Literal["default", "interactive", "rerun"] = "interactive",
         init_from: Union[str, Path] = None,
         overwrite: bool = False,
@@ -113,24 +108,14 @@ class Case:
             overwrite (bool, default: False):
                 Specify if existing case should be overwritten.
         """
+        self.scratch_path = Path(scratch_path, self.name_spec)
+        self.microhh_executable_path = Path(microhh_executable_path)
+        self.file_directory = self.scratch_path
         self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
 
         self._handle_method(method, init_from, overwrite)
         self._handle_scratch_dir(overwrite)
         self._handle_running_method(init_from)
-
-    def read(self, read_from: Union[str, Path]):
-        """Read in an existing case"""
-
-        self.file_directory = read_from
-        self.ini_path = Path(self.file_directory, f"{self.name}.ini")
-
-        if not self.ini_path.exists():
-            raise FileNotFoundError(
-                f".ini file for case '{self.name}' does not exist in {self.scratch_path}."
-            )
-
-        self.ini_file = mht.Read_namelist(self.ini_path)
 
     def _handle_method(
         self,
@@ -354,6 +339,78 @@ class Case:
             io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")
+
+
+def initialise_case(
+    name: str,
+    suffix: str,
+    scratch_path: Union[str, Path],
+    microhh_executable_path: Union[str, Path],
+    method: Literal["default", "interactive", "rerun"] = "interactive",
+    init_from: Union[str, Path] = None,
+    overwrite: bool = False,
+) -> Case:
+    """Initialise a MicroHH case.
+    Args:
+        name (str):
+            Name of the case
+        suffix (str):
+            Suffix for the specific model run.
+            Is combined as {name}.{suffix}.
+        scratch_path (Union[str, Path]):
+            Path of personal folder on 'scratch'.
+        store_path (Union[str, Path]):
+            Path of personal folder on 'store'.
+        microhh_executable_path (Union[str, Path]):
+            Path to the MicroHH executable.
+    Returns:
+        Case: Initialised MicroHH case.
+    """
+    case = Case(
+        name=name,
+        suffix=suffix,
+    )
+    case._initialise(
+        scratch_path=scratch_path,
+        microhh_executable_path=microhh_executable_path,
+        method=method,
+        init_from=init_from,
+        overwrite=overwrite,
+    )
+    return case
+
+
+def read_case(case_directory: Union[str, Path]) -> Case:
+    """Read in an existing MicroHH case.
+
+    Args:
+        case_directory (Union[str, Path]):
+            Directory where the case is stored.
+    Returns:
+        Case: Read MicroHH case.
+    """
+    case_directory = Path(case_directory)
+    case_name = Path(case_directory).name
+
+    name_parts = case_name.split(".")
+    name = name_parts[0]
+    suffix = name_parts[1] if len(name_parts) > 1 else ""
+
+    case = Case(
+        name=name,
+        suffix=suffix,
+    )
+    case.file_directory = case_directory
+    case.ini_path = Path(case.file_directory, f"{case.name}.ini")
+
+    if not case.ini_path.exists():
+        raise FileNotFoundError(
+            f".ini file for case '{case.name}' does not exist in {case.file_directory}."
+        )
+
+    case.ini_file = mht.Read_namelist(case.ini_path)
+
+    return case
 
 
 def interpolate_to_model_profile(

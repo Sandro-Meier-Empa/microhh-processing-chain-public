@@ -62,7 +62,6 @@ class PreProcessing:
         self.suffix = case.suffix
         self.name_spec = case.name_spec
         self.scratch_path = case.scratch_path
-        self.store_path = case.store_path
         self.microhh_executable_path = case.microhh_executable_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
@@ -316,9 +315,6 @@ class PreProcessing:
 
     def copy_executable(self):
         """Copy MicroHH executable to scratch"""
-        processor = self.processor
-        version = "mpi" if self.alps_setup.mpi else "nompi"
-
         microhh_executable_path = self.microhh_executable_path / "microhh"
 
         shutil.copy(microhh_executable_path, self.scratch_path)
@@ -338,7 +334,6 @@ class PostProcessing:
         self.suffix = case.suffix
         self.name_spec = case.name_spec
         self.scratch_path = case.scratch_path
-        self.store_path = case.store_path
         self.ini_path = case.ini_path
         self.ini_file = mht.Read_namelist(self.ini_path)
         self.file_directory = case.file_directory
@@ -527,6 +522,7 @@ class PostProcessing:
 
     def move_to_store(
         self,
+        store_path: Union[str, Path],
         overwrite: bool = False,
         move_var_files: bool = False,
         vars: Union[str, list] = None,
@@ -547,12 +543,12 @@ class PostProcessing:
         """
 
         # Handle target path
-        if not self.store_path.exists():
-            self.store_path.mkdir(parents=True, exist_ok=True)
+        if not store_path.exists():
+            store_path.mkdir(parents=True, exist_ok=True)
         elif overwrite:
-            shutil.rmtree(self.store_path)
-            print(f"Overwriting {self.store_path}.")
-            self.store_path.mkdir(parents=True)
+            shutil.rmtree(store_path)
+            print(f"Overwriting {store_path}.")
+            store_path.mkdir(parents=True)
 
         # Copy files for reproducibility
         file_patterns = [
@@ -577,7 +573,9 @@ class PostProcessing:
             for pattern in ["*_2D.nc"]:
                 self.move_pattern_to_store(pattern, overwrite)
 
-    def move_pattern_to_store(self, pattern: str, overwrite: bool):
+    def move_pattern_to_store(
+        self, pattern: str, store_path: Union[str, Path], overwrite: bool = False
+    ):
         """Move files whith a certain pattern to store.
 
         Args:
@@ -587,13 +585,13 @@ class PostProcessing:
                 Specify if existing files should be overwritten.
         """
 
-        for file in self.scratch_path.glob(pattern):
-            dest_file = Path(self.store_path, file.name)
+        for file in self.file_directory.glob(pattern):
+            dest_file = Path(store_path, file.name)
             if not dest_file.exists() or overwrite:
-                shutil.copy(file, self.store_path)
-                print(f"Successfully copied '{file}' to '{self.store_path}'.")
+                shutil.copy(file, store_path)
+                print(f"Successfully copied '{file}' to '{store_path}'.")
             else:
-                print(f"'{file}' already exists in '{self.store_path}'. Skipping.")
+                print(f"'{file}' already exists in '{store_path}'. Skipping.")
 
     def zip_grid_files(self, remove_files: bool = False):
         """Zip all binary grid files together.
@@ -902,13 +900,11 @@ class PostProcessing:
         # default MicroHH output is mol mol-1
         # use default pressure and temperature for computational efficiency
         if default_p_and_t:
-            data[variable] = (
-                ucat.convert_columns(
-                    data[variable],
-                    from_unit=data[variable].attrs.get("units", None),
-                    to_unit=volume_unit,
-                    molar_mass=variable,
-                ),
+            data[variable] = ucat.convert_columns(
+                data[variable],
+                from_unit=data[variable].attrs.get("units", None),
+                to_unit=volume_unit,
+                molar_mass=variable,
             )
         else:
             data = self.convert_to_concentration(data, variable, volume_unit)
@@ -923,7 +919,7 @@ class PostProcessing:
         ] = f"vertically integrated {variable} columns"
 
         # remove other variables
-        data_2D = data_2D[variable]
+        # data_2D = data_2D[variable]
 
         if save:
             data_2D.to_netcdf(file_path)
@@ -956,6 +952,12 @@ class PostProcessing:
 
         # convert noise to same unit as data
         data_units = data[var].attrs.get("units", None)
+
+        if data_units is None:
+            raise ValueError(
+                f"Units for variable '{var}' are not defined in the dataset."
+            )
+
         std_conv = ucat.convert_columns(
             std, from_unit=noise_units, to_unit=data_units, molar_mass=var
         )
@@ -1106,8 +1108,7 @@ class PostProcessing:
     def convert_microhh_grid_to_coords(
         self,
         data: xr.Dataset,
-        source: str = None,
-        sources: xr.Dataset = None,
+        source: xr.DataArray = None,
         target_crs: str = "epsg:4326",
         microhh_crs: str = "epsg:32632",
     ) -> xr.Dataset:
@@ -1144,12 +1145,11 @@ class PostProcessing:
             lon = self.ini_file["grid"]["lon"]
             grid_x = self.ini_file["grid"]["xsize"] / 2
             grid_y = self.ini_file["grid"]["ysize"] / 2
-        elif source is not None and sources is not None:
-            source_data = sources.sel(source=source)
-            lat = source_data.lat.values
-            lon = source_data.lon.values
-            grid_x = source_data.source_x0.values
-            grid_y = source_data.source_y0.values
+        elif source is not None:
+            lat = source.lat.values
+            lon = source.lon.values
+            grid_x = source.source_x0.values
+            grid_y = source.source_y0.values
         else:
             raise ValueError(
                 f"Provide 'lat' and 'lon' in the {self.name} "
@@ -1173,13 +1173,29 @@ class PostProcessing:
             shifted_grid_x, shifted_grid_y, direction="INVERSE"
         )
 
+        time_attrs = {
+            "long_name": "time [UTC]",
+        }
+        lon_attrs = {
+            "units": "degrees_east",
+            "standard_name": "longitude",
+            "long_name": "longitude",
+            "epsg": target_crs.split(":")[-1],
+        }
+        lat_attrs = {
+            "units": "degrees_north",
+            "standard_name": "latitude",
+            "long_name": "latitude",
+            "epsg": target_crs.split(":")[-1],
+        }
+
         data = data.rename({"y": "nrows", "x": "nobs"})
 
         # define the coordinates
         coords = {
-            "time": (["time"], data.time.data),
-            "lon": (["nrows", "nobs"], lon_grid),
-            "lat": (["nrows", "nobs"], lat_grid),
+            "time": (["time"], data.time.data, time_attrs),
+            "lon": (["nrows", "nobs"], lon_grid, lon_attrs),
+            "lat": (["nrows", "nobs"], lat_grid, lat_attrs),
         }
 
         # extract only the variables that are not a dimension
@@ -1228,6 +1244,8 @@ class PostProcessing:
         if isinstance(start_date, str):
             start_date = pd.to_datetime(start_date, format=format)
 
+        time_attrs = data.time.attrs
+
         # check if the time coordinate is alreay given as datetime:
         if data["time"].dtype == "<M8[ns]":
             # overwrite datetime
@@ -1242,6 +1260,8 @@ class PostProcessing:
 
         else:
             raise ValueError("Data type of 'time' was not recognized.")
+
+        data["time"].attrs = time_attrs
 
         return data
 

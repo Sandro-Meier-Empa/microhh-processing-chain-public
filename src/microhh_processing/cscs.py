@@ -445,19 +445,8 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     for index, row in df.iterrows():
         job_dir = row["WORK_DIR"]
         try:
-            parts = job_dir.split(".", 1)
-            name = parts[-2].split("/")[-1]
-            case_suffix = parts[-1] if len(parts) > 1 else ""
-            scratch_path = parts[-2].rsplit("/", 1)[0]
-
-            # create case
-            case = init.Case(
-                name=name,
-                suffix=case_suffix,
-                scratch_path=Path(scratch_path),
-                store_path=Path(""),
-                microhh_executable_path="",
-            )
+            # read case
+            case = init.read_case(job_dir)
             current_timestep, max_timestep = get_simulation_progress(case)
             progress_percentage = current_timestep / max_timestep * 100
             progress_percentages.append(int(progress_percentage))
@@ -516,7 +505,8 @@ def get_simulation_progress(case) -> Tuple[int, int]:
     # Using ThreadPoolExecutor to parallelize the file processing
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [
-            executor.submit(process_file, file) for file in case.scratch_path.iterdir()
+            executor.submit(process_file, file)
+            for file in case.file_directory.iterdir()
         ]
         for future in concurrent.futures.as_completed(futures):
             timestep = future.result()

@@ -3,7 +3,7 @@ import scipy
 import sys
 
 from scipy.optimize import fsolve
-from typing import Union, Tuple
+from typing import Literal, Union, Tuple
 from pathlib import Path
 
 import numpy as np
@@ -35,11 +35,12 @@ class WindProcessing:
         source: str,
         sources: xr.Dataset,
         radius: int,
-        method: str,
+        method: Literal["mean", "median", "height", "concentration_weighted"],
         gas: str = None,
         height: Union[int, float] = None,
         save: bool = True,
         overwrite: bool = False,
+        chunks: dict = None,
     ) -> xr.Dataset:
         """Create a dataset containing the wind information around a source
         which is used for estimating emissions in 'ddeq'.
@@ -143,7 +144,7 @@ class WindProcessing:
 
     def create_2D_wind(
         self,
-        method: str,
+        method: Literal["mean", "median", "height", "concentration_weighted"],
         gas: str = None,
         height: Union[int, float] = None,
         save: bool = True,
@@ -220,7 +221,9 @@ class WindProcessing:
 
         return wind_data
 
-    def _get_wind_vars(self, method: str) -> list:
+    def _get_wind_vars(
+        self, method: Literal["mean", "median", "height", "concentration_weighted"]
+    ) -> list:
         """Get list of prognostic variables used for the given wind integration method.
 
         Args:
