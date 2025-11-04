@@ -497,6 +497,17 @@ class EffectiveWind:
 ################################################################################
 
 
+def compute_effective_wind_speed(
+    data: xr.Dataset, true_emissions: Union[int, float]
+) -> xr.Dataset:
+    data["effective_wind_speed"] = (
+        true_emissions * data.L_max
+    ) / data.integrated_CH4_mass
+    data["effective_wind_speed"].attrs["units"] = "m s-1"
+
+    return data
+
+
 def wind_profile_from_given_wind(
     grid: Union[
         np.ndarray,
