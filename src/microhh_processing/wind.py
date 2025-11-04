@@ -326,19 +326,22 @@ class WindProcessing:
         else:
             raise NotImplementedError
 
-    def unweighted_mean_wind(self, data, method):
+    def unweighted_mean_wind(self, data: xr.Dataset, method: str) -> xr.Dataset:
         if method == "mean":
-            return data.mean(dim="z")
+            data_int = data.mean(dim="z")
         elif method == "median":
-            return data.median(dim="z")
+            data_int = data.median(dim="z")
         else:
             raise NotImplementedError
+
+        data_int.attrs["METHOD"] = f"vertical {method} of wind"
+        return data_int
 
     def wind_at_height(
         self,
         data: xr.Dataset,
         height: Union[int, float],
-    ):
+    ) -> xr.Dataset:
         """Get the wind speed at a certain height.
 
         Args:
@@ -360,7 +363,10 @@ class WindProcessing:
 
         data_subset = data.sel(z=slice(lower_bound, upper_bound))
 
-        return data_subset.mean(dim="z")
+        data_int = data_subset.mean(dim="z")
+        data_int.attrs["METHOD"] = f"wind at {height} m"
+
+        return data_int
 
     def concentration_weighted_mean_wind(
         self,
@@ -408,6 +414,8 @@ class WindProcessing:
             data[f"{wind_component}_weighted"].attrs[
                 "description"
             ] = f"{gas} concentration weighted wind speed"
+
+        data.attrs["METHOD"] = f"{gas} concentration weighted wind"
 
         return data
 
@@ -495,17 +503,6 @@ class EffectiveWind:
 
 ################ other functions ################
 ################################################################################
-
-
-def compute_effective_wind_speed(
-    data: xr.Dataset, true_emissions: Union[int, float]
-) -> xr.Dataset:
-    data["effective_wind_speed"] = (
-        true_emissions * data.L_max
-    ) / data.integrated_CH4_mass
-    data["effective_wind_speed"].attrs["units"] = "m s-1"
-
-    return data
 
 
 def wind_profile_from_given_wind(
@@ -929,11 +926,25 @@ def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
 
 
 def compute_effective_wind_speed(
-    data: xr.Dataset, true_emissions: Union[int, float]
+    results: xr.Dataset,
+    true_emissions: Union[int, float],
+    gas: str,
+    true_emissions_unit: str,
 ) -> xr.Dataset:
-    data["effective_wind_speed"] = (
-        true_emissions * data.L_max
-    ) / data.integrated_CH4_mass
-    data["effective_wind_speed"].attrs["units"] = "m s-1"
 
-    return data
+    est_emissions_units = results[f"{gas}_emissions"].attrs.get("units", None)
+    if est_emissions_units is None:
+        raise ValueError(f"No units found for estimated emissions of {gas}.")
+    true_emissions_converted = ucat.convert_mass_per_time_unit(
+        true_emissions,
+        from_unit=true_emissions_unit,
+        to_unit=est_emissions_units,
+        gas_mass=gas,
+    )
+
+    results["effective_wind_speed"] = (
+        true_emissions_converted * results["L_max"]
+    ) / results[f"integrated_{gas}_mass"]
+    results["effective_wind_speed"].attrs["units"] = "m s-1"
+
+    return results
