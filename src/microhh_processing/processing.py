@@ -57,7 +57,6 @@ class PreProcessing:
 
         """
         self.case = case
-        self.user = case.user
         self.name = case.name
         self.suffix = case.suffix
         self.name_spec = case.name_spec
@@ -329,13 +328,11 @@ class PostProcessing:
                 Case to post-process.
         """
         self.case = case
-        self.user = case.user
         self.name = case.name
         self.suffix = case.suffix
         self.name_spec = case.name_spec
-        self.scratch_path = case.scratch_path
         self.ini_path = case.ini_path
-        self.ini_file = mht.Read_namelist(self.ini_path)
+        self.ini_file = case.ini_file
         self.file_directory = case.file_directory
 
     def run_postprocessing(
@@ -484,7 +481,7 @@ class PostProcessing:
         sample_time = self.ini_file["time"]["savetime"]
 
         for var in vars:
-            nc_file_path = Path(self.scratch_path, f"{var}.nc")
+            nc_file_path = Path(self.file_directory, f"{var}.nc")
 
             if nc_file_path.exists():
                 if overwrite:
@@ -497,7 +494,7 @@ class PostProcessing:
             # run as python script
             if vars_to_process:
                 post_command = (
-                    f"{sys.executable} 3d_to_nc.py -d {self.scratch_path} "
+                    f"{sys.executable} 3d_to_nc.py -d {self.file_directory} "
                     f"-f {self.name}.ini -v {' '.join(vars_to_process)} "
                     f"-p {precision} -t0 {start_time} -t1 {end_time} "
                     f"-tstep {sample_time}"
@@ -511,7 +508,7 @@ class PostProcessing:
             # run as module
             if vars_to_process:
                 convert_3d_to_nc.run(
-                    directory=self.scratch_path,
+                    directory=self.file_directory,
                     filename=f"{self.name}.ini",
                     vars=vars_to_process,
                     precision=precision,
@@ -601,7 +598,7 @@ class PostProcessing:
                 Specify if the grid files should be removed after zipping them together.
                 Defaults to False.
         """
-        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+        zip_filename = Path(self.file_directory, "binary_grid_files.zip")
 
         if zip_filename.exists():
             print(f"{zip_filename} already exists. Skipping...")
@@ -609,7 +606,7 @@ class PostProcessing:
 
         pattern = re.compile(r"^.*\.\d{7}$")
         matching_files = [
-            file for file in self.scratch_path.iterdir() if pattern.match(file.name)
+            file for file in self.file_directory.iterdir() if pattern.match(file.name)
         ]
 
         with zipfile.ZipFile(zip_filename, "w") as zip_file:
@@ -624,17 +621,17 @@ class PostProcessing:
 
     def unzip_grid_files(self, remove_zip_file: bool = False):
         """Unzip the binay grid files to scratch"""
-        zip_filename = Path(self.scratch_path, "binary_grid_files.zip")
+        zip_filename = Path(self.file_directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
             print(f"{zip_filename} does not exist. Skipping...")
             return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
-            zip_ref.extractall(self.scratch_path)
+            zip_ref.extractall(self.file_directory)
 
         print(
-            f"Files from '{zip_filename}' successfully extracted to '{self.scratch_path}'"
+            f"Files from '{zip_filename}' successfully extracted to '{self.file_directory}'"
         )
 
         if remove_zip_file:
@@ -1512,7 +1509,7 @@ class PostProcessing:
             dtype = get_dtype()
             for time in time_range:
                 fld = np.fromfile(
-                    f"{self.case.scratch_path}/{scalar}.{time:07d}", dtype
+                    f"{self.case.file_directory}/{scalar}.{time:07d}", dtype
                 )
                 fld = fld.reshape((ktot, jtot, itot))
                 mass = np.sum(rhoref[:, None, None] * fld * dx * dy * dz[:, None, None])
@@ -1520,7 +1517,7 @@ class PostProcessing:
             return mass_array
 
         def read_mass_from_netcdf(scalar, time_range):
-            nc_path = Path(self.case.scratch_path) / f"{scalar}.nc"
+            nc_path = Path(self.case.file_directory) / f"{scalar}.nc"
             ds = xr.open_dataset(nc_path)
             # Assume variable name matches scalar, dimensions (time, z, y, x)
             arr = ds[scalar].values
