@@ -602,30 +602,31 @@ def get_wind_profile(
     z: Union[int, float, list, np.ndarray],
     z0: Union[int, float],
     u_star: Union[int, float],
+    T: Union[int, float],
     L: Union[int, float] = None,
-    t: Union[int, float, list, np.ndarray] = None,
-    q: Union[int, float, list, np.ndarray] = None,
     H: Union[int, float] = None,
     H_turb: Union[int, float] = None,
+    E: Union[int, float] = 0,
     displacement_height: Union[int, float] = 0,
+    stability_criterion: Literal["MO", "Ri"] = "Ri",
     kappa: float = 0.4,
-    alpha: float = 1 / 4,
-    beta: float = 4.7,
-    gamma: float = 15.0,
 ) -> np.ndarray:
     """
     Calculate the wind profile based on the logarithmic wind profile equation.
     Give either the sensible heat flux H (in W/m2) or the turbulent sensible heat flux (in K m/s).
     Source: https://denning.atmos.colostate.edu/ats761/BonanBookFigures/Scans/Turbulent_fluxes_14.pdf
 
+    Marked with *:
+    From https://www.cambridge.org/core/books/turbulence-in-the-atmosphere/60C43BE9C14A0511C0B03ACD42731068
+
     Parameters:
     z (Union[int, float, list, np.ndarray]): Array of heights above the ground level.
     z0 (Union[int, float]): Roughness length.
     u_star (Union[int, float]): Friction velocity.
-    t (Union[int, float, list, np.ndarray]): (Potential) temperature profile (in K).
-    q (Union[int, float, list, np.ndarray]): Specific humidity profile (dimensionless, in kg/kg).
+    T (Union[int, float]): (Potential) temperature (in K).
     H (Union[int, float]): Sensible heat flux (W/m^2).
     H_turb (Union[int, float]): Turbulent sensible heat flux (K m/s).
+    E (Union[int, float], optional): Water vapor flux (kg/s). Defaults to 0.
     displacement_height (Union[int, float], optional): Zero-plane displacement height (m). Defaults to 0.
     kappa (float, optional): von Kármán constant. Defaults to 0.4.
     alpha (float, optional): Parameter for stability correction in unstable conditions. Defaults to 1/4.
@@ -643,10 +644,6 @@ def get_wind_profile(
 
     # calculate MO length if it is not given
     if L is None:
-        # raise error if t or q are not provided
-        if (t is None) or (q is None):
-            raise ValueError("Temperature (t) and humidity (q) have to be provided.")
-
         # raise error if both H and H_turb are provided
         if (H is not None) and (H_turb is not None):
             raise ValueError(
@@ -655,7 +652,7 @@ def get_wind_profile(
 
         # convert sensible heat flux H to turbulent sensible heat flux H_turb, if H is provided
         elif H is not None:
-            H_turb = calculate_virtual_turbulent_heat_flux(H)
+            H_turb = calculate_virtual_turbulent_heat_flux(H, E, T=T)
 
         # raise error if both H and H_turb are not provided
         elif (H is None) and (H_turb is None):
@@ -663,19 +660,19 @@ def get_wind_profile(
                 "Either sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided."
             )
 
-        T_v_mean = calculate_virtual_temperature(t, q).mean()
-        L = calculate_monin_obukhov_length(u_star, T_v_mean, H_turb)
+        L = calculate_monin_obukhov_length(u_star, T, H_turb)
 
-    stability = _determine_stability(L)
+    if stability_criterion == "Ri":
+        stability = _determine_stability_Ri(np.nanmean(z) / L)
+    else:
+        stability = _determine_stability_MO(L)
 
     if stability == "stable":
-        stability_correction = _correction_stable(z - displacement_height, L, beta)
+        stability_correction = _correction_stable(z - displacement_height, L)
     elif stability == "neutral":
         stability_correction = 0
     elif stability == "unstable":
-        stability_correction = _correction_unstable(
-            z - displacement_height, L, alpha, gamma
-        )
+        stability_correction = _correction_unstable(z - displacement_height, L)
 
     uz = (u_star / kappa) * (
         np.log((z - displacement_height) / z0) - stability_correction
@@ -706,25 +703,28 @@ def calculate_virtual_temperature(
 
 
 def calculate_virtual_turbulent_heat_flux(
-    H: Union[int, float], rho: float = 1.225, cp: float = 1003.5
+    H: float, E: float, T: float, rho: float = 1.225, cp: float = 1003.5
 ) -> float:
     """
     Calculate the virtual turbulent heat flux from sensible heat flux H.
+    According to: https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
     Parameters:
-    H (Union[int, float]): Sensible heat flux (W/m^2).
+    H float: Sensible heat flux (W/m^2).
+    E float: Water vapor flux (kg/s).
+    T float: Absolute temperature (K).
     rho (float, optional): Density of air (kg/m^3). Defaults to 1.225.
     cp (float, optional): Specific heat capacity of air at constant pressure (J/(kg*K)). Defaults to 1003.5.
 
     Returns:
     float: Virtual turbulent heat flux (K m/s).
     """
-    return H / (rho * cp)
+    return (1 / T) * (1 / rho) * ((H / cp) + 0.61 * E)
 
 
 def calculate_monin_obukhov_length(
     u_star: Union[int, float],
-    tv_mean: Union[int, float],
+    T0: Union[int, float],
     H_turb: Union[int, float],
     kappa: float = 0.4,
     g: float = 9.81,
@@ -734,7 +734,7 @@ def calculate_monin_obukhov_length(
 
     Parameters:
     u_star (Union[int, float]): Friction velocity (m/s).
-    tv_mean (Union[int, float]): Mean (potential) virtual temperature (K).
+    T0 (Union[int, float]): Mean temperature (K).
     H_turb (Union[int, float]): Virtual turbulent heat flux (K m/s).
     kappa (float, optional): von Kármán constant (dimensionless). Defaults to 0.4.
     g (float, optional): Acceleration due to gravity (m/s^2). Defaults to 9.81.
@@ -743,13 +743,15 @@ def calculate_monin_obukhov_length(
     float: Monin-Obukhov length (m).
     """
 
-    L = -(u_star**3 * tv_mean) / (kappa * g * H_turb)
+    L = -(u_star**3 * T0) / (kappa * g * H_turb)
     return L
 
 
-def _determine_stability(L: float, threshold: float = 500) -> str:
+def _determine_stability_MO(L: float, threshold: float = 500) -> str:
     """
     Determine the stability regime based on the Monin-Obukhov length (L).
+    From: https://www.researchgate.net/publication/266043126_Estimating_the_systematic_er-_rors_in_turbulence_sensed_by_wind_lidars
+    Or from: https://onlinelibrary.wiley.com/doi/full/10.1002/we.1528
 
     Parameters:
     L (float): Monin-Obukhov length (m).
@@ -766,8 +768,23 @@ def _determine_stability(L: float, threshold: float = 500) -> str:
         return "neutral"
 
 
+def _determine_stability_Ri(
+    Ri: float, upper_threshold: float = -0.1, lower_threshold: float = 0.05
+) -> str:
+    """
+    Determine the stability regime based on the Richardson number (Ri).
+    From: https://www.researchgate.net/publication/269105054_Dispersion_modeling_of_air_pollutants_in_the_atmosphere_a_review
+    """
+    if Ri < lower_threshold:
+        return "stable"
+    elif Ri > upper_threshold:
+        return "unstable"
+    else:
+        return "neutral"
+
+
 def _correction_stable(
-    z: Union[int, float, np.ndarray], L: float, beta: float = 4.7
+    z: Union[int, float, np.ndarray], L: float, beta: float = 4.8
 ) -> Union[int, float, np.ndarray]:
     """
     Stability correction for stable conditions.
@@ -775,7 +792,8 @@ def _correction_stable(
     Parameters:
     z (Union[int, float, np.ndarray]): Height above the ground level (m).
     L (float): Monin-Obukhov length (m).
-    beta (float, optional): Stability correction parameter. Defaults to 4.7.
+    beta (float, optional): Stability correction parameter. Defaults to 4.8.
+    * 4.8 in Wyngaard (2010) Turbulence in the Atmosphere.
 
     Returns:
     Union[int, float, np.ndarray]: Stability correction term.
@@ -798,6 +816,13 @@ def _correction_unstable(
     Returns:
     Union[int, float, np.ndarray]: Stability correction term.
     """
+    # according to Wyngaard (2010) Turbulence in the Atmosphere:
+    gamma = 3.6
+    a = 2 / 3
+    b = -1 / 2
+    x = (1 + gamma * np.abs(z / L) ** a) ** b
+
+    return x
     x = (1 - gamma * z / L) ** alpha
     return (
         2 * np.log((1 + x) / 2)
@@ -948,3 +973,40 @@ def compute_effective_wind_speed(
     results["effective_wind_speed"].attrs["units"] = "m s-1"
 
     return results
+
+
+import numpy as np
+
+
+def ramp(x):
+    """Ramp function R(x): returns x if x > 0 else 0."""
+    return np.maximum(x, 0)
+
+
+def compute_smagorinsky_constant(delta, L, z, kappa=0.4, c0=0.135, alpha=0.135, n=3):
+    """
+    Computes Smagorinsky constant according to Eq. (17) in
+    https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
+
+    Parameters:
+        c0 : float or array
+            Base concentration (c₀)
+        alpha : float
+            Model parameter (α)
+        delta : float
+            Characteristic scale (Δ). For simulations: resolution of the model, in m
+        L : float
+            Obukhov length (L)
+        kappa : float
+            von Kármán constant (κ)
+        z : float
+            Height above ground (in m)
+        n : float
+            Model exponent (n)
+
+    Returns:
+        float or array: computed c_s
+    """
+    term1 = (1 + (c0 / alpha) * ramp(delta / L)) ** -1
+    term2 = (1 + (c0 * delta / (kappa * z)) ** n) ** (-1 / n)
+    return c0 * term1 * term2

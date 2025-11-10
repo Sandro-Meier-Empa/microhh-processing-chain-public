@@ -462,7 +462,7 @@ class Visualisation:
             variables (str, list(str)):
                 Variables within the statistics file to plot.
         """
-        stats = init.read_statistics(self.case)
+        stats = io.open_statistics(self.case)
 
         if isinstance(variables, str):
             variables = list(variables)
@@ -490,8 +490,8 @@ class Visualisation:
             z=initial_cond.z.values,
             z0=self.case.ini_file["boundary"]["z0m"],
             u_star=ustar,
+            T=initial_cond.isel(z=0).th.values,
             L=obuk,
-            t=initial_cond.th.values,
         )
 
         fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(8, 6))

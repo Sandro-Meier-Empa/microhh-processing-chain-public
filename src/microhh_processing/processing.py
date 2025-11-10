@@ -235,6 +235,8 @@ class PreProcessing:
                         "'uflux' must be specified when using "
                         "'swlspres = uflux' forcing."
                     )
+            elif force == 0:
+                pass
             else:
                 raise ValueError(
                     f"Invalid value for 'swlspres': {force}. "
@@ -1575,6 +1577,20 @@ def object_to_list(var) -> list:
     elif not isinstance(var, list):
         var = [var]
     return var
+
+
+def get_ini_dict_from_file(file_path: Union[str, Path]) -> dict:
+    """Read .ini file and return as dictionary.
+
+    Args:
+        file_path (Union[str, Path]):
+            Path to the .ini file.
+
+    Returns:
+        dict: Dictionary with the .ini file contents.
+    """
+    ini_file = mht.Read_namelist(file_path)
+    return ini_file.groups
 
 
 def get_2D_tke_threshold_time(

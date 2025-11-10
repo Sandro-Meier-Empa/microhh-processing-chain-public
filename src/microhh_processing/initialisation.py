@@ -323,7 +323,7 @@ class Case:
             filename = f"run_microhh.sbash"
         elif filetype == "sbash_out":
             # Use wildcard matching
-            matches = list(Path(self.scratch_path).glob("run_microhh*.out"))
+            matches = list(Path(self.file_directory).glob("run_microhh*.out"))
             if not matches:
                 raise FileNotFoundError("No sbash_out files found.")
             filename = max(matches, key=lambda f: f.stat().st_mtime)
@@ -332,10 +332,10 @@ class Case:
                 f"{filetype} is not available. Use 'ini', 'out', 'sbash' or 'sbash_out'."
             )
 
-        file_path = self.scratch_path / filename
+        file_path = self.file_directory / filename
 
         if file_path.exists():
-            os.chdir(self.scratch_path)
+            os.chdir(self.file_directory)
             io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")
