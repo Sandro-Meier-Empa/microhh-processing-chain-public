@@ -263,7 +263,7 @@ class AlpsSetup:
 
         if start_jobs:
             # Launch the job on alps
-            execute_bash_script(job_file, wait=False)
+            job_id = execute_bash_script(job_file, wait=False)
 
     def create_bash_script(
         self,
@@ -331,7 +331,7 @@ class AlpsSetup:
         return file_path
 
 
-def execute_bash_script(job_file: Path, wait: bool = True):
+def execute_bash_script(job_file: Path, wait: bool = True) -> int:
     """Run a simulation using sbatch
 
     Args:
@@ -340,9 +340,32 @@ def execute_bash_script(job_file: Path, wait: bool = True):
         wait (bool, optional. Default: False):
             Specify if the next job should only be submitted
             after the previous one has stopped.
+
+
     """
-    os.system(f"sbatch {'--wait' if wait else ''} {job_file}")
+    cmd = ["sbatch"]
+    if wait:
+        cmd.append("--wait")
+    cmd.append(str(job_file))
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     print(f"Starting {str(job_file)}")
+
+    job_id = _get_job_id(result=result)
+
+    return job_id
+
+
+def _get_job_id(result: subprocess.CompletedProcess[str]) -> int:
+
+    output = result.stdout.strip()
+
+    # Parse the job ID
+    job_id = None
+    if output.startswith("Submitted batch job"):
+        job_id = output.split()[-1]
+
+    return int(job_id)
 
 
 def jobs_in_queue(
@@ -463,17 +486,17 @@ def print_simulation_progress(case):
     files of MicroHH"""
 
     current_timestep, max_timestep = get_simulation_progress(case)
-    progress_percentage = int(current_timestep / max_timestep * 100)
+    progress_percentage = current_timestep / max_timestep * 100
 
-    if progress_percentage == 0:
+    if progress_percentage == 0.0:
         color = print_colors.RED
-    elif progress_percentage == 100:
+    elif progress_percentage == 100.0:
         color = print_colors.GREEN
     else:
         color = print_colors.YELLOW
 
     print(
-        f"{color}Simulation progress of {case.name_spec}: {progress_percentage}% ({current_timestep}s ouf of {max_timestep}s){print_colors.ENDC}"
+        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){print_colors.ENDC}"
     )
 
 

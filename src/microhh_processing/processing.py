@@ -1,5 +1,6 @@
 import glob
 import os
+import dask
 import pyproj
 import re
 import scipy
@@ -129,8 +130,16 @@ class PreProcessing:
             self.start_simulation(wait)
 
     def start_simulation(self, wait: bool = False):
-        os.chdir(str(self.case.file_directory))
-        cscs.execute_bash_script(self.job_file, wait)
+        self.job_id = cscs.execute_bash_script(self.job_file, wait)
+
+    def cancel_simulation(self):
+        # check if self has attribute "job_id"
+        if not hasattr(self, "job_id"):
+            print("Case has not been submitted yet.")
+
+        if self.job_id is not None:
+            subprocess.run(["scancel", str(self.job_id)])
+            print(f"Cancelling simulation {self.job_id}")
 
     def create_run_script(self, overwrite: bool = False) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
@@ -157,6 +166,8 @@ class PreProcessing:
         self._adjust_mpi_settings()
         self._check_grid_match()
         self._check_nodes_match()
+        self._check_grid_order()
+        self._check_thermo()
         self._check_forcing()
         self._check_source_position()
         self._check_source_height()
@@ -208,6 +219,62 @@ class PreProcessing:
             raise ValueError(
                 f"Task per node ({self.alps_setup.ntasks_per_node}) does "
                 f"not match the expected value."
+            )
+
+    def _check_grid_order(self):
+        """Check that the grid order matches the orders of the advection schemes."""
+        swspatial = self.ini_file["grid"].get("swspatialorder", None)
+        swpres = swadvec = None
+
+        if "pres" in self.ini_file.groups:
+            swpres = self.ini_file.get("pres", {}).get("swpres", None)
+
+        if "advec" in self.ini_file.groups:
+            swadvec = str(self.ini_file["advec"].get("swadvec", None))
+
+        if swspatial is None:
+            return
+
+        if swpres is not None and int(swpres) != int(swspatial):
+            raise ValueError(
+                f"Grid order 'swspatialorder' ({swspatial}) does not match pressure advection order 'swpres' ({swpres})."
+            )
+
+        if swadvec is not None and int(swadvec[0]) != int(swspatial):
+            raise ValueError(
+                f"Grid order 'swspatialorder' ({swspatial}) does not match scalar advection order 'swadvec' ({swadvec})."
+            )
+
+    def _check_thermo(self):
+        """Check if the thermo settings are valid."""
+        if "thermo" not in self.ini_file.groups:
+            return
+
+        swthermo = self.ini_file["thermo"].get("swthermo", None)
+        swbasestate = self.ini_file["thermo"].get("swbasestate", None)
+        thref0 = self.ini_file["thermo"].get("thref0", None)
+
+        if swbasestate is None:
+            return
+
+        if swbasestate == "boussinesq":
+            if swthermo == "dry":
+                if thref0 is None:
+                    raise ValueError(
+                        "'thref0' must be specified when using "
+                        "'swbasestate'='boussinesq' and 'swthermo'='dry'."
+                    )
+
+        elif swbasestate == "anelastic":
+            swspatial = self.ini_file["grid"].get("swspatialorder", None)
+            if swspatial == 4:
+                raise ValueError(
+                    "'swbasestate'='anelastic' is not supported for 'swspatialorder'=4"
+                )
+        else:
+            raise ValueError(
+                f"Invalid value for 'swbasestate': {swbasestate}. "
+                "Valid options are 'boussinesq' or 'anelastic'."
             )
 
     def _check_forcing(self):
@@ -450,7 +517,7 @@ class PostProcessing:
         self,
         vars: Union[str, list],
         overwrite: bool = False,
-        precision: str = "double",
+        precision: Literal["single", "double"] = "single",
         start_time=None,
         end_time=None,
         py_file_path: Union[str, Path] = None,
@@ -724,6 +791,7 @@ class PostProcessing:
         overwrite: bool = False,
         save: bool = True,
         chunks: dict = None,
+        interpolate: bool = True,
     ) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
 
@@ -751,7 +819,9 @@ class PostProcessing:
             return io.open_microhh_nc(case=self.case, variable=filename, chunks=chunks)
 
         # combine the prognostic variables into one dataset
-        combined_dataset = self.combine_prognostic_variables(vars=vars, chunks=chunks)
+        combined_dataset = self.combine_prognostic_variables(
+            vars=vars, chunks=chunks, interpolate=interpolate
+        )
 
         # Save the combined dataset to a new NetCDF file
         if save:
@@ -765,6 +835,7 @@ class PostProcessing:
         vars: Union[str, list],
         data: xr.Dataset = None,
         chunks: Union[str, dict] = None,
+        interpolate: bool = True,
     ) -> xr.Dataset:
         """Combine multiple prognostic variables of the MicroHH output to one
         dataset. Specify either the variables to combine or give a dataset to
@@ -788,44 +859,50 @@ class PostProcessing:
         for var in vars:
             dataset = self.open_3d_prognostic_variable(var, chunks=chunks)
 
-            # homogenise dimensions
-            dataset = self.interpolate_to_grid_midpoint(dataset)
-
+            if interpolate:
+                # homogenise dimensions
+                dataset = self.interpolate_to_grid_midpoint(dataset)
+                # dataset = dataset.persist()
             datasets.append(dataset)
 
         # Merge all datasets into one
+        print("Combining datasets...")
         combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
 
         return combined_dataset
 
-    def interpolate_to_grid_midpoint(self, nc_file: xr.Dataset) -> xr.Dataset:
+    def interpolate_to_grid_midpoint(self, data: xr.Dataset) -> xr.Dataset:
         """Interpolate variables at grid edges 'h' to the middle of the grid.
 
         Args:
-            nc_file (xr.Dataset): Dataset with the variables to interpolate.
+            data (xr.Dataset): Dataset with the variables to interpolate.
 
         Returns:
             xr.Dataset: Dataset with the interpolated variables
         """
-        dim = self._get_dims_at_grid_boundaries(nc_file)
+        dim = self._get_dims_at_grid_boundaries(data)
 
         if dim is None:
-            return nc_file
+            return data
 
-        print(f"Interpolating {dim} to {dim[:-1]}")
+        new_dim_name = dim[:-1]
+        data = data.rename({dim: new_dim_name})
 
-        midpoints = nc_file[dim].values + np.nanmedian(np.diff(nc_file[dim].values) / 2)
-        new_coords = {dim: midpoints}
-        nc_file_interpolated = nc_file.interp(
-            **new_coords, kwargs={"fill_value": "extrapolate"}
+        print(f"Interpolating {dim} to {new_dim_name}")
+
+        if dim == "zh":
+            # Use initial conditions since vertical grid can be stretched
+            midpoints = io.open_initial_cond(self.case).z
+        else:
+            spacing = data[new_dim_name].diff(new_dim_name)
+            half = spacing.median(skipna=True) / 2
+            midpoints = data[new_dim_name] + half
+
+        data_interpolated = data.interp(
+            {new_dim_name: midpoints}, kwargs={"fill_value": "extrapolate"}
         )
 
-        # Create a new dimension name without the 'h' at the end
-        new_dim_name = dim[:-1]
-        # Rename the dimension in the Dataset
-        nc_file_interpolated = nc_file_interpolated.rename({dim: new_dim_name})
-
-        return nc_file_interpolated
+        return data_interpolated
 
     def _get_dims_at_grid_boundaries(self, data: xr.Dataset) -> str:
         """Get the name of the dimension that is sampled at the boundaries of the

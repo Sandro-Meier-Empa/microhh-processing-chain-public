@@ -217,11 +217,6 @@ class Visualisation:
 
         fig, ax = plt.subplots(ncols=len(variables), sharey=True)
 
-        # define step size for plot
-        t_step = int(data.time.size / n_lines)
-        x_step = int(data.x.size / n_lines)
-        y_step = int(data.y.size / n_lines)
-
         # Normalize the time values to range [0, 1] for colormap
         norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
 
@@ -229,20 +224,33 @@ class Visualisation:
         sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
         sm.set_array([])  # Only needed for the colorbar to work
 
-        # plot simulated values
-        for t in np.arange(data.time.size, step=t_step):
-            color_sim = (
-                cm.viridis(norm(data.time[t] / time_factor)) if colorful else "gray"
-            )
-            color_init = "C3" if colorful else "C0"
+        for c, component in enumerate(variables):
+            # get dim names from variable
+            time_dim, z_dim, y_dim, x_dim = data[component].dims
 
-            # loop over x dimension
-            for x in np.arange(data.x.size, step=x_step):
-                # loop over y dimension
-                for y in np.arange(data.y.size, step=y_step):
-                    subset = data.isel(time=t, x=x, y=y)
-                    for c, component in enumerate(variables):
-                        ax[c].plot(subset[component], subset.z, color=color_sim)
+            # define step size for plot
+            t_step = int(data[time_dim].size / n_lines)
+            x_step = int(data[x_dim].size / n_lines)
+            y_step = int(data[y_dim].size / n_lines)
+
+            # plot simulated values
+            for t in np.arange(data[time_dim].size, step=t_step):
+                color_sim = (
+                    cm.viridis(norm(data[time_dim][t] / time_factor))
+                    if colorful
+                    else "gray"
+                )
+                color_init = "C3" if colorful else "C0"
+
+                # loop over x dimension
+                for x in np.arange(data[x_dim].size, step=x_step):
+                    # loop over y dimension
+                    for y in np.arange(data[y_dim].size, step=y_step):
+                        subset = data.isel(time=t, x=x, y=y)
+                        for c, component in enumerate(variables):
+                            ax[c].plot(
+                                subset[component], subset[z_dim], color=color_sim
+                            )
 
         # plot initial conditions
         for c, component in enumerate(variables):
@@ -470,8 +478,15 @@ class Visualisation:
         for var in variables:
             fig, axs = plt.subplots(1, 1, figsize=(12, 6))
 
-            if any(dim in stats[var].dims for dim in ["z", "zh"]):
-                stats[var].T.plot(ax=axs)
+            if "z" in stats[var].dims:
+                ydim = "z"
+            elif "zh" in stats[var].dims:
+                ydim = "zh"
+            else:
+                ydim = None
+
+            if ydim is not None:
+                stats[var].plot(ax=axs, y=ydim)
             else:
                 stats[var].plot(ax=axs)
 

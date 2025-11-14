@@ -17,20 +17,6 @@ import microhh_processing.misc as misc
 import microhh_processing.io as io
 
 
-# molar mass (g/mol)
-gas_mass = {
-    "air": 28.9664,  # dry air
-    "co": 28.01,
-    "co2": 44.01,
-    "h2o": 18.01528,
-    "no2": 46.0055,
-    "no": 30.01,
-    "o3": 48.00,
-    "so2": 64.066,
-    "ch4": 16.0425,
-}
-
-
 class Case:
 
     def __init__(
@@ -335,7 +321,6 @@ class Case:
         file_path = self.file_directory / filename
 
         if file_path.exists():
-            os.chdir(self.file_directory)
             io.open_in_vscode(file_path)
         else:
             print(f"{file_path} does not exist.")

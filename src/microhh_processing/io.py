@@ -17,7 +17,8 @@ def open_in_vscode(file_path: Union[str, Path]):
         file_path (Path):
             Specify the path of the bash script which should be opened.
     """
-    subprocess.run(["code", str(file_path)])
+    file_path = Path(file_path)
+    subprocess.run(["code", str(file_path)], cwd=file_path.parent)
 
 
 def open_microhh_nc(case, variable: str, chunks: Union[str, dict] = None) -> xr.Dataset:
@@ -44,9 +45,9 @@ def open_microhh_nc(case, variable: str, chunks: Union[str, dict] = None) -> xr.
         )
 
     try:
-        data = xr.open_dataset(file_path, chunks=chunks)
+        data = xr.open_dataset(file_path, engine="h5netcdf", chunks=chunks)
     except ValueError:
-        data = xr.open_dataset(file_path, chunks=chunks, decode_times=False)
+        data = xr.open_dataset(file_path, engine="h5netcdf", chunks=chunks, decode_times=False)
 
     return data
 
