@@ -188,11 +188,13 @@ class Visualisation:
 
     def plot_prognostic_variables(
         self,
-        data: xr.Dataset,
-        variables: list = ["u", "v", "th"],
+        variables: list[str],
+        data: xr.Dataset = None,
         n_lines: int = 5,
         colorful: bool = True,
         time_format: str = "h",
+        plot_format: Literal["line", "shaded"] = "line",
+        color_init: str = "k",
     ):
         """
         Plot the prognostic variables
@@ -200,22 +202,7 @@ class Visualisation:
 
         variables = proc.object_to_list(variables)
 
-        # define factor for time format
-        if time_format == "s":
-            time_factor = 1
-        elif time_format == "min":
-            time_factor = 60
-        elif time_format == "h":
-            time_factor = 60**2
-        else:
-            raise ValueError(
-                f"Time format {time_format} is not supported. Use 's', 'min' or 'h' instead."
-            )
-
-        # read in initial conditions
-        data_initial = io.open_initial_cond(self.case)
-
-        fig, ax = plt.subplots(ncols=len(variables), sharey=True)
+        time_factor = self._get_time_factor(time_format)
 
         # Normalize the time values to range [0, 1] for colormap
         norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
@@ -224,33 +211,45 @@ class Visualisation:
         sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
         sm.set_array([])  # Only needed for the colorbar to work
 
+        # read in initial conditions
+        data_initial = io.open_initial_cond(self.case)
+
+        fig, ax = plt.subplots(ncols=len(variables), sharey=True)
+
         for c, component in enumerate(variables):
             # get dim names from variable
             time_dim, z_dim, y_dim, x_dim = data[component].dims
-
-            # define step size for plot
             t_step = int(data[time_dim].size / n_lines)
-            x_step = int(data[x_dim].size / n_lines)
-            y_step = int(data[y_dim].size / n_lines)
 
-            # plot simulated values
             for t in np.arange(data[time_dim].size, step=t_step):
-                color_sim = (
-                    cm.viridis(norm(data[time_dim][t] / time_factor))
+                subset_t = data.isel({time_dim: t})
+                color = (
+                    sm.to_rgba(subset_t[time_dim].values / time_factor)
                     if colorful
                     else "gray"
                 )
-                color_init = "C3" if colorful else "C0"
+                if plot_format == "line":
+                    self._plot_lines(
+                        ax=ax[c],
+                        data=subset_t,
+                        variable=component,
+                        n_lines=n_lines,
+                        x_dim=x_dim,
+                        y_dim=y_dim,
+                        z_dim=z_dim,
+                        color=color,
+                    )
 
-                # loop over x dimension
-                for x in np.arange(data[x_dim].size, step=x_step):
-                    # loop over y dimension
-                    for y in np.arange(data[y_dim].size, step=y_step):
-                        subset = data.isel(time=t, x=x, y=y)
-                        for c, component in enumerate(variables):
-                            ax[c].plot(
-                                subset[component], subset[z_dim], color=color_sim
-                            )
+                elif plot_format == "shaded":
+                    self._plot_shaded(
+                        ax=ax[c],
+                        data=subset_t,
+                        variable=component,
+                        x_dim=x_dim,
+                        y_dim=y_dim,
+                        z_dim=z_dim,
+                        color=color,
+                    )
 
         # plot initial conditions
         for c, component in enumerate(variables):
@@ -271,11 +270,71 @@ class Visualisation:
             ax[-1].legend(loc="upper right")
         else:
             # create legend manually
-            lines = [Line2D([0], [0], color=c) for c in [color_init, color_sim]]
+            lines = [Line2D([0], [0], color=c) for c in [color_init, color]]
             labels = ["initial", "simulated"]
             ax[-1].legend(lines, labels, loc="upper right")
 
         return fig
+
+    def _get_time_factor(self, time_format: str) -> int:
+        # define factor for time format
+        if time_format == "s":
+            time_factor = 1
+        elif time_format == "min":
+            time_factor = 60
+        elif time_format == "h":
+            time_factor = 60**2
+        else:
+            raise ValueError(
+                f"Time format {time_format} is not supported. Use 's', 'min' or 'h' instead."
+            )
+
+        return time_factor
+
+    def _plot_lines(
+        self,
+        ax: plt.Axes,
+        data: xr.Dataset,
+        variable: str,
+        n_lines: int,
+        x_dim: str,
+        y_dim: str,
+        z_dim: str,
+        color: Union[str, tuple],
+    ):
+
+        # define step size for plot
+        x_step = int(data[x_dim].size / n_lines)
+        y_step = int(data[y_dim].size / n_lines)
+
+        # loop over x dimension
+        for x in np.arange(data[x_dim].size, step=x_step):
+            # loop over y dimension
+            for y in np.arange(data[y_dim].size, step=y_step):
+                subset = data.isel(x=x, y=y)
+                ax.plot(subset[variable], subset[z_dim], color=color)
+
+    def _plot_shaded(
+        self,
+        ax: plt.Axes,
+        data: xr.Dataset,
+        variable: str,
+        x_dim: str,
+        y_dim: str,
+        z_dim: str,
+        color: Union[str, tuple],
+        alpha: float = 0.3,
+    ):
+        # integrate over x and y dimensions: Mean and std
+        integrated = data[variable].mean(dim=[x_dim, y_dim])
+        integrated_std = data[variable].std(dim=[x_dim, y_dim])
+        ax.fill_betweenx(
+            data[z_dim],
+            integrated - integrated_std,
+            integrated + integrated_std,
+            color=color,
+            alpha=alpha,
+        )
 
     def plot_side_views(
         self,
