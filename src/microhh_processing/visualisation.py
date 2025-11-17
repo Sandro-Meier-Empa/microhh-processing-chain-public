@@ -199,17 +199,9 @@ class Visualisation:
         """
         Plot the prognostic variables
         """
-
+        no_data = True if data is None else False
         variables = proc.object_to_list(variables)
-
         time_factor = self._get_time_factor(time_format)
-
-        # Normalize the time values to range [0, 1] for colormap
-        norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
-
-        # Create a ScalarMappable and set the colormap
-        sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
-        sm.set_array([])  # Only needed for the colorbar to work
 
         # read in initial conditions
         data_initial = io.open_initial_cond(self.case)
@@ -217,9 +209,20 @@ class Visualisation:
         fig, ax = plt.subplots(ncols=len(variables), sharey=True)
 
         for c, component in enumerate(variables):
+            # if data is None, read data
+            if no_data:
+                data = io.open_microhh_nc(self.case, variable=component)
+
             # get dim names from variable
             time_dim, z_dim, y_dim, x_dim = data[component].dims
             t_step = int(data[time_dim].size / n_lines)
+
+            # Normalize the time values to range [0, 1] for colormap
+            norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
+
+            # Create a ScalarMappable and set the colormap
+            sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
+            sm.set_array([])  # Only needed for the colorbar to work
 
             for t in np.arange(data[time_dim].size, step=t_step):
                 subset_t = data.isel({time_dim: t})
@@ -251,15 +254,14 @@ class Visualisation:
                         color=color,
                     )
 
-        # plot initial conditions
-        for c, component in enumerate(variables):
+            # plot initial conditions
             ax[c].plot(
                 data_initial[component],
                 data_initial.z,
                 label="prescribed",
                 color=color_init,
             )
-            ax[c].set_xlabel(f"{component} [{data[component].attrs['units']}]")
+            ax[c].set_xlabel(f"{component} [{data[component].attrs.get('units', '-')}]")
 
         ax[0].set_ylabel("Height [m]")
 
@@ -302,7 +304,6 @@ class Visualisation:
         z_dim: str,
         color: Union[str, tuple],
     ):
-
         # define step size for plot
         x_step = int(data[x_dim].size / n_lines)
         y_step = int(data[y_dim].size / n_lines)
@@ -311,7 +312,7 @@ class Visualisation:
         for x in np.arange(data[x_dim].size, step=x_step):
             # loop over y dimension
             for y in np.arange(data[y_dim].size, step=y_step):
-                subset = data.isel(x=x, y=y)
+                subset = data.isel({x_dim: x, y_dim: y})
                 ax.plot(subset[variable], subset[z_dim], color=color)
 
     def _plot_shaded(
@@ -367,14 +368,8 @@ class Visualisation:
             matplotlib.figure.Figure: Figure with subplots and text
         """
 
-        xdim, ydim, zdim = (
-            self.wind_dims[variable]
-            if variable in self.wind_dims.keys()
-            else ["x", "y", "z"]
-        )
-
-        if data.time.size > 1 and "time" in data.dims:
-            data = data.isel(time=timestep)
+        time_dim, zdim, ydim, xdim = data[variable].dims
+        data = data.isel({time_dim: timestep})
 
         x_max = data[xdim].max().values
         y_max = data[ydim].max().values
