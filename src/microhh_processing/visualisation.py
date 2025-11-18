@@ -5,10 +5,10 @@ import scipy.stats
 import sys
 
 from pathlib import Path
-from typing import Literal, Union
+from typing import List, Literal, Union
 from matplotlib.lines import Line2D
 from matplotlib import cm
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, TwoSlopeNorm
 from IPython.display import display
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -817,3 +817,84 @@ def plot_gas_weight(
     plt.tight_layout()
     plt.show()
 
+
+def plot_case_comparison(
+    cases: List[init.Case],
+    variables: List[str],
+    default_case_index: int = 0,
+    cmap: str = "RdBu_r",
+    figsize: tuple = (12, 5),
+):
+    """
+    Plot a comparison of a variable from multiple cases at a given timestep.
+    """
+    cases = proc.object_to_list(cases)
+    variables = proc.object_to_list(variables)
+    n_cases = len(cases)
+    n_compare = n_cases - 1
+
+    # read in stats from all cases
+    case_stats = []
+    for case in cases:
+        stats = io.open_statistics(case)
+        case_stats.append(stats)
+
+    # get index of case with most timesteps
+    max_time_case = np.argmax([stats.sizes["time"] for stats in case_stats])
+
+    # reindex all cases to the time dimension of the case with most timesteps
+    case_stats_reindexed = []
+    for stats in case_stats:
+        stats_reindexed = stats.reindex(
+            time=case_stats[max_time_case].time, method="nearest", tolerance=1e-6
+        )
+        case_stats_reindexed.append(stats_reindexed)
+
+    # define default case and remove from list
+    default_case_stats = case_stats_reindexed.pop(default_case_index)
+    default_case = cases.pop(default_case_index)
+
+    for var in variables:
+        fig, axs = plt.subplots(1, ncols=n_compare, figsize=figsize, sharey=True)
+        axs = np.atleast_1d(axs)
+        ax_flat = axs.flatten()
+
+        # add colorbar axis
+        divider = make_axes_locatable(ax_flat[-1])
+        cax = divider.append_axes("right", size="3%", pad=0.1)
+
+        # compute differences to default case
+        default_values = default_case_stats[var].values
+        diffs = []
+        for case_stat in case_stats_reindexed:
+            diff = case_stat[var].values - default_values
+            diffs.append(diff)
+
+        # get dimension names
+        dim_names = case_stat[var].dims
+
+        vmin = np.nanquantile(np.concatenate(diffs), 0.001)
+        vmax = np.nanquantile(np.concatenate(diffs), 0.999)
+        norm = TwoSlopeNorm(vcenter=0, vmin=vmin, vmax=vmax)
+
+        for ax, diff, case in zip(ax_flat, diffs, cases):
+            cm = ax.pcolormesh(
+                default_case_stats[dim_names[0]].values,
+                default_case_stats[dim_names[1]].values,
+                diff.T,
+                shading="auto",
+                cmap=cmap,
+                norm=norm,
+            )
+            ax.set_xlabel(
+                f"{default_case_stats[dim_names[0]].attrs.get('long_name', '')} [{default_case_stats[dim_names[0]].attrs.get('units', '-')}]"
+            )
+            ax.set_title(case.suffix)
+
+        ax_flat[0].set_ylabel(
+            f"{default_case_stats[dim_names[1]].attrs.get('long_name', '')} [{default_case_stats[dim_names[1]].attrs.get('units', '-')}]"
+        )
+
+        fig.colorbar(cm, cax=cax, label=f"{var} difference to default case")
+
+    plt.show()
