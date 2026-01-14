@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+import difflib
 
 from pathlib import Path
 from typing import Union, Literal
@@ -326,6 +327,84 @@ class Case:
             print(f"{file_path} does not exist.")
 
 
+def compare_ini(case_path1, case_path2):
+    """Compare the .ini file of this case with another case in a Git-diff style.
+
+    Ignores reordering of groups or variables.
+    Colors: Red for deletions/modifications (self), Green for additions/modifications (other).
+
+    Args:
+        case2 (Case):
+            Case to compare with.
+    """
+    # ANSI Colors
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    RESET = "\033[0m"
+
+    case1 = read_case(case_path1)
+    case2 = read_case(case_path2)
+
+    # 1. Identify all unique groups involved
+    self_groups = set(case1.ini_file.groups)
+    other_groups = set(case2.ini_file.groups)
+    all_groups = self_groups | other_groups
+
+    for group in sorted(all_groups):
+        # Case A: Group completely removed in case2
+        if group in self_groups and group not in other_groups:
+            print(f"{RED}[Group: {group}] removed{RESET}")
+            # Show all variables in this group as deleted
+            for var in case1.ini_file.groups[group]:
+                val = case1.ini_file[group][var]
+                print(f"{RED}- {var} = {val}{RESET}")
+            continue
+
+        # Case B: Group newly added in case2
+        if group not in self_groups and group in other_groups:
+            print(f"{GREEN}[Group: {group}] added{RESET}")
+            # Show all variables in this group as added
+            for var in case2.ini_file.groups[group]:
+                val = case2.ini_file[group][var]
+                print(f"{GREEN}+ {var} = {val}{RESET}")
+            continue
+
+        # Case C: Group exists in both (Check for variable differences)
+        self_vars = set(case1.ini_file.groups[group])
+        other_vars = set(case2.ini_file.groups[group])
+        all_vars = self_vars | other_vars
+
+        # Buffer changes so we only print the group header if there is an actual difference
+        changes = []
+
+        for var in sorted(all_vars):
+            # Variable removed
+            if var in self_vars and var not in other_vars:
+                val = case1.ini_file[group][var]
+                changes.append(f"{RED}- {var} = {val}{RESET}")
+
+            # Variable added
+            elif var not in self_vars and var in other_vars:
+                val = case2.ini_file[group][var]
+                changes.append(f"{GREEN}+ {var} = {val}{RESET}")
+
+            # Variable modified
+            else:
+                val_self = case1.ini_file[group][var]
+                val_other = case2.ini_file[group][var]
+
+                # Convert to string for comparison to avoid type mismatches
+                if str(val_self) != str(val_other):
+                    changes.append(f"{RED}- {var} = {val_self}{RESET}")
+                    changes.append(f"{GREEN}+ {var} = {val_other}{RESET}")
+
+        # Only print if changes were found in this group
+        if changes:
+            print(f"[{group}]")
+            for change in changes:
+                print(change)
+
+
 def initialise_case(
     name: str,
     suffix: str,
@@ -471,6 +550,7 @@ def write_netcdf_input(
     init_profiles: dict,
     tdep_surface: dict = None,
     tdep_ls: dict = None,
+    tdep_source: dict = None,
     radiation: dict = None,
     soil: dict = None,
 ):
@@ -484,6 +564,7 @@ def write_netcdf_input(
         init_profiles (dict): Dictionary containing the initial profiles
         tdep_surface (dict, optional): Dictionary containing the time dependent surface values
         tdep_ls (dict, optional): Dictionary containing the time dependent atmospheric values
+        tdep_source (dict, optional): Dictionary containing the time dependent source values
         radiation (dict, optional): Dictionary containing the radiation values
         soil (dict, optional): Dictionary containing the soil values
     """
@@ -531,7 +612,7 @@ def write_netcdf_input(
         add_variable(nc_group_init, name, dims, data, float_type)
 
     # Create a group called "timedep" for the time dependent input
-    if tdep_surface is not None or tdep_ls is not None:
+    if tdep_surface is not None or tdep_ls is not None or tdep_source is not None:
         nc_group_timedep = nc_file.createGroup("timedep")
 
     # Write the time dependent surface values
@@ -549,6 +630,14 @@ def write_netcdf_input(
 
         for name, data in tdep_ls.items():
             dims = ("time_ls") if name == "time_ls" else ("time_ls", "z")
+            add_variable(nc_group_timedep, name, dims, data, float_type)
+
+    # Write the time dependent source values
+    if tdep_source is not None:
+        nc_group_timedep.createDimension("time_source", tdep_source["time_source"].size)
+
+        for name, data in tdep_source.items():
+            dims = ("time_source") if name == "time_source" else ("time_source",)
             add_variable(nc_group_timedep, name, dims, data, float_type)
 
     # Write the radiation values

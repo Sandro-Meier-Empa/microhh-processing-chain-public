@@ -18,11 +18,11 @@ def calculate_richardson_number(
     stats: xr.Dataset,
     threshold: Optional[float] = 1e-10,
 ) -> xr.DataArray:
-    """Calculate the flux Richardson number."""
+    """Calculate the Richardson flux number."""
     denom = stats.u_w * stats.u_grad + stats.v_w * stats.v_grad  # m^2 s^-3
     Rf = stats.b_w / denom
     attrs = {
-        "long_name": "Flux Richardson number",
+        "long_name": "Richardson number",
         "units": "1",
         "description": "Ratio of buoyant production to shear production of turbulence kinetic energy",
     }

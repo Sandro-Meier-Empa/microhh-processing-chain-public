@@ -517,7 +517,7 @@ def wind_profile_from_given_wind(
     height: Union[int, float],
     surface_roughness: Union[int, float],
     thl: Union[int, float, list, np.ndarray],
-    qt: Union[int, float, list, np.ndarray],
+    E: Union[int, float, list, np.ndarray],
     sensible_heat_flux: Union[int, float],
     threshold: float,
 ) -> xr.Dataset:
@@ -535,8 +535,8 @@ def wind_profile_from_given_wind(
             Surface roughness length, (in m).
         thl (Union[int, float, list, np.ndarray]):
             (Potential) temperature profile, (in K).
-        qt (Union[int, float, list, np.ndarray]):
-            Specific humidity profile (dimensionless, in kg/kg)
+        E (Union[int, float, list, np.ndarray]):
+            Water vapor flux (kg/s).
         sensible_heat_flux (Union[int, float]):
             Sensible heat flux (W/m2).
         threshold (float, optional):
@@ -560,15 +560,15 @@ def wind_profile_from_given_wind(
         model_profile = grid.z
 
     u_star = compute_u_star(
-        wind_speed, height, surface_roughness, thl, qt, H=sensible_heat_flux
+        wind_speed, height, surface_roughness, thl, E=E, H=sensible_heat_flux
     )
 
     wind_profile = get_wind_profile(
         z=model_profile,
         z0=surface_roughness,
         u_star=u_star,
-        t=thl,
-        q=qt,
+        T=thl,
+        E=E,
         H=sensible_heat_flux,
     )
 
@@ -775,9 +775,15 @@ def _determine_stability_Ri(
     Determine the stability regime based on the Richardson number (Ri).
     From: https://www.researchgate.net/publication/269105054_Dispersion_modeling_of_air_pollutants_in_the_atmosphere_a_review
     """
-    if Ri < lower_threshold:
+    Ri = np.asarray(Ri)
+
+    stable = np.sum(Ri < lower_threshold)
+    unstable = np.sum(Ri > upper_threshold)
+    neutral = np.sum((Ri >= lower_threshold) & (Ri <= upper_threshold))
+
+    if stable > unstable and stable > neutral:
         return "stable"
-    elif Ri > upper_threshold:
+    elif unstable > stable and unstable > neutral:
         return "unstable"
     else:
         return "neutral"
@@ -837,8 +843,8 @@ def solve_wind_profile(
     wind_speed: Union[int, float],
     z: Union[int, float, list, np.ndarray],
     z0: Union[int, float],
-    t: Union[int, float, list, np.ndarray],
-    q: Union[int, float, list, np.ndarray],
+    T: Union[int, float, list, np.ndarray],
+    E: Union[int, float, list, np.ndarray],
     H: Union[int, float] = None,
     H_turb: Union[int, float] = None,
 ) -> np.ndarray:
@@ -849,8 +855,8 @@ def solve_wind_profile(
     u_star (Union[int, float]): Initial guess for friction velocity (m/s).
     z (Union[int, float, list, np.ndarray]): Array of heights above the ground level (m).
     z0 (Union[int, float]): Roughness length (m).
-    t (Union[int, float, list, np.ndarray]): (Potential) temperature profile (in K).
-    q (Union[int, float, list, np.ndarray]): Specific humidity profile (dimensionless, kg/kg).
+    T (Union[int, float, list, np.ndarray]): (Potential) temperature profile (in K).
+    E (Union[int, float, list, np.ndarray]): Water vapor flux (kg/s)
     H (Union[int, float]): Sensible heat flux (W/m^2).
     wind_speed (Union[int, float]): Measured wind speed (m/s).
 
@@ -858,7 +864,7 @@ def solve_wind_profile(
     np.ndarray: Difference between calculated and measured wind speed.
     """
     return (
-        get_wind_profile(z=z, z0=z0, u_star=u_star, t=t, q=q, H=H, H_turb=H_turb)
+        get_wind_profile(z=z, z0=z0, u_star=u_star, T=T, E=E, H=H, H_turb=H_turb)
         - wind_speed
     )
 
@@ -867,8 +873,8 @@ def compute_u_star(
     wind_speed: Union[int, float],
     z: Union[int, float],
     z0: Union[int, float],
-    t: Union[int, float],
-    q: Union[int, float],
+    T: Union[int, float],
+    E: Union[int, float],
     H: Union[int, float] = None,
     H_turb: Union[int, float] = None,
     u_star_initial: Union[int, float] = None,
@@ -881,8 +887,8 @@ def compute_u_star(
     wind_speed (Union[int, float]): Measured wind speed (m/s).
     z (Union[int, float]): Height above ground at which the wind speed was measured (m).
     z0 (Union[int, float]): Roughness length (m).
-    t (Union[int, float]): (Potential) temperature (in K).
-    q (Union[int, float]): Specific humidity (dimensionless, kg/kg).
+    T (Union[int, float]): (Potential) temperature (in K).
+    E (Union[int, float]): Water vapor flux (kg/s).
     H (Union[int, float]): Sensible heat flux (W/m^2).
     H_turb (Union[int, float]): Turbulent sensible heat flux (K m/s).
     u_star_initial (Union[int, float]): Initial guess of u*. If not provided, it is calculated assuming neutrally stable conditions.
@@ -893,7 +899,7 @@ def compute_u_star(
     u_star_solution = fsolve(
         solve_wind_profile,
         u_star_initial,
-        args=(wind_speed, z, z0, t, q, H, H_turb),
+        args=(wind_speed, z, z0, T, E, H, H_turb),
     )
     return u_star_solution[0]
 

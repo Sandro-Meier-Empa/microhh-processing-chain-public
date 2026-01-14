@@ -176,11 +176,11 @@ class Visualisation:
 
         elif len(dims) == 1:
             if "time_surface" in dims:
-                ax.plot(data_group["time_surface"], var_data)
+                ax.plot(data_group["time_surface"], var_data, marker="x")
             elif aux_dim in dims:
-                ax.plot(var_data, data_group[aux_dim])
+                ax.plot(var_data, data_group[aux_dim], marker="x")
             else:
-                ax.plot(var_data)
+                ax.plot(var_data, marker="x")
 
         elif len(dims) == 2:
             # 2D heatmap
@@ -559,7 +559,7 @@ class Visualisation:
             z=initial_cond.z.values,
             z0=self.case.ini_file["boundary"]["z0m"],
             u_star=ustar,
-            T=initial_cond.isel(z=0).th.values,
+            T=None,
             L=obuk,
         )
 

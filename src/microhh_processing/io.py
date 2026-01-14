@@ -32,7 +32,7 @@ def open_microhh_nc(case, variable: str, chunks: Union[str, dict] = None) -> xr.
         chunks (Union[str, dict], optional):
             Chunking strategy for dask. Defaults to None.
     """
-    file_path = Path(case.file_directory, f"{variable.lower()}.nc")
+    file_path = Path(case.file_directory, f"{variable}.nc")
 
     if not file_path.exists():
         # List all .nc files in the directory

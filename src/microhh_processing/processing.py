@@ -1642,6 +1642,27 @@ class PostProcessing:
         except Exception as e:
             raise RuntimeError(f"Error retrieving sacct information: {e}")
 
+    def calculate_centerline_position(
+        self,
+        data: xr.Dataset,
+        variable: str,
+        dim: str,
+        ydim_name: str = "y",
+        zdim_name: str = "z",
+    ):
+        """Calculate the centerline position of the plume in the dataset.
+        According to Raznjevic et al. (2022)"""
+
+        if dim not in [ydim_name, zdim_name]:
+            raise ValueError(f"Dimension '{dim}' not recognized.")
+
+        dim_data = data[dim]
+
+        num = (data[variable] * dim_data).integrate(coord=[zdim_name, ydim_name])
+        den = data[variable].integrate(coord=[zdim_name, ydim_name])
+
+        return num / den
+
 
 ############# other functions #############
 def object_to_list(var) -> list:
@@ -1668,4 +1689,3 @@ def get_ini_dict_from_file(file_path: Union[str, Path]) -> dict:
     """
     ini_file = mht.Read_namelist(file_path)
     return ini_file.groups
-
