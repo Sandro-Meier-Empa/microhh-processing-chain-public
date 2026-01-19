@@ -2,7 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
-import difflib
+import logging
 
 from pathlib import Path
 from typing import Union, Literal
@@ -17,6 +17,7 @@ import ls2d
 import microhh_processing.misc as misc
 import microhh_processing.io as io
 
+logger = logging.getLogger(__name__)
 
 class Case:
 
@@ -134,7 +135,7 @@ class Case:
 
         # set up directory on scratch
         if not self.scratch_path.exists():
-            print(f"Creating {self.scratch_path}")
+            logger.info(f"Creating {self.scratch_path}")
             os.makedirs(self.scratch_path)
         elif overwrite:
             # ask for user input to confirm overwriting
@@ -143,7 +144,7 @@ class Case:
             )
             if user_input.lower() == "y":
                 shutil.rmtree(self.scratch_path)
-                print(f"Overwriting {self.scratch_path}")
+                logger.info(f"Overwriting {self.scratch_path}")
                 os.makedirs(self.scratch_path)
 
     def _handle_running_method(self, init_from: Union[str, Path]):
@@ -263,7 +264,7 @@ class Case:
         if py_script_path.exists():
             subprocess.run(["python", str(py_script_path)], cwd=self.scratch_path)
         else:
-            print(f"{py_script_path} not found.")
+            logger.info(f"{py_script_path} not found.")
 
     def overwrite_ini(self, settings: dict = {}, overwrite: bool = True):
         """Write the .ini file of a case.
@@ -324,7 +325,7 @@ class Case:
         if file_path.exists():
             io.open_in_vscode(file_path)
         else:
-            print(f"{file_path} does not exist.")
+            logger.info(f"{file_path} does not exist.")
 
 
 def compare_ini(case_path1, case_path2):

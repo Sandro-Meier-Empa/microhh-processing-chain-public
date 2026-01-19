@@ -2,6 +2,7 @@ import concurrent.futures
 import os
 import subprocess
 import re
+import logging
 
 from pathlib import Path
 from typing import Union, Tuple, Literal
@@ -10,6 +11,7 @@ from io import StringIO
 import pandas as pd
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 class print_colors:
     CYAN = "\033[96m"
@@ -259,7 +261,7 @@ class AlpsSetup:
                 scratch_path=case.scratch_path,
             )
         else:
-            print(f"Reading existing bash script {job_file}")
+            logger.info(f"Reading existing bash script {job_file}")
 
         if start_jobs:
             # Launch the job on alps
@@ -348,8 +350,10 @@ def execute_bash_script(job_file: Path, wait: bool = True) -> int:
         cmd.append("--wait")
     cmd.append(str(job_file))
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    print(f"Starting {str(job_file)}")
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, check=True, cwd=job_file.parent
+    )
+    logger.info(f"Starting {str(job_file)}")
 
     job_id = _get_job_id(result=result)
 
@@ -495,8 +499,8 @@ def print_simulation_progress(case):
     else:
         color = print_colors.YELLOW
 
-    print(
-        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){print_colors.ENDC}"
+    logger.info(
+        f"Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s)"
     )
 
 

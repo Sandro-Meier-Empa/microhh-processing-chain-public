@@ -9,6 +9,7 @@ import subprocess
 import sys
 import warnings
 import zipfile
+import logging
 
 from pathlib import Path
 from typing import Literal, Union, Tuple
@@ -27,6 +28,8 @@ import microhh_processing.cscs as cscs
 import microhh_processing.wind as wind_proc
 import microhh_processing.misc as misc
 import microhh_processing.io as io
+
+logger = logging.getLogger(__name__)
 
 # molar mass (g/mol)
 gas_mass = {
@@ -135,11 +138,11 @@ class PreProcessing:
     def cancel_simulation(self):
         # check if self has attribute "job_id"
         if not hasattr(self, "job_id"):
-            print("Case has not been submitted yet.")
+            logger.info("Case has not been submitted yet.")
 
         if self.job_id is not None:
             subprocess.run(["scancel", str(self.job_id)])
-            print(f"Cancelling simulation {self.job_id}")
+            logger.info(f"Cancelling simulation {self.job_id}")
 
     def create_run_script(self, overwrite: bool = False) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
@@ -154,7 +157,7 @@ class PreProcessing:
                 scratch_path=self.scratch_path,
             )
         else:
-            print(f"Reading existing bash script {job_file}")
+            logger.info(f"Reading existing bash script {job_file}")
 
         return job_file
 
@@ -190,7 +193,7 @@ class PreProcessing:
             for dim in ["x", "y"]:
                 self.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
             self.ini_file.save(self.ini_path, allow_overwrite=True)
-            print("Overwriting 'npx' and 'npy' because MPI is disabled.")
+            logger.warning("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
     def _check_grid_match(self):
         """Check if the grid size matches the number of processes."""
@@ -469,12 +472,12 @@ class PostProcessing:
 
         vars = prognostic_vars + gases
 
-        print(f"########## START PROCESSING OF {self.name_spec} ##########")
+        logger.info(f"########## START PROCESSING OF {self.name_spec} ##########")
 
         # skip post-processing if simulation failed at start
         current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
         if current_time_step == 0:
-            print("ERROR: Simulation failed. Skipped post-processing.")
+            logger.error("ERROR: Simulation failed. Skipped post-processing.")
             return
 
         self.create_3d_output(
@@ -511,7 +514,7 @@ class PostProcessing:
             overwrite=overwrite,
             chunks=chunks,
         )
-        print(f"########## FINISH PROCESSING OF {self.name_spec} ##########")
+        logger.info(f"########## FINISH PROCESSING OF {self.name_spec} ##########")
 
     def create_3d_output(
         self,
@@ -555,7 +558,7 @@ class PostProcessing:
             if nc_file_path.exists():
                 if overwrite:
                     os.remove(nc_file_path)
-                    print(f"Overwriting {nc_file_path}")
+                    logger.info(f"Overwriting {nc_file_path}")
                 else:
                     vars_to_process.remove(var)
 
@@ -607,13 +610,14 @@ class PostProcessing:
             move_processed_files (bool, optional):
                 Specify if the processed files (e.g. {gas}_2D.nc) should be moved. Defaults to True.
         """
+        store_path = Path(store_path) / self.name_spec
 
         # Handle target path
         if not store_path.exists():
             store_path.mkdir(parents=True, exist_ok=True)
         elif overwrite:
             shutil.rmtree(store_path)
-            print(f"Overwriting {store_path}.")
+            logger.warning(f"Overwriting {store_path}.")
             store_path.mkdir(parents=True)
 
         # Copy files for reproducibility
@@ -627,17 +631,23 @@ class PostProcessing:
             "microhh",
         ]
         for pattern in file_patterns:
-            self.move_pattern_to_store(pattern, overwrite)
+            self.move_pattern_to_store(
+                pattern, store_path=store_path, overwrite=overwrite
+            )
 
         if move_var_files:
             vars = object_to_list(vars)
             for var in vars:
                 pattern = f"{var}.nc"
-                self.move_pattern_to_store(pattern, overwrite)
+                self.move_pattern_to_store(
+                    pattern, store_path=store_path, overwrite=overwrite
+                )
 
         if move_processed_files:
             for pattern in ["*_2D.nc"]:
-                self.move_pattern_to_store(pattern, overwrite)
+                self.move_pattern_to_store(
+                    pattern, store_path=store_path, overwrite=overwrite
+                )
 
     def move_pattern_to_store(
         self, pattern: str, store_path: Union[str, Path], overwrite: bool = False
@@ -655,9 +665,9 @@ class PostProcessing:
             dest_file = Path(store_path, file.name)
             if not dest_file.exists() or overwrite:
                 shutil.copy(file, store_path)
-                print(f"Successfully copied '{file}' to '{store_path}'.")
+                logger.info(f"Successfully copied '{file}' to '{store_path}'.")
             else:
-                print(f"'{file}' already exists in '{store_path}'. Skipping.")
+                logger.info(f"'{file}' already exists in '{store_path}'. Skipping.")
 
     def zip_grid_files(self, remove_files: bool = False):
         """Zip all binary grid files together.
@@ -670,7 +680,7 @@ class PostProcessing:
         zip_filename = Path(self.file_directory, "binary_grid_files.zip")
 
         if zip_filename.exists():
-            print(f"{zip_filename} already exists. Skipping...")
+            logger.info(f"{zip_filename} already exists. Skipping...")
             return
 
         pattern = re.compile(r"^.*\.\d{7}$")
@@ -682,7 +692,7 @@ class PostProcessing:
             for file in matching_files:
                 zip_file.write(file, file.name)
 
-        print(f"{len(matching_files)} files were zipped to '{zip_filename}'.")
+        logger.info(f"{len(matching_files)} files were zipped to '{zip_filename}'.")
 
         if remove_files:
             for file in matching_files:
@@ -693,13 +703,13 @@ class PostProcessing:
         zip_filename = Path(self.file_directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
-            print(f"{zip_filename} does not exist. Skipping...")
+            logger.warning(f"{zip_filename} does not exist. Skipping...")
             return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
             zip_ref.extractall(self.file_directory)
 
-        print(
+        logger.info(
             f"Files from '{zip_filename}' successfully extracted to '{self.file_directory}'"
         )
 
@@ -825,7 +835,7 @@ class PostProcessing:
 
         # Save the combined dataset to a new NetCDF file
         if save:
-            print(f"Saving {file_path}")
+            logger.info(f"Saving {file_path}")
             combined_dataset.to_netcdf(file_path)
 
         return combined_dataset
@@ -866,7 +876,7 @@ class PostProcessing:
             datasets.append(dataset)
 
         # Merge all datasets into one
-        print("Combining datasets...")
+        logger.info("Combining datasets...")
         combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
 
         return combined_dataset
@@ -888,7 +898,7 @@ class PostProcessing:
         new_dim_name = dim[:-1]
         data = data.rename({dim: new_dim_name})
 
-        print(f"Interpolating {dim} to {new_dim_name}")
+        logger.info(f"Interpolating {dim} to {new_dim_name}")
 
         if dim == "zh":
             # Use initial conditions since vertical grid can be stretched
@@ -959,7 +969,7 @@ class PostProcessing:
         if file_path.exists():
             if overwrite:
                 os.remove(file_path)
-                print(f"Overwriting {file_path}")
+                logger.info(f"Overwriting {file_path}")
             else:
                 return io.open_microhh_nc(
                     case=self.case, variable=variable, chunks=chunks
@@ -1309,7 +1319,7 @@ class PostProcessing:
             start_date = self.ini_file["time"]["datetime_utc"]
         elif "datetime_utc" in self.ini_file["time"] and start_date is not None:
             start_date = start_date
-            print(
+            logger.info(
                 f"Using {start_date} to overwrite {self.ini_file['time']['datetime_utc']} "
                 f"in .ini file"
             )
@@ -1348,14 +1358,9 @@ class PostProcessing:
         Returns:
             np.array: Emitted quantities in kg/h
         """
-        sourcelist = self.ini_file["source"]["sourcelist"]
-        swvmr = self.ini_file["source"]["swvmr"]
-        strength = self.ini_file["source"]["strength"]
-
-        if not isinstance(sourcelist, list):
-            sourcelist = np.array([sourcelist])
-            swvmr = np.array([swvmr])
-            strength = np.array([strength])
+        sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
+        swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
+        strength = np.atleast_1d(self.ini_file["source"]["strength"])
 
         molar_mass = np.array([gas_mass[gas] for gas in sourcelist])
 
@@ -1390,24 +1395,24 @@ class PostProcessing:
         # check if all required prognostic variables are in the dataset
         for var in required_prognostic_vars:
             if var not in data.data_vars:
-                print(f"Adding '{var}' to the dataset.")
+                logger.info(f"Adding '{var}' to the dataset.")
                 data = self.combine_prognostic_variables(
                     vars=var, data=data, chunks=chunks
                 )
 
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
-            print(f"Adding 'phydro' to the dataset.")
+            logger.info(f"Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
         # convert potential temperature to absolute temperature
         if "ta" not in data.data_vars:
-            print(f"Calculating absolute temperature.")
+            logger.info(f"Calculating absolute temperature.")
             data = self.add_absolute_temperature(data)
 
         from_unit = data[gas].attrs.get("units", None)
 
-        print(
+        logger.info(
             f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}].",
             "This might take a while.",
         )
@@ -1472,7 +1477,7 @@ class PostProcessing:
 
         for var in required_vars:
             if var not in data.data_vars:
-                print(f"Adding '{var}' to the dataset.")
+                logger.info(f"Adding '{var}' to the dataset.")
                 data = self.add_statistics_variable(data, variable=var)
 
         # Calculate absolute temperature

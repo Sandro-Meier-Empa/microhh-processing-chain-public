@@ -1,6 +1,7 @@
 import os
 import scipy
 import sys
+import logging
 
 from scipy.optimize import fsolve
 from typing import Literal, Union, Tuple
@@ -13,9 +14,9 @@ import ddeq
 import ucat
 
 import ls2d
-
 import microhh_processing.initialisation as init
 
+logger = logging.getLogger(__name__)
 
 class WindProcessing:
     def __init__(self, case: init.Case):
@@ -180,7 +181,7 @@ class WindProcessing:
         if os.path.exists(wind_nc_path):
             if overwrite:
                 os.remove(wind_nc_path)
-                print(f"Overwriting {wind_nc_path}")
+                logger.info(f"Overwriting {wind_nc_path}")
             else:
                 return self.post.open_microhh_nc(wind_nc_path, chunks=chunks)
 
@@ -587,7 +588,7 @@ def wind_profile_from_given_wind(
     actual_wind_speed = np.mean(wind_profile[mask])
 
     if np.abs(wind_speed - actual_wind_speed) > threshold:
-        print(
+        logger.info(
             f"Wind speed at {height} m ({actual_wind_speed:.2f} m/s) deviates too much from prescribed wind speed ({wind_speed} m/s).\n"
             "Returning vertically homogenous wind profile."
         )

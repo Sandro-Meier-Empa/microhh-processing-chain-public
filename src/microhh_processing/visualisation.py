@@ -98,6 +98,11 @@ class Visualisation:
             ncols (int): Number of columns in the subplot grid.
             figsize (tuple[int, int]): Figure size.
         """
+        if group in ["timedep"]:
+            sharey = False
+        else:
+            sharey = True
+
         # Use xarray for more convenient data handling
         with xr.open_dataset(file_path, group=group, decode_times=False) as data_group:
             # Group variables by their dimensions
@@ -115,7 +120,7 @@ class Visualisation:
                     ncols=ncols,
                     nrows=nrows,
                     figsize=figsize,
-                    sharey=True,
+                    sharey=sharey,
                     layout="constrained",
                 )
 
@@ -175,8 +180,11 @@ class Visualisation:
                 ax.plot([var_data.values])
 
         elif len(dims) == 1:
-            if "time_surface" in dims:
-                ax.plot(data_group["time_surface"], var_data, marker="x")
+            # get dimension name that contains "time_"
+            time_dim = next((d for d in dims if "time_" in d), None)
+
+            if time_dim in dims:
+                ax.plot(data_group[time_dim], var_data, marker="x")
             elif aux_dim in dims:
                 ax.plot(var_data, data_group[aux_dim], marker="x")
             else:
@@ -184,7 +192,10 @@ class Visualisation:
 
         elif len(dims) == 2:
             # 2D heatmap
-            ax.pcolormesh(data_group[dims[0]], data_group[dims[1]], var_data.T)
+            im = ax.pcolormesh(data_group[dims[0]], data_group[dims[1]], var_data.T)
+
+            # add colorbar to bottom
+            cbar = plt.colorbar(im, ax=ax, orientation="horizontal")
 
     def plot_prognostic_variables(
         self,
@@ -496,7 +507,7 @@ class Visualisation:
         # Information about sources
         try:
             source_strength = self.post.model_emissions_to_kg_per_h()
-            source_height = self.case.ini_file["source"]["source_z0"]
+            source_height = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append(f"\nSources")
@@ -506,7 +517,7 @@ class Visualisation:
                 # Single source
                 text.append(f"\nSource")
                 formatted_strength = f"{source_strength[0]:.2f}"
-                formatted_height = f"{source_height:.0f}"
+                formatted_height = f"{source_height[0]:.0f}"
 
             text.append(f"source strength: {formatted_strength} kg/h")
             text.append(f"source height: {formatted_height} m")
