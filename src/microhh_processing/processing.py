@@ -124,7 +124,7 @@ class PreProcessing:
                 )
 
         # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite)
+        self.job_file = self.create_run_script(overwrite, mode="run")
 
         # check if the .ini setup is valid
         self._check_ini_setup_valid()
@@ -132,6 +132,55 @@ class PreProcessing:
         if start_jobs:
             # Launch the job on alps
             self.start_simulation(wait)
+
+    def prepare_restart_simulation(
+        self,
+        restart_case: init.Case,
+        restart_time: int,
+        overwrite: bool = False,
+        start_jobs: bool = False,
+        wait: bool = False,
+    ):
+
+        # copy microHH to directory
+        self.copy_executable()
+
+        # copy microHH restart files
+        restart_str = get_restart_str(restart_case, restart_time)
+        self.copy_restart_files(origin=restart_case.file_directory, timestr=restart_str)
+
+        # Create bash script if it does not exist
+        self.job_file = self.create_run_script(overwrite, mode="rerun")
+
+        # Check if .ini file has been updated for restart
+        self._check_restart_ini_updated(restart_time)
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
+
+        if start_jobs:
+            # Launch the job on alps
+            self.start_simulation(wait)
+
+    def _check_restart_ini_updated(self, restart_time: int):
+        """Check if the .ini file has been updated for a restart simulation.
+
+        Args:
+            restart_time (int):
+                Time in seconds from which the simulation is restarted.
+        """
+        starttime = self.ini_file["time"]["starttime"]
+
+        if starttime != restart_time:
+            raise ValueError(
+                f"starttime ({starttime}s) in .ini file does not match "
+                f"the specified restart_time ({restart_time}s)."
+            )
+        endtime = self.ini_file["time"]["endtime"]
+        if endtime <= restart_time:
+            raise ValueError(
+                f"endtime ({endtime}s) must be larger than restart_time ({restart_time}s)."
+            )
 
     def start_simulation(self, wait: bool = False):
         self.job_id = cscs.execute_bash_script(self.job_file, wait)
@@ -145,14 +194,16 @@ class PreProcessing:
             subprocess.run(["scancel", str(self.job_id)])
             logger.info(f"Cancelling simulation {self.job_id}")
 
-    def create_run_script(self, overwrite: bool = False) -> Path:
+    def create_run_script(
+        self, overwrite: bool = False, mode: Literal["run", "rerun"] = "run"
+    ) -> Path:
         job_file = Path(self.scratch_path, "run_microhh.sbash")
+
+        commands = self._get_microhh_run_commands(mode)
+
         if not job_file.exists() or overwrite:
             job_file = self.alps_setup.create_bash_script(
-                commands=[
-                    f"srun {self.scratch_path}/microhh init {self.name}",
-                    f"srun {self.scratch_path}/microhh run {self.name}",
-                ],
+                commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
                 scratch_path=self.scratch_path,
@@ -161,6 +212,23 @@ class PreProcessing:
             logger.info(f"Reading existing bash script {job_file}")
 
         return job_file
+
+    def _get_microhh_run_commands(
+        self, mode: Literal["run", "rerun"] = "run"
+    ) -> list[str]:
+        if mode == "run":
+            commands = [
+                f"srun {self.scratch_path}/microhh init {self.name}",
+                f"srun {self.scratch_path}/microhh run {self.name}",
+            ]
+        elif mode == "rerun":
+            commands = [
+                f"srun {self.scratch_path}/microhh run {self.name}",
+            ]
+        else:
+            raise ValueError("mode must be either 'run' or 'rerun'")
+
+        return commands
 
     def _check_ini_setup_valid(self):
         """
@@ -434,6 +502,27 @@ class PreProcessing:
         microhh_executable_path = self.microhh_executable_path / "microhh"
 
         shutil.copy(microhh_executable_path, self.scratch_path)
+
+    def copy_restart_files(self, origin: Union[str, Path], timestr: str):
+        """Copy MicroHH restart files to scratch. The .ini and input.nc files
+        are already copied when creating the case using case.initialise_case()."""
+
+        origin = Path(origin)
+
+        file_patterns = [
+            "grid.0000000",
+            "fftwplan.0000000",
+            "thermo_basestate.0000000",
+            "rhoref.0000000",
+            f"*.{timestr}",
+        ]
+
+        restart_files = []
+        for pattern in file_patterns:
+            restart_files.extend(origin.glob(pattern))
+
+        for file in restart_files:
+            shutil.copy(file, self.scratch_path)
 
 
 class PostProcessing:
@@ -1784,9 +1873,17 @@ def object_to_list(var) -> list:
         var = [var]
     return var
 
-from typing import Iterable, Union
-from decimal import Decimal, InvalidOperation
-import numpy as np
+
+def get_restart_str(case, endtime: int) -> str:
+    """Get endtime string used for restart files."""
+    iotimeprec = (
+        case.ini_file["time"]["iotimeprec"]
+        if "iotimeprec" in case.ini_file["time"]
+        else 0
+    )
+    endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
+
+    return "{0:07d}".format(endtime_io)
 
 
 def to_cs_list(lst: Union[list, np.ndarray], n: int = 1) -> str:
