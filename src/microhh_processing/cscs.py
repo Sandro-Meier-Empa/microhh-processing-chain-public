@@ -499,8 +499,8 @@ def print_simulation_progress(case):
     else:
         color = print_colors.YELLOW
 
-    logger.info(
-        f"Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s)"
+    print(
+        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){print_colors.ENDC}"
     )
 
 

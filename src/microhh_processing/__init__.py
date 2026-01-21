@@ -5,8 +5,19 @@ __all__ = [
     "misc",
     "ml",
     "processing",
+    "sources",
     "visualisation",
     "wind",
 ]
 
-from . import cscs, initialisation, io, misc, ml, processing, visualisation, wind
+from . import (
+    cscs,
+    initialisation,
+    io,
+    misc,
+    ml,
+    processing,
+    sources,
+    visualisation,
+    wind,
+)

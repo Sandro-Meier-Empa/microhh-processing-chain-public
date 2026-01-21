@@ -298,6 +298,7 @@ class Case:
                     self.ini_file.set_value(group=group, variable=variable, value=value)
 
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
+        self.ini_file = mht.Read_namelist(self.ini_path)
 
     def open_mhh_in_vscode(self, filetype: Literal["ini", "out", "sbash", "sbash_out"]):
         """Open the specified file in VS Code.
@@ -328,7 +329,7 @@ class Case:
             logger.info(f"{file_path} does not exist.")
 
 
-def compare_ini(case_path1, case_path2):
+def compare_ini(case_path1, case_path2, ini_file1=None, ini_file2=None):
     """Compare the .ini file of this case with another case in a Git-diff style.
 
     Ignores reordering of groups or variables.

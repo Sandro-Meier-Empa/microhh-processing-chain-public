@@ -558,6 +558,64 @@ class Visualisation:
             plt.tight_layout()
             plt.show()
 
+    def compare_nudge(self, cmap="RdBu_r", figsize=(15, 6), percent=False):
+
+        stats = io.open_statistics(self.case)
+        initial_cond = io.open_initial_cond(self.case)
+
+        # get all variables that contain "_nudge" in their name
+        nudge_vars = [var for var in initial_cond.data_vars if "_nudge" in var]
+        if len(nudge_vars) == 0:
+            raise ValueError("No nudge variables found in initial condition file.")
+
+        # get all time coordinates in initial condition file
+        time_vars = [c for c in initial_cond.coords if "time" in c]
+        if len(time_vars) == 0:
+            raise ValueError("No time coordinate found in initial condition file.")
+
+        ic_time_values = [initial_cond[time_var].max() for time_var in time_vars]
+        min_time = int(np.nanmin([stats.time.max(), *ic_time_values]))
+
+        # subset to min time (apply to every time coord)
+        stats_sub = stats.sel(time=slice(0, min_time))
+        initial_cond_sub = initial_cond.sel({c: slice(0, min_time) for c in time_vars})
+
+        # interpolate initial conditions to stats times
+        interp_dict = {t: stats.time for t in time_vars}
+        initial_cond_sub_interp = initial_cond_sub.interp(
+            interp_dict,
+            kwargs={
+                "fill_value": "extrapolate"
+            },  # allow extrapolation because time values may have numerical differences
+        )
+
+        fig, axs = plt.subplots(ncols=len(nudge_vars), figsize=figsize, sharey=True)
+        for c, nudge_var in enumerate(nudge_vars):
+            stat_var = nudge_var.replace("_nudge", "")
+            values = stats_sub[stat_var] - initial_cond_sub_interp[nudge_var]
+
+            if percent:
+                values = 100 * values / initial_cond_sub_interp[nudge_var]
+                units = "%"
+            else:
+                units = stats[stat_var].attrs.get("units", "-")
+
+            vmax = np.nanquantile(np.abs(values), 0.99)
+            norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+            values.T.plot(
+                ax=axs[c],
+                cmap=cmap,
+                norm=norm,
+                cbar_kwargs={
+                    "label": f"Simulated - Nudged [{units}]",
+                    "orientation": "horizontal",
+                },
+            )
+
+        plt.tight_layout()
+        plt.show()
+
     def compare_wind_profiles(self, timestep: int):
 
         initial_cond = io.open_initial_cond(self.case)

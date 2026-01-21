@@ -22,6 +22,7 @@ import ucat
 
 import microhh_py.microhh_tools as mht
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
+import microhh_py.cross_to_nc as cross_to_nc
 
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
@@ -175,6 +176,7 @@ class PreProcessing:
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
+        self._check_source_list()
         self._check_buffer_height()
         self._check_surface_roughness_height()
 
@@ -317,35 +319,78 @@ class PreProcessing:
         """Check if the source position conflicts with the domain size."""
         if "source" in self.ini_file.groups:
             for coord in ["x", "y", "z"]:
-                source_ext = (
-                    self.ini_file["source"][f"source_{coord}0"]
-                    + 2 * self.ini_file["source"][f"sigma_{coord}"]
-                )
+                source_0 = np.atleast_1d(self.ini_file["source"][f"source_{coord}0"])
+                sigma = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
 
-                if source_ext > self.ini_file["grid"][f"{coord}size"]:
+                if len(source_0) != len(sigma):
                     raise ValueError(
-                        f"{coord}-positioning conflicts with the domain size."
+                        f"source_{coord}0 and sigma_{coord} must have the same length."
                     )
+
+                grid_size = float(self.ini_file["grid"][f"{coord}size"])
+
+                for s0, sig in zip(source_0, sigma):
+                    source_ext = s0 + 2 * sig
+                    if source_ext > grid_size:
+                        raise ValueError(
+                            f"{coord}-positioning conflicts with the domain size."
+                        )
 
     def _check_source_height(self):
         """Check if source height is greater than vertical resolution"""
         if "source" in self.ini_file.groups:
-            source_height = self.ini_file["source"]["source_z0"]
-            vert_grid_extent = self.ini_file["grid"]["zsize"]
-            vert_grid_n = self.ini_file["grid"]["ktot"]
+            source_heights = np.atleast_1d(self.ini_file["source"]["source_z0"])
+
+            vert_grid_extent = float(self.ini_file["grid"]["zsize"])
+            vert_grid_n = float(self.ini_file["grid"]["ktot"])
             vert_res = vert_grid_extent / vert_grid_n
-            if source_height < vert_res:
-                raise ValueError(
-                    f"Source height of {source_height}m "
-                    f"is smaller than vertical resolution of {vert_res}m"
-                )
+
+            for source_height in source_heights:
+                if source_height < vert_res:
+                    logger.warning(
+                        f"Source height of {source_height}m "
+                        f"is smaller than vertical resolution of {vert_res}m"
+                    )
+                    # raise ValueError(
+                    #     f"Source height of {source_height}m "
+                    #     f"is smaller than vertical resolution of {vert_res}m"
+                    # )
 
     def _check_source_sigma(self):
         """Check if the source std is greater than zero."""
         if "source" in self.ini_file.groups:
             for coord in ["x", "y", "z"]:
-                if self.ini_file["source"][f"sigma_{coord}"] == 0:
-                    raise ValueError(f"'sigma_{coord}' cannot be 0.")
+                sigmas = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+
+                for sigma in sigmas:
+                    if sigma == 0:
+                        raise ValueError(f"'sigma_{coord}' cannot be 0.")
+
+    def _check_source_list(self):
+        """Check if all required variables have the same length."""
+        if "source" in self.ini_file.groups:
+            sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
+            source_x0 = np.atleast_1d(self.ini_file["source"]["source_x0"])
+            source_y0 = np.atleast_1d(self.ini_file["source"]["source_y0"])
+            source_z0 = np.atleast_1d(self.ini_file["source"]["source_z0"])
+            sigma_x = np.atleast_1d(self.ini_file["source"]["sigma_x"])
+            sigma_y = np.atleast_1d(self.ini_file["source"]["sigma_y"])
+            sigma_z = np.atleast_1d(self.ini_file["source"]["sigma_z"])
+            strength = np.atleast_1d(self.ini_file["source"]["strength"])
+            swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
+
+            if not (
+                len(sourcelist)
+                == len(source_x0)
+                == len(source_y0)
+                == len(source_z0)
+                == len(sigma_x)
+                == len(sigma_y)
+                == len(sigma_z)
+                == len(strength)
+                == len(swvmr)
+            ):
+                raise ValueError("All source variables must have the same length.")
 
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
@@ -372,13 +417,13 @@ class PreProcessing:
                 if roughness_type in self.ini_file["boundary"]:
                     surface_roughness = self.ini_file["boundary"][roughness_type]
                     if surface_roughness >= lowest_grid_level:
-                        warnings.warn(
+                        logger.warning(
                             f"Surface roughness ({roughness_type} = {surface_roughness} m) "
                             f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
                             "This may cause the model to crash."
                         )
                     elif surface_roughness >= warning_threshold:
-                        warnings.warn(
+                        logger.warning(
                             f"Surface roughness ({roughness_type} = {surface_roughness} m) "
                             f"similar to the lowest grid level (={lowest_grid_level} m). "
                             "This may cause instability in the model."
@@ -415,8 +460,6 @@ class PostProcessing:
         precision: Literal["single", "double"] = "double",
         start_time=None,
         end_time=None,
-        to_unit: str = "kg m-2",
-        default_p_and_t: bool = False,
         method: Literal[
             "mean", "median", "height", "concentration_weighted"
         ] = "height",
@@ -468,7 +511,7 @@ class PostProcessing:
         if gases is None:
             gases = self.ini_file["fields"]["slist"]
         else:
-            gases = object_to_list(gas)
+            gases = np.atleast_1d(gas).tolist()
 
         vars = prognostic_vars + gases
 
@@ -489,19 +532,9 @@ class PostProcessing:
             end_time=end_time,
         )
 
-        for gas_name in gases:
-            gas_2D = self.convert_to_columns(
-                variable=gas_name,
-                to_unit=to_unit,
-                default_p_and_t=default_p_and_t,
-                save=save,
-                overwrite=overwrite,
-                chunks=chunks,
-            )
-
         if profile_gas is None and method == "concentration_weighted":
             profile_gas = gases[0]
-            warnings.warn(
+            logger.warning(
                 f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
             )
 
@@ -543,7 +576,7 @@ class PostProcessing:
             end_time (int, optional. Default: None):
                 End time in s of the data to process.
         """
-        vars = object_to_list(vars)
+        vars = np.atleast_1d(vars).tolist()
         vars_to_process = vars.copy()
 
         if start_time is None:
@@ -587,6 +620,120 @@ class PostProcessing:
                     starttime=start_time,
                     endtime=end_time,
                     sampletime=sample_time,
+                )
+
+    def create_cross_output(
+        self,
+        vars: Union[str, list],
+        modes: list = None,
+        indexes: list = None,
+        overwrite: bool = False,
+        precision: Literal["single", "double"] = "single",
+        start_time=None,
+        end_time=None,
+        sample_time=None,
+        nocompression: bool = False,
+        nprocs: int = None,
+        py_file_path: Union[str, Path] = None,
+    ):
+        """Create cross-section netCDF files for the variables specified.
+
+        Args:
+            vars (Union[str, list]):
+                Modelled variables which should be processed.
+                E.g. ["u", "v", "w", "ch4", "qt", "th"]
+            modes (list, optional):
+                Cross-section modes to process. Available options are "xy", "xz", "yz".
+                If not provided, modes are determined from the .ini file.
+            indexes (list, optional):
+                Indices of the cross-sections to process. Defaults to None.
+            overwrite (bool, optional. Default: False):
+                Specify if existing files should be overwritten.
+            precision (str, optional. Default: "single"):
+                Precision used for the created .nc file.
+            start_time (int, optional. Default: None):
+                Start time in s of the data to process.
+            end_time (int, optional. Default: None):
+                End time in s of the data to process.
+            sample_time (int, optional. Default: None):
+                Sample time in s of the cross-section output.
+            nocompression (bool, optional. Default: False):
+                Disable compression in the netCDF file.
+            nprocs (int, optional. Default: None):
+                Number of worker processes for parallel processing.
+            py_file_path (Union[str, Path], optional):
+                Path to the directory containing the cross_to_nc.py file.
+                If None, runs as module.
+        """
+        vars = np.atleast_1d(vars).tolist()
+        vars_to_process = vars.copy()
+
+        if start_time is None:
+            start_time = self.ini_file["time"]["starttime"]
+        if end_time is None:
+            end_time = self.ini_file["time"]["endtime"]
+        if sample_time is None:
+            sample_time = self.ini_file["cross"]["sampletime"]
+
+        # Determine modes to check for existing files
+        cross_modes = ["xy", "xz", "yz"]
+        if modes is None:
+            modes_to_check = list(self.ini_file["cross"].keys() & set(cross_modes))
+        else:
+            modes_to_check = modes
+
+        for var in vars:
+            var_exists = False
+            for mode in modes_to_check:
+                nc_file_path = Path(self.file_directory, f"{var}.{mode}.nc")
+                if nc_file_path.exists():
+                    if overwrite:
+                        os.remove(nc_file_path)
+                        logger.info(f"Overwriting {nc_file_path}")
+                    else:
+                        var_exists = True
+                        break
+            if var_exists and var in vars_to_process:
+                vars_to_process.remove(var)
+
+        if py_file_path is not None:
+            # run as python script
+            if vars_to_process:
+                post_command = (
+                    f"{sys.executable} cross_to_nc.py -d {self.file_directory} "
+                    f"-f {self.name}.ini -v {' '.join(vars_to_process)} "
+                    f"-p {precision} -t0 {start_time} -t1 {end_time} "
+                    f"-tstep {sample_time}"
+                )
+                if modes is not None:
+                    post_command += f" -m {' '.join(modes)}"
+                if indexes is not None:
+                    post_command += f" -x {' '.join(map(str, indexes))}"
+                if nocompression:
+                    post_command += " -c"
+                if nprocs is not None:
+                    post_command += f" -n {nprocs}"
+
+                subprocess.run(
+                    post_command,
+                    shell=True,
+                    cwd=py_file_path,
+                )
+        else:
+            # run as module
+            if vars_to_process:
+                cross_to_nc.run(
+                    directory=self.file_directory,
+                    filename=f"{self.name}.ini",
+                    vars=vars_to_process,
+                    modes=modes,
+                    indexes=indexes,
+                    precision=precision,
+                    starttime=start_time,
+                    endtime=end_time,
+                    sampletime=sample_time,
+                    nocompression=nocompression,
+                    nprocs=nprocs,
                 )
 
     def move_to_store(
@@ -636,7 +783,7 @@ class PostProcessing:
             )
 
         if move_var_files:
-            vars = object_to_list(vars)
+            vars = np.atleast_1d(vars).tolist()
             for var in vars:
                 pattern = f"{var}.nc"
                 self.move_pattern_to_store(
@@ -747,8 +894,16 @@ class PostProcessing:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
+        swvmr = np.all(self.ini_file["source"]["swvmr"])
+        if swvmr:
+            unit = "mol mol-1"
+            prefix = "volume"
+        else:
+            unit = "kg kg-1"
+            prefix = "mass"
+
         variables = {
-            var: (f"{var} mixing ratio", "mol mol-1") for var in gas_mass.keys()
+            var: (f"{var} {prefix} mixing ratio", unit) for var in gas_mass.keys()
         }
         variables.update(
             {
@@ -863,7 +1018,7 @@ class PostProcessing:
             xr.Dataset:
                 Dataset containing the combined variables.
         """
-        vars = object_to_list(vars)
+        vars = np.atleast_1d(vars).tolist()
         datasets = [] if data is None else [data]
 
         for var in vars:
@@ -933,84 +1088,6 @@ class PostProcessing:
                 return dim
 
         return None
-
-    def convert_to_columns(
-        self,
-        variable: str,
-        to_unit: str,
-        default_p_and_t: bool = True,
-        save: bool = True,
-        overwrite: bool = False,
-        chunks: Union[str, dict] = None,
-    ) -> xr.Dataset:
-        """Convert 3D MicroHH model output to vertically integrated columns.
-        Assumes that the vertical dimension is in units m.
-
-        Args:
-            variable (str):
-                Variable which should be vertically integrated.
-            to_unit (str):
-                Target unit of the columns.
-            default_p_and_t (bool. Default: False):
-                Indicate if the standard values for pressure and temperature should
-                be used to convert mixing ratios to concentrations or if the
-                modelled pressure and temperature should be used.
-            save (bool. Default: True):
-                Indicate if the created file should be saved.
-            overwrite (bool. Default: False):
-                Indicate if an existing file should be overwritten.
-
-        Returns:
-            xr.Dataset: Vertically integrated trace gas dataset.
-        """
-
-        # read in file if it exists:
-        file_path = Path(self.file_directory, f"{variable.lower()}_2D.nc")
-        if file_path.exists():
-            if overwrite:
-                os.remove(file_path)
-                logger.info(f"Overwriting {file_path}")
-            else:
-                return io.open_microhh_nc(
-                    case=self.case, variable=variable, chunks=chunks
-                )
-
-        data = self.open_3d_prognostic_variable(variable.lower(), chunks=chunks)
-
-        to_unit = ucat.format_unit(to_unit, sep=" ")
-        volume_unit = ucat.col_unit2vol_unit(to_unit)
-
-        variable = variable.upper()
-
-        # convert to correct volumentric unit first.
-        # default MicroHH output is mol mol-1
-        # use default pressure and temperature for computational efficiency
-        if default_p_and_t:
-            data[variable] = ucat.convert_columns(
-                data[variable],
-                from_unit=data[variable].attrs.get("units", None),
-                to_unit=volume_unit,
-                molar_mass=variable,
-            )
-        else:
-            data = self.convert_to_concentration(data, variable, volume_unit)
-
-        # integrate vertically
-        data_2D = data.integrate(coord="z")
-
-        # adjust units due to integration
-        data_2D[variable].attrs["units"] = ucat.format_unit(to_unit, sep=" ")
-        data_2D[variable].attrs[
-            "description"
-        ] = f"vertically integrated {variable} columns"
-
-        # remove other variables
-        # data_2D = data_2D[variable]
-
-        if save:
-            data_2D.to_netcdf(file_path)
-
-        return data_2D
 
     def add_gaussian_noise(
         self, data: xr.Dataset, var: str, std: float, noise_units: str
@@ -1127,7 +1204,7 @@ class PostProcessing:
         """
 
         source_list = self.ini_file["source"]["sourcelist"]
-        nr_sources = len(object_to_list(source_list))
+        nr_sources = len(source_list)
 
         source_names = (
             source_names or source_labels or [f"source{i+1}" for i in range(nr_sources)]
@@ -1144,38 +1221,32 @@ class PostProcessing:
             source_diameter = np.full(nr_sources, 5 * pixel_size)  # in m
 
         data = {
-            "lon": (["source"], np.array(object_to_list(lon), dtype=float)),
-            "lat": (["source"], np.array(object_to_list(lat), dtype=float)),
+            "lon": (["source"], np.array(lon, dtype=float)),
+            "lat": (["source"], np.array(lat, dtype=float)),
             "source_x0": (
                 ["source"],
-                np.array(
-                    object_to_list(self.ini_file["source"]["source_x0"]), dtype=float
-                ),
+                np.array((self.ini_file["source"]["source_x0"]), dtype=float),
             ),
             "source_y0": (
                 ["source"],
-                np.array(
-                    object_to_list(self.ini_file["source"]["source_y0"]), dtype=float
-                ),
+                np.array(self.ini_file["source"]["source_y0"], dtype=float),
             ),
             "source_z0": (
                 ["source"],
-                np.array(
-                    object_to_list(self.ini_file["source"]["source_z0"]), dtype=float
-                ),
+                np.array(self.ini_file["source"]["source_z0"], dtype=float),
             ),
             "label": (
                 ["source"],
-                np.array(object_to_list(source_labels), dtype=object),
+                np.array(source_labels, dtype=object),
             ),
             "diameter": (
                 ["source"],
-                np.array(object_to_list(source_diameter), dtype=float),
+                np.array(source_diameter, dtype=float),
             ),
             "strength": (["source"], self.model_emissions_to_kg_per_h()),
         }
 
-        coords = {"source": np.array(object_to_list(source_names), dtype=object)}
+        coords = {"source": np.array(source_names, dtype=object)}
 
         sources = xr.Dataset(data, coords=coords)
         sources.lon.attrs["units"] = "longitude of source"
@@ -1358,16 +1429,29 @@ class PostProcessing:
         Returns:
             np.array: Emitted quantities in kg/h
         """
-        sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
-        swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
-        strength = np.atleast_1d(self.ini_file["source"]["strength"])
+        sourcelist = np.array(self.ini_file["source"]["sourcelist"])
+        swvmr = np.array(self.ini_file["source"]["swvmr"])
+        strength = np.array(self.ini_file["source"]["strength"])
 
-        molar_mass = np.array([gas_mass[gas] for gas in sourcelist])
+        # check if all sources emit the same gas
+        unique_sourcelist = np.unique(sourcelist)
+        if len(unique_sourcelist) > 1:
+            raise ValueError(
+                "Emissions can only be converted to kg/h if all sources "
+                "emit the same gas."
+            )
 
         if all(swvmr):  # it true, units are kmol s-1
-            strength *= molar_mass * 60**2  # convert to kg/h
-        else:  # units are kg kg s-1, seems to be an error
-            strength = np.full(len(swvmr), np.nan)
+            from_unit = "kmol s-1"
+        else:  # units are kg s-1
+            from_unit = "kg s-1"
+
+        strength = ucat.convert_mass_per_time_unit(
+            strength,
+            from_unit=from_unit,
+            to_unit="kg h-1",
+            gas_mass=unique_sourcelist[0].lower(),
+        )
 
         return strength
 
@@ -1576,15 +1660,14 @@ class PostProcessing:
         dx = xsize / itot
         dy = ysize / jtot
 
-        scalars = self.case.ini_file["source"]["sourcelist"]
-        scalars = object_to_list(scalars)
+        scalars = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
         strength = np.array(self.case.ini_file["source"]["strength"])
 
         time_range = list(
             range(
                 0,
-                self.case.ini_file["time"]["endtime"] + 1,
-                self.case.ini_file["time"]["savetime"],
+                int(self.case.ini_file["time"]["endtime"] + 1),
+                int(self.case.ini_file["time"]["savetime"]),
             )
         )
 
@@ -1601,8 +1684,7 @@ class PostProcessing:
             return mass_array
 
         def read_mass_from_netcdf(scalar, time_range):
-            nc_path = Path(self.case.file_directory) / f"{scalar}.nc"
-            ds = xr.open_dataset(nc_path)
+            ds = io.open_microhh_nc(self.case, variable=scalar)
             # Assume variable name matches scalar, dimensions (time, z, y, x)
             arr = ds[scalar].values
             mass_array = []
@@ -1673,6 +1755,27 @@ class PostProcessing:
 def object_to_list(var) -> list:
     if var is None:
         raise ValueError("Input should not be 'None'")
+    if isinstance(var, str):
+        # parse comma separated string
+        var = [s.strip() for s in var.split(",")]
+
+        # convert to numeric if possible
+        # Try converting to numbers
+        converted_items = []
+        for item in var:
+            try:
+                # Try integer first
+                converted_items.append(int(item))
+            except ValueError:
+                try:
+                    # Try float if int fails
+                    converted_items.append(float(item))
+                except ValueError:
+                    # Keep as string if both fail
+                    converted_items.append(item)
+
+        return converted_items
+
     if isinstance(var, xr.DataArray):
         var = var.values.tolist()
     elif isinstance(var, np.ndarray):
@@ -1680,6 +1783,35 @@ def object_to_list(var) -> list:
     elif not isinstance(var, list):
         var = [var]
     return var
+
+from typing import Iterable, Union
+from decimal import Decimal, InvalidOperation
+import numpy as np
+
+
+def to_cs_list(lst: Union[list, np.ndarray], n: int = 1) -> str:
+    """
+    From Python iterable to comma separated string.
+    Handles float precision artifacts (e.g. 209.20000000000002 -> 209.2)
+    while preserving small numbers (e.g. 0.00000123).
+    """
+
+    # Helper to clean individual items
+    def clean_fmt(x):
+        if isinstance(x, (float, np.floating)):
+            # :.15g keeps up to 15 significant digits.
+            return f"{x:.15g}"
+        return str(x)
+
+    # 1. Convert all items to clean strings
+    clean_items = [clean_fmt(x) for x in lst]
+
+    # 2. Repeat the list n times (as per your original logic)
+    # Using list multiplication is faster than a loop for string joining
+    repeated_items = clean_items * n
+
+    # 3. Join once (More efficient than string concatenation += in a loop)
+    return ",".join(repeated_items)
 
 
 def get_ini_dict_from_file(file_path: Union[str, Path]) -> dict:
