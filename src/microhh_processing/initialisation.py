@@ -157,8 +157,9 @@ class Case:
         if self.method == "default":
             case_path = Path(init_from)
             self._check_case_setup(case_path)
+            self._create_initial(case_path)
             self._copy_ini(case_path)
-            self._create_initial()
+            self._copy_initial(case_path)
         elif self.method == "interactive":
             self.ini_path.touch()
         elif self.method == "rerun":
@@ -183,15 +184,17 @@ class Case:
         self._check_required_files(case_path)
 
     def _check_required_files(self, case_path: Union[str, Path]):
-        """Check for the existence of {name}_input.py and {name}.ini files"""
-        input_py_path = Path(case_path, f"{self.name}_input.py")
-        ini_file_path = Path(case_path, f"{self.name}.ini")
+        """Check for the existence of {name}_input.py and {name}*.ini files"""
+        case_path = Path(case_path)
 
-        for required_file in [input_py_path, ini_file_path]:
-            if not required_file.exists():
-                raise FileNotFoundError(
-                    f"Required file '{required_file.name}' is missing"
-                )
+        input_py_path = case_path / f"{self.name}_input.py"
+        ini_files = list(case_path.glob(f"{self.name}*.ini"))
+
+        if not input_py_path.exists():
+            raise FileNotFoundError(f"Required file '{input_py_path.name}' is missing")
+
+        if not ini_files:
+            raise FileNotFoundError(f"No .ini file found matching '{self.name}*.ini'")
 
     def _copy_single_file(
         self,
@@ -216,7 +219,7 @@ class Case:
         """Provide .ini file based on the default method when initialising a case."""
         self._copy_single_file(
             case_path=case_path,
-            pattern="*.ini",
+            pattern=f"{self.name}.ini",
             new_filename=f"{self.name}.ini",
         )
 
@@ -247,22 +250,15 @@ class Case:
                 if item.is_file():
                     item.unlink()
 
-    def _create_initial(self):
+    def _create_initial(self, case_path: Union[str, Path]):
         """Create the initial conditions for a case.
         Uses the python script located in 'microhh/cases/{name}/'
         to create the initial conditions.
         """
-        py_script_path = Path(
-            "/users",
-            self.user,
-            "microhh",
-            "cases",
-            self.name,
-            f"{self.name}_input.py",
-        )
+        py_script_path = Path(case_path, f"{self.name}_input.py")
 
         if py_script_path.exists():
-            subprocess.run(["python", str(py_script_path)], cwd=self.scratch_path)
+            subprocess.run(["python", str(py_script_path)], cwd=case_path)
         else:
             logger.info(f"{py_script_path} not found.")
 
@@ -329,15 +325,19 @@ class Case:
             logger.info(f"{file_path} does not exist.")
 
 
-def compare_ini(case_path1, case_path2, ini_file1=None, ini_file2=None):
+def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
     """Compare the .ini file of this case with another case in a Git-diff style.
 
     Ignores reordering of groups or variables.
     Colors: Red for deletions/modifications (self), Green for additions/modifications (other).
 
     Args:
-        case2 (Case):
-            Case to compare with.
+        case_path1 (Union[str, Path]):
+            Path to the first case directory.
+        case_path2 (Union[str, Path]):
+            Path to the second case directory.
+    Returns:
+        None: Prints the differences to the console.
     """
     # ANSI Colors
     RED = "\033[91m"

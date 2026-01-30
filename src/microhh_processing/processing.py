@@ -711,7 +711,7 @@ class PostProcessing:
                     sampletime=sample_time,
                 )
 
-    def create_cross_output(
+    def create_2d_output(
         self,
         vars: Union[str, list],
         modes: list = None,

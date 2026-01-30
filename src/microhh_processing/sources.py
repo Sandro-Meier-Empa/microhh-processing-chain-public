@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta
 from typing import List, Literal, Union
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -16,13 +16,13 @@ def seconds_from_reference(start_time: str, reference_time: str) -> int:
     Returns:
         Number of seconds from reference_time to start_time
     """
-    ref = datetime.strptime(reference_time, "%H:%M:%S")
-    start = datetime.strptime(start_time, "%H:%M:%S")
-    
+    ref = pd.to_datetime(reference_time, format="%H:%M:%S")
+    start = pd.to_datetime(start_time, format="%H:%M:%S")
+
     # Handle case where start_time is on next day
     if start < ref:
-        start += timedelta(days=1)
-    
+        start += pd.Timedelta(days=1)
+
     delta = start - ref
     return int(delta.total_seconds())
 
@@ -36,7 +36,7 @@ def _round_to_quarter_hour(time_str: str) -> str:
     Returns:
         Rounded time string in format "HH:MM:SS"
     """
-    time_obj = datetime.strptime(time_str, "%H:%M:%S")
+    time_obj = pd.to_datetime(time_str, format="%H:%M:%S")
 
     # Get minutes and seconds
     total_seconds = time_obj.hour * 3600 + time_obj.minute * 60 + time_obj.second
@@ -50,8 +50,6 @@ def _round_to_quarter_hour(time_str: str) -> str:
     seconds = 0
 
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-from collections.abc import Iterable
 
 
 def round_to_quarter_hour(time_input):
@@ -67,28 +65,6 @@ def round_to_quarter_hour(time_input):
     raise TypeError("Input must be a time string or an iterable of time strings")
 
 
-# def create_time_profile(start_time: str, end_time: str, spacing: Literal["s", "min", "h"] = "min") -> np.ndarray:
-#     """
-#     Create a time profile array with specified spacing between start_time and end_time.
-#     """
-#     start = datetime.strptime(start_time, "%H:%M:%S")
-#     end = datetime.strptime(end_time, "%H:%M:%S")
-
-#     if end < start:
-#         raise ValueError("end_time must be after start_time")
-
-#     total_seconds = int((end - start).total_seconds()) + 1
-
-#     if spacing == "s":
-#         return np.arange(total_seconds, step=1)
-#     elif spacing == "min":
-#         return np.arange(0, total_seconds, step=60)
-#     elif spacing == "h":
-#         return np.arange(0, total_seconds, step=3600)
-#     else:
-#         raise ValueError("Invalid spacing value")
-
-
 def create_time_profile(start_time: str, end_time: str, spacing: str = "1min") -> np.ndarray:
     base_date = "2024-01-01"
     midnight = pd.to_datetime(f"{base_date} 00:00:00")
@@ -99,7 +75,7 @@ def create_time_profile(start_time: str, end_time: str, spacing: str = "1min") -
         raise ValueError(f"End time ({end_time}) must be after start time ({start_time})")
 
     try:
-        time_range = pd.date_range(start=midnight, end=end, freq=spacing)
+        time_range = pd.date_range(start=start, end=end, freq=spacing)
     except ValueError as e:
         raise ValueError(
             f"Invalid spacing format '{spacing}'. Use pandas formats like '1s', '5min', '1h'."
@@ -118,18 +94,22 @@ def create_strength_profiles(
     from_unit: str,
     to_unit: str,
     gas_mass: Union[float, str],
-    spacing: Literal["s", "min", "h"] = "min"
+    spacing: str = "1min",
 ):
     """
     Create strength profiles with 1-second ramp up/down for each time interval.
-    
+
     Args:
         start_times: List of start times in format "HH:MM:SS"
         end_times: List of end times in format "HH:MM:SS"
         strengths: List of strength values for each interval
-        reference_start: Reference start time in format "HH:MM:SS"
-        reference_end: Reference end time in format "HH:MM:SS"
-    
+        reference_start: Reference start time of the output time series in format "HH:MM:SS"
+        reference_end: Reference end time of the output time series in format "HH:MM:SS"
+        from_unit: Unit of the input strengths (e.g., "kg/s", "kmol/s")
+        to_unit: Desired unit for the output strengths (e.g., "kg/s", "kmol/s")
+        gas_mass: Molecular mass of the gas (float) or gas name (str) for ucat conversion
+        spacing: Time spacing for the output time profile
+
     Returns:
         List of strength profiles, one for each interval
     """
@@ -142,8 +122,8 @@ def create_strength_profiles(
     )
 
     # Calculate total duration in seconds
-    ref_start = datetime.strptime(reference_start, "%H:%M:%S")
-    ref_end = datetime.strptime(reference_end, "%H:%M:%S")
+    ref_start = pd.to_datetime(reference_start, format="%H:%M:%S")
+    ref_end = pd.to_datetime(reference_end, format="%H:%M:%S")
 
     if ref_end < ref_start:
         raise ValueError("reference_end must be after reference_start")
@@ -159,8 +139,8 @@ def create_strength_profiles(
         if end_time < start_time:
             raise ValueError("end_time must be after start_time")
 
-        start_sec = seconds_from_reference(start_time, reference_start)
-        end_sec = seconds_from_reference(end_time, reference_start)
+        start_sec = seconds_from_reference(start_time, "00:00:00")
+        end_sec = seconds_from_reference(end_time, "00:00:00")
 
         result = np.where((time_profile >= start_sec) & (time_profile <= end_sec), strength, 0)
         results.append(result)
