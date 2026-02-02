@@ -748,7 +748,20 @@ class VariableViewer:
             # set title
             self.ax.set_title(self._get_title())
 
+            # add pixel value on hover
+            self.ax.format_coord = self._format_coord
+
             plt.show()
+
+    def _format_coord(self, x, y):
+        """Custom formatter to show x, y, and the data value."""
+        try:
+            data = self.data[self.variable].isel(time=self.time_slider.value)
+            val = data.sel(x=x, y=y, method="nearest").values
+
+            return f"x={x:.1f}, y={y:.1f}, val={val:.3g}"
+        except Exception:
+            return f"x={x:.1f}, y={y:.1f}"
 
     def _handle_cbar(self):
         """Handle fixed colorbar limits."""
