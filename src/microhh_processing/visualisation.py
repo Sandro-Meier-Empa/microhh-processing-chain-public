@@ -212,7 +212,7 @@ class Visualisation:
         Plot the prognostic variables
         """
         no_data = True if data is None else False
-        variables = proc.object_to_list(variables)
+        variables = misc.object_to_list(variables)
         time_factor = self._get_time_factor(time_format)
 
         # read in initial conditions
@@ -973,8 +973,8 @@ def plot_case_comparison(
     figsize : tuple[int, int], optional
         Figure size passed to `plt.subplots`.
     """
-    cases = proc.object_to_list(cases)
-    variables = proc.object_to_list(variables)
+    cases = misc.object_to_list(cases)
+    variables = misc.object_to_list(variables)
 
     # read in stats from all cases
     case_stats = [io.open_statistics(case) for case in cases]

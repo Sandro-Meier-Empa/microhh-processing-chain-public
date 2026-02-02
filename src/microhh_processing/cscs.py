@@ -11,6 +11,8 @@ from io import StringIO
 import pandas as pd
 import numpy as np
 
+import microhh_processing.misc as misc
+
 logger = logging.getLogger(__name__)
 
 class print_colors:
@@ -285,9 +287,7 @@ class AlpsSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        import microhh_processing.processing as proc_pc
-
-        commands = proc_pc.object_to_list(commands)
+        commands = misc.object_to_list(commands)
 
         multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
         constraint = "mc" if self.processor == "cpu" else "gpu"

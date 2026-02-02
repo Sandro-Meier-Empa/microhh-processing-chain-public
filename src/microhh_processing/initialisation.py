@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Union, Literal
 
 import netCDF4 as nc4
+import pandas as pd
 import xarray as xr
 import numpy as np
 
@@ -370,6 +372,75 @@ class Case:
             io.open_in_vscode(file_path)
         else:
             logger.info(f"{file_path} does not exist.")
+
+    def get_benchmark(self, save: bool = False) -> dict:
+        """Get benchmark information from the .out file of the case.
+
+        Args:
+            save (bool, optional. Default: False):
+                Specify if the benchmark information should be saved
+                as a .json file in the case directory.
+
+        Returns:
+            dict: A dictionary containing the benchmark information.
+        """
+        benchmark = {}
+
+        simulated_time = self._get_simulated_time()
+
+        # get setup from ini file
+        itot = self.ini_file["grid"]["itot"]
+        jtot = self.ini_file["grid"]["jtot"]
+        ktot = self.ini_file["grid"]["ktot"]
+
+        xsize = self.ini_file["grid"]["xsize"]
+        ysize = self.ini_file["grid"]["ysize"]
+        zsize = self.ini_file["grid"]["zsize"]
+
+        # get saccing info
+        info = cscs.get_sacct_info(self.job_id)
+
+        # get first row of info
+        info = info.iloc[0]
+        nnodes = info["NNodes"]
+        ncpus = info["NCPUS"]
+        elapsed = info["Elapsed"]
+
+        benchmark["itot"] = itot
+        benchmark["jtot"] = jtot
+        benchmark["ktot"] = ktot
+        benchmark["dx"] = xsize / itot
+        benchmark["dy"] = ysize / jtot
+        benchmark["dz"] = zsize / ktot
+
+        benchmark["simulated_time_s"] = simulated_time
+        benchmark["elapsed_time"] = elapsed
+        benchmark["nnodes"] = int(nnodes)
+        benchmark["ncpus"] = int(ncpus)
+
+        if save:
+            # Save benchmark information as a .json file
+            json_file_path = self.file_directory / f"{self.name}_benchmark.json"
+            with open(json_file_path, "w") as f:
+                json.dump(benchmark, f, indent=4)
+
+        return benchmark
+
+    def _get_simulated_time(self) -> float:
+        """Get the total simulated time from the .out file of the case.
+
+        Returns:
+            float: Total simulated time in seconds.
+        """
+        out_file_path = self.file_directory / f"{self.name}.out"
+
+        if not out_file_path.exists():
+            raise FileNotFoundError(f"{out_file_path} does not exist.")
+
+        df = pd.read_csv(out_file_path, sep=r"\s+")
+        last_time_value = df["TIME"].values[-1]
+
+        return float(last_time_value)
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:

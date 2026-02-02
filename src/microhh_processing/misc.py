@@ -8,6 +8,39 @@ from pathlib import Path
 from typing import Union, Literal, Optional, Tuple
 
 
+def object_to_list(var) -> list:
+    if var is None:
+        raise ValueError("Input should not be 'None'")
+    if isinstance(var, str):
+        # parse comma separated string
+        var = [s.strip() for s in var.split(",")]
+
+        # convert to numeric if possible
+        # Try converting to numbers
+        converted_items = []
+        for item in var:
+            try:
+                # Try integer first
+                converted_items.append(int(item))
+            except ValueError:
+                try:
+                    # Try float if int fails
+                    converted_items.append(float(item))
+                except ValueError:
+                    # Keep as string if both fail
+                    converted_items.append(item)
+
+        return converted_items
+
+    if isinstance(var, xr.DataArray):
+        var = var.values.tolist()
+    elif isinstance(var, np.ndarray):
+        var = var.tolist()
+    elif not isinstance(var, list):
+        var = [var]
+    return var
+
+
 def calculate_coriolis_force(lat: float) -> float:
     """Calculate the Coriolis force at a given latitude."""
     fc = 2 * 7.2921159e-5 * np.sin(np.radians(lat))
