@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import dask
 import pyproj
@@ -183,16 +184,34 @@ class PreProcessing:
             )
 
     def start_simulation(self, wait: bool = False):
-        self.job_id = cscs.execute_bash_script(self.job_file, wait)
+        """Start the MicroHH simulation by executing the bash script on CSCS Alps.
+        Check if another job is in the queue"""
+        running_jobs = cscs.jobs_in_queue()
+        jobs_in_debug_queue = False
+
+        # check if any other job is running in the debug queue
+        if not running_jobs.empty:
+            jobs_in_debug_queue = running_jobs[running_jobs["PARTITION"] == "debug"]
+
+        if self.alps_setup.partition == "debug" and jobs_in_debug_queue:
+            logger.warning(
+                "There are other jobs in the queue. "
+                "No new job will be started in the debug partition."
+            )
+
+            self.case.job_id = None
+            return
+
+        self.case.job_id = cscs.execute_bash_script(self.job_file, wait)
 
     def cancel_simulation(self):
         # check if self has attribute "job_id"
         if not hasattr(self, "job_id"):
             logger.info("Case has not been submitted yet.")
 
-        if self.job_id is not None:
-            subprocess.run(["scancel", str(self.job_id)])
-            logger.info(f"Cancelling simulation {self.job_id}")
+        if self.case.job_id is not None:
+            subprocess.run(["scancel", str(self.case.job_id)])
+            logger.info(f"Cancelling simulation {self.case.job_id}")
 
     def create_run_script(
         self, overwrite: bool = False, mode: Literal["run", "rerun"] = "run"
@@ -419,20 +438,32 @@ class PreProcessing:
                         f"Source height of {source_height}m "
                         f"is smaller than vertical resolution of {vert_res}m"
                     )
-                    # raise ValueError(
-                    #     f"Source height of {source_height}m "
-                    #     f"is smaller than vertical resolution of {vert_res}m"
-                    # )
 
     def _check_source_sigma(self):
-        """Check if the source std is greater than zero."""
+        """Check if the source std is valid.
+        It must be >0 and between grid size/4 and grid size/2 since the source is
+        simulated within 4*sigma."""
+        coords = ["x", "y", "z"]
+        cells = ["itot", "jtot", "ktot"]
+
         if "source" in self.ini_file.groups:
-            for coord in ["x", "y", "z"]:
+            for coord, cell in zip(coords, cells):
                 sigmas = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+                res = float(self.ini_file["grid"][f"{coord}size"]) / float(
+                    self.ini_file["grid"][cell]
+                )
 
                 for sigma in sigmas:
-                    if sigma == 0:
-                        raise ValueError(f"'sigma_{coord}' cannot be 0.")
+                    # check if sigma is zero
+                    if sigma <= 0:
+                        raise ValueError(f"'sigma_{coord}' cannot be <0.")
+
+                    # check if sigma is >= grid size/4 to grid size/2
+                    if not (res / 4 <= sigma <= res / 2):
+                        logger.warning(
+                            f"'sigma_{coord}' must be between {res / 4} and {res / 2}. "
+                            f"With your current setup, it could be that the source is not simulated."
+                        )
 
     def _check_source_list(self):
         """Check if all required variables have the same length."""
@@ -1923,3 +1954,74 @@ def get_ini_dict_from_file(file_path: Union[str, Path]) -> dict:
     """
     ini_file = mht.Read_namelist(file_path)
     return ini_file.groups
+
+
+def get_benchmark(case, save: bool = False) -> dict:
+    """Get benchmark information from the .out file of the case.
+
+    Args:
+        save (bool, optional. Default: False):
+            Specify if the benchmark information should be saved
+            as a .json file in the case directory.
+
+    Returns:
+        dict: A dictionary containing the benchmark information.
+    """
+    benchmark = {}
+
+    simulated_time = _get_simulated_time(case)
+
+    # get setup from ini file
+    itot = case.ini_file["grid"]["itot"]
+    jtot = case.ini_file["grid"]["jtot"]
+    ktot = case.ini_file["grid"]["ktot"]
+
+    xsize = case.ini_file["grid"]["xsize"]
+    ysize = case.ini_file["grid"]["ysize"]
+    zsize = case.ini_file["grid"]["zsize"]
+
+    # get saccing info
+    info = cscs.get_sacct_info(case.job_id)
+
+    # get first row of info
+    info = info.iloc[0]
+    nnodes = info["NNodes"]
+    ncpus = info["NCPUS"]
+    elapsed = info["Elapsed"]
+
+    benchmark["itot"] = itot
+    benchmark["jtot"] = jtot
+    benchmark["ktot"] = ktot
+    benchmark["dx"] = xsize / itot
+    benchmark["dy"] = ysize / jtot
+    benchmark["dz"] = zsize / ktot
+
+    benchmark["simulated_time_s"] = simulated_time
+    benchmark["elapsed_time"] = elapsed
+    benchmark["nnodes"] = int(nnodes)
+    benchmark["ncpus"] = int(ncpus)
+
+    if save:
+        # Save benchmark information as a .json file
+        json_file_path = case.file_directory / f"{case.name}_benchmark.json"
+        with open(json_file_path, "w") as f:
+            json.dump(benchmark, f, indent=4)
+
+    return benchmark
+
+
+def _get_simulated_time(case) -> float:
+    """Get the total simulated time from the .out file of the case.
+
+    Returns:
+        float: Total simulated time in seconds.
+    """
+    out_file_path = case.file_directory / f"{case.name}.out"
+
+    if not out_file_path.exists():
+        raise FileNotFoundError(f"{out_file_path} does not exist.")
+
+    df = pd.read_csv(out_file_path, sep=r"\s+")
+    last_time_value = df["TIME"].values[-1]
+
+    return float(last_time_value)

@@ -25,6 +25,7 @@ import microhh_processing.misc as misc
 import microhh_processing.io as io
 import microhh_processing.wind as wind_proc
 
+import ddeq
 
 class Visualisation:
 
@@ -686,6 +687,7 @@ class VariableViewer:
         self._check_data_vars()
         self._check_data_shape()
         self._check_time_dim()
+        self._handle_vlim()
         self._create_widgets()
         self._init_plot()
         self._handle_cbar()
@@ -750,12 +752,6 @@ class VariableViewer:
 
     def _handle_cbar(self):
         """Handle fixed colorbar limits."""
-        if self.vmin is None:
-            self.vmin = np.nanquantile(self.data[self.variable].values, 0.001)
-
-        if self.vmax is None:
-            self.vmax = np.nanquantile(self.data[self.variable].values, 0.999)
-
         if self.fixed_cbar:
             data_min = self.vmin
             data_max = self.vmax
@@ -767,7 +763,9 @@ class VariableViewer:
             .isel({self.time_dim: self.time_slider.value})
             .values
         )
-        if self.time_format == "min":
+        if self.time_format == "s":
+            return f"Time: {time:.0f} {self.time_format}"
+        elif self.time_format == "min":
             time = time / 60
         elif self.time_format == "h":
             time = time / 3600
@@ -791,6 +789,26 @@ class VariableViewer:
 
         self.fig.canvas.draw_idle()
 
+    def _update_vlim(self, change: dict):
+        """Update the colorbar limits."""
+        vmin = self.vmin_slider.value
+        vmax = self.vmax_slider.value
+
+        self.mesh.set_clim(vmin, vmax)
+        self.fig.canvas.draw_idle()
+
+    def _handle_vlim(self):
+        if self.vmin is None:
+            self.vmin = np.nanquantile(self.data[self.variable].values, 0.001)
+
+        if self.vmax is None:
+            self.vmax = np.nanquantile(self.data[self.variable].values, 0.999)
+
+        self.data_min = np.nanmin(self.data[self.variable].values)
+        self.data_max = np.nanmax(self.data[self.variable].values)
+
+        self.vstep = (self.data_max - self.data_min) / 100
+
     def _create_widgets(self):
         self.time_slider = widgets.IntSlider(
             value=0,
@@ -801,11 +819,39 @@ class VariableViewer:
             continuous_update=True,
         )
 
+        self.vmin_slider = widgets.FloatSlider(
+            value=self.vmin,
+            min=self.data_min,
+            max=self.data_max,
+            step=self.vstep,
+            description="Min:",
+            continuous_update=True,
+        )
+        self.vmin_slider.readout_format = ddeq.gui_utils.determine_readout_format(
+            self.vstep
+        )
+
+        self.vmax_slider = widgets.FloatSlider(
+            value=self.vmax,
+            min=self.data_min,
+            max=self.data_max,
+            step=self.vstep,
+            description="Max:",
+            continuous_update=True,
+        )
+        self.vmax_slider.readout_format = ddeq.gui_utils.determine_readout_format(
+            self.vstep
+        )
+
     def _wrap_widgets(self):
-        self.ui = widgets.VBox([self.time_slider, self.fig_output])
+        vlim_box = widgets.VBox([self.vmin_slider, self.vmax_slider])
+        widget_box = widgets.HBox([self.time_slider, vlim_box])
+        self.ui = widgets.VBox([widget_box, self.fig_output])
 
     def _connect_events(self):
         self.time_slider.observe(self._update_plot, names="value")
+        self.vmin_slider.observe(self._update_vlim, names="value")
+        self.vmax_slider.observe(self._update_vlim, names="value")
 
     def display(self):
         """Display the variable."""

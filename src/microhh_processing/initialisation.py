@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import ls2d
 
 import microhh_processing.misc as misc
 import microhh_processing.io as io
+import microhh_processing.cscs as cscs
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,8 @@ class Case:
         self.name = name
         self.suffix = suffix
         self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
+        self.job_id = None
+        self.run_state = None
 
     # add method when printing case
     def __repr__(self):
@@ -64,15 +68,23 @@ class Case:
             with open(self.ini_path, "r") as f:
                 ini_content = f.read()
 
-        return (
+        case_str = (
             f"Case(\n"
             f"  name='{self.name}',\n"
             f"  suffix='{self.suffix}',\n"
             f"  path='{self.file_directory}'\n"
-            f"  ini_file=\n"
-            f"{ini_content}\n"
-            f")"
         )
+
+        if self.job_id is not None:
+            case_str += f"  job_id={self.job_id},\n"
+
+        if self.run_state is not None:
+            case_str += f"  run_state='{self.run_state}',\n"
+
+        if ini_content:
+            case_str += f"  ini_file=\n" f"{ini_content}\n" f")"
+
+        return case_str
 
     def _initialise(
         self,
@@ -104,6 +116,9 @@ class Case:
         self._handle_method(method, init_from, overwrite)
         self._handle_scratch_dir(overwrite)
         self._handle_running_method(init_from)
+
+        self.job_id = self.job_id if self.job_id is not None else self._get_job_id()
+        self.run_state = self._get_run_state()
 
     def _handle_method(
         self,
@@ -171,6 +186,38 @@ class Case:
                 f"{self.method} is not available. Use 'default', 'interactive' or 'rerun'."
             )
         self.ini_file = mht.Read_namelist(self.ini_path)
+
+    def _get_job_id(self) -> int:
+        """Look for the job ID in the run_microhh*.out file.
+
+        Returns:
+            int: Job ID of the running simulation.
+        """
+        out_files = list(Path(self.file_directory).glob("run_microhh*.out"))
+
+        if not out_files:
+            return None
+
+        for file in out_files:
+            file_name = file.name
+            job_id = int(re.search(r"\d+", file_name).group())
+
+        return job_id
+
+    def _get_run_state(self) -> str:
+        """Get run state of the case based on SLURM sacct information."""
+        if self.job_id is None:
+            return "NOT SUBMITTED"
+
+        sacct_info = cscs.get_sacct_info(self.job_id)
+
+        # filter sacct info for the specific job name
+        try:
+            sacct_info = sacct_info[sacct_info["JobName"] == "run_microhh"]
+        except KeyError:
+            return "UNKNOWN"
+
+        return sacct_info["State"].iloc[0]
 
     def _check_case_setup(self, case_path: Union[str, Path]):
         """Check if the case is set up.
@@ -469,6 +516,9 @@ def read_case(case_directory: Union[str, Path]) -> Case:
     case.file_directory = case_directory
     case.ini_path = Path(case.file_directory, f"{case.name}.ini")
 
+    case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
+    case.run_state = case._get_run_state()
+
     if not case.ini_path.exists():
         raise FileNotFoundError(
             f".ini file for case '{case.name}' does not exist in {case.file_directory}."
@@ -477,6 +527,26 @@ def read_case(case_directory: Union[str, Path]) -> Case:
     case.ini_file = mht.Read_namelist(case.ini_path)
 
     return case
+
+
+def delete_case(file_directory: Union[str, Path]) -> None:
+    """Delete a MicroHH case by removing its directory.
+
+    Args:
+        file_directory (Union[str, Path]):
+            Directory where the case is stored.
+    """
+    file_directory = Path(file_directory)
+
+    if not file_directory.exists():
+        raise FileNotFoundError(f"Case directory '{file_directory}' does not exist.")
+
+    user_input = input(
+        f"Are you sure you want to delete the case at {file_directory}? (y/n): "
+    )
+    if user_input.lower() == "y":
+        shutil.rmtree(file_directory)
+        logger.info(f"Deleted case at {file_directory}.")
 
 
 def interpolate_to_model_profile(
