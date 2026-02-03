@@ -111,7 +111,7 @@ def process_case(case_name, case_suffix, **kwargs):
     wind_integration = ["height"]
 
     wind_processing = wind_proc.WindProcessing(case)
-    post_processing = ch4_proc.PostProcessing(case)
+    post_processing = ch4_post.PostProcessing(case)
 
     sources = post_processing.create_sources_dataset(lat_zh, lon_zh)
 

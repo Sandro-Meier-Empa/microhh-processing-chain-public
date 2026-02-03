@@ -26,9 +26,9 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        import microhh_processing.processing as proc
+        import microhh_processing.postprocessing as post
 
-        self.post = proc.PostProcessing(case)
+        self.post = post.PostProcessing(case)
         self.file_directory = case.file_directory
 
     def create_wind_dataset(

@@ -1,9 +1,74 @@
 from typing import List, Literal, Union
 from collections.abc import Iterable
 
+import logging
+
 import numpy as np
 import pandas as pd
+
+
 import ucat
+import microhh_processing.initialisation as init
+import microhh_processing.io as io
+
+logger = logging.getLogger(__name__)
+
+
+def get_source_strength(case: init.Case, to_unit: str) -> np.ndarray:
+    swtimedep_strength = case.ini_file["source"]["swtimedep_strength"]
+
+    if swtimedep_strength:
+        source_strength_arr = _get_dynamic_source_strength(case)
+    else:
+        source_strength_arr = np.array(case.ini_file["source"]["strength"])
+
+    from_unit_arr, gas_mass_arr = _get_emission_units(case)
+
+    # convert to 1d arrays
+    source_strength_arr = np.atleast_1d(source_strength_arr)
+    from_unit_arr = np.atleast_1d(from_unit_arr)
+    gas_mass_arr = np.atleast_1d(gas_mass_arr)
+
+    source_strength_conv = []
+    for source_strength, from_unit, gas_mass in zip(
+        source_strength_arr, from_unit_arr, gas_mass_arr
+    ):
+        s = ucat.convert_mass_per_time_unit(
+            source_strength, from_unit=from_unit, to_unit=to_unit, gas_mass=gas_mass
+        )
+        source_strength_conv.append(s)
+
+    return np.array(source_strength_conv)
+
+
+def _get_dynamic_source_strength(case: init.Case) -> np.ndarray:
+    # Load time-dependent strength data
+    initial_cond = io.open_initial_cond(case)
+
+    # get all data variables with "source_strength_*"
+    strength_vars = [
+        var for var in initial_cond.data_vars if var.startswith("source_strength_")
+    ]
+
+    if len(strength_vars) == 0:
+        raise ValueError(
+            "No time-dependent source strength data found in initial conditions."
+        )
+
+    return np.array(
+        [initial_cond[var].max(skipna=True).item() for var in strength_vars]
+    )
+
+
+def _get_emission_units(case: init.Case) -> np.ndarray:
+    swvmr_list = case.ini_file["source"]["swvmr"]
+    sourcelist_list = case.ini_file["source"]["sourcelist"]
+
+    from_unit = np.where(swvmr_list, "kmol/s", "kg/s")
+    gas_mass = np.where(swvmr_list, sourcelist_list, None)
+
+    return from_unit, gas_mass
+
 
 def seconds_from_reference(start_time: str, reference_time: str) -> int:
     """
@@ -25,45 +90,6 @@ def seconds_from_reference(start_time: str, reference_time: str) -> int:
 
     delta = start - ref
     return int(delta.total_seconds())
-
-def _round_to_quarter_hour(time_str: str) -> str:
-    """
-    Round a timestamp to the nearest quarter hour.
-    
-    Args:
-        time_str: Time string in format "HH:MM:SS"
-    
-    Returns:
-        Rounded time string in format "HH:MM:SS"
-    """
-    time_obj = pd.to_datetime(time_str, format="%H:%M:%S")
-
-    # Get minutes and seconds
-    total_seconds = time_obj.hour * 3600 + time_obj.minute * 60 + time_obj.second
-
-    # Round to nearest 15 minutes (900 seconds)
-    rounded_seconds = round(total_seconds / 900) * 900
-
-    # Convert back to time
-    hours = rounded_seconds // 3600
-    minutes = (rounded_seconds % 3600) // 60
-    seconds = 0
-
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def round_to_quarter_hour(time_input):
-    """
-    Apply _round_to_quarter_hour to a single string or an iterable of strings.
-    """
-    if isinstance(time_input, str):
-        return _round_to_quarter_hour(time_input)
-
-    if isinstance(time_input, Iterable):
-        return [_round_to_quarter_hour(t) for t in time_input]
-
-    raise TypeError("Input must be a time string or an iterable of time strings")
-
 
 def create_time_profile(start_time: str, end_time: str, spacing: str = "1min") -> np.ndarray:
     base_date = "2024-01-01"

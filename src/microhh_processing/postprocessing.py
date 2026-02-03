@@ -27,6 +27,7 @@ import microhh_processing.cscs as cscs
 import microhh_processing.wind as wind_proc
 import microhh_processing.misc as misc
 import microhh_processing.io as io
+import microhh_processing.sources as src
 
 logger = logging.getLogger(__name__)
 
@@ -784,7 +785,6 @@ class PostProcessing:
         lon: Union[list, np.ndarray],
         source_names: Union[list, np.ndarray] = None,
         source_labels: Union[list, np.ndarray] = None,
-        source_diameter: Union[list, np.ndarray] = None,
     ) -> xr.Dataset:
         """Create a sources dataset used for the plume detection and in 'ddeq'.
 
@@ -801,16 +801,12 @@ class PostProcessing:
                 List of names of the sources used for plotting.
                 If not specified, the sources will be numbered
                 starting with source1 etc.
-            source_diameter (Union[list, np.ndarray], optional. Default: None):
-                Diameter (in pixels) around the soruce which are considered
-                to assign a plume to a source. If not specified, 5 * pixel_size
-                is used.
 
         Returns:
             xr.Dataset: Dataset with source information.
         """
 
-        source_list = self.ini_file["source"]["sourcelist"]
+        source_list = np.atleast_1d(self.ini_file["source"]["sourcelist"])
         nr_sources = len(source_list)
 
         source_names = (
@@ -818,39 +814,47 @@ class PostProcessing:
         )
         source_labels = source_labels or source_names
 
-        if source_diameter is None:
-            pixel_size = np.max(
-                [
-                    self.ini_file["grid"]["xsize"] / self.ini_file["grid"]["itot"],
-                    self.ini_file["grid"]["ysize"] / self.ini_file["grid"]["jtot"],
-                ]
-            )
-            source_diameter = np.full(nr_sources, 5 * pixel_size)  # in m
+        sigma_x = np.array(self.ini_file["source"]["sigma_x"])
+        sigma_y = np.array(self.ini_file["source"]["sigma_y"])
+        source_diameter = np.maximum(sigma_x, sigma_y) * 4  # 4 sigma rule
 
         data = {
-            "lon": (["source"], np.array(lon, dtype=float)),
-            "lat": (["source"], np.array(lat, dtype=float)),
+            "lon": (["source"], np.atleast_1d(np.array(lon, dtype=float))),
+            "lat": (["source"], np.atleast_1d(np.array(lat, dtype=float))),
             "source_x0": (
                 ["source"],
-                np.array((self.ini_file["source"]["source_x0"]), dtype=float),
+                np.atleast_1d(
+                    np.array(self.ini_file["source"]["source_x0"], dtype=float)
+                ),
             ),
             "source_y0": (
                 ["source"],
-                np.array(self.ini_file["source"]["source_y0"], dtype=float),
+                np.atleast_1d(
+                    np.array(self.ini_file["source"]["source_y0"], dtype=float)
+                ),
             ),
             "source_z0": (
                 ["source"],
-                np.array(self.ini_file["source"]["source_z0"], dtype=float),
+                np.atleast_1d(
+                    np.array(self.ini_file["source"]["source_z0"], dtype=float)
+                ),
             ),
             "label": (
                 ["source"],
-                np.array(source_labels, dtype=object),
+                np.atleast_1d(np.array(source_labels, dtype=object)),
             ),
             "diameter": (
                 ["source"],
-                np.array(source_diameter, dtype=float),
+                np.atleast_1d(np.array(source_diameter, dtype=float)),
             ),
-            "strength": (["source"], self.model_emissions_to_kg_per_h()),
+            "strength": (
+                ["source"],
+                np.atleast_1d(
+                    np.array(
+                        src.get_source_strength(self.case, to_unit="kg/h"), dtype=float
+                    )
+                ),
+            ),
         }
 
         coords = {"source": np.array(source_names, dtype=object)}
@@ -904,16 +908,16 @@ class PostProcessing:
         """
 
         # if lat/lon is defined in .ini file: use these values to convert grid
-        if "lat" in self.ini_file["grid"] and source is None and sources is None:
-            lat = self.ini_file["grid"]["lat"]
-            lon = self.ini_file["grid"]["lon"]
-            grid_x = self.ini_file["grid"]["xsize"] / 2
-            grid_y = self.ini_file["grid"]["ysize"] / 2
+        if "lat" in self.ini_file["grid"] and source is None:
+            lat_ref = self.ini_file["grid"]["lat"]
+            lon_ref = self.ini_file["grid"]["lon"]
+            grid_x_ref = self.ini_file["grid"]["xsize"] / 2
+            grid_y_ref = self.ini_file["grid"]["ysize"] / 2
         elif source is not None:
-            lat = source.lat.values
-            lon = source.lon.values
-            grid_x = source.source_x0.values
-            grid_y = source.source_y0.values
+            lat_ref = source.lat.values
+            lon_ref = source.lon.values
+            grid_x_ref = source.source_x0.values
+            grid_y_ref = source.source_y0.values
         else:
             raise ValueError(
                 f"Provide 'lat' and 'lon' in the {self.name} "
@@ -921,21 +925,39 @@ class PostProcessing:
             )
 
         # convert coordinates to metric crs
-        transformer = pyproj.Transformer.from_crs(target_crs, microhh_crs)
-        x_o, y_o = transformer.transform(lat, lon)
+        transformer = pyproj.Transformer.from_crs(
+            target_crs, microhh_crs, always_xy=True
+        )
+        x_o, y_o = transformer.transform(lon_ref, lat_ref)
 
         # create 2D grid with x and y values
         xx, yy = np.meshgrid(data["x"], data["y"])
 
         # shift grid of x and y values so that the source or domain center
         # is at the location given by lat and lon
-        shifted_grid_x = xx - grid_x + x_o
-        shifted_grid_y = yy - grid_y + y_o
+        shifted_x = xx - grid_x_ref + x_o
+        shifted_y = yy - grid_y_ref + y_o
 
         # transform shifted grid to lat / lon
-        lat_grid, lon_grid = transformer.transform(
-            shifted_grid_x, shifted_grid_y, direction="INVERSE"
+        lon_grid, lat_grid = transformer.transform(
+            shifted_x, shifted_y, direction="INVERSE"
         )
+
+        # new_ds = data.copy()
+        # new_ds = new_ds.assign_coords(
+        #     {
+        #         "lat": (
+        #             ("y", "x"),
+        #             lat_grid,
+        #             {"units": "degrees_north", "standard_name": "latitude"},
+        #         ),
+        #         "lon": (
+        #             ("y", "x"),
+        #             lon_grid,
+        #             {"units": "degrees_east", "standard_name": "longitude"},
+        #         ),
+        #     }
+        # )
 
         time_attrs = {
             "long_name": "time [UTC]",
@@ -971,6 +993,9 @@ class PostProcessing:
         data = xr.Dataset(vars_to_include, coords=coords).drop_vars(["nrows", "nobs"])
 
         return data
+
+        # new_ds.rename({"y": "nrows", "x": "nobs"}, inplace=True)
+        # return new_ds
 
     def convert_microhh_timestep_to_date(
         self,
@@ -1016,7 +1041,9 @@ class PostProcessing:
             time_diff = pd.Timestamp(data["time"][0].values) - start_date
             data["time"] = data["time"] - time_diff
 
-        elif data["time"].dtype in ["int64", "float64"]:
+        elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
+            data["time"].dtype, np.floating
+        ):
             # convert time to timedelta
             data["time"] = pd.to_timedelta(data["time"], unit="s")
             # add Timedelta to the start date

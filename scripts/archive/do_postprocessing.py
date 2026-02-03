@@ -18,7 +18,7 @@ def process_case(case_name, case_suffix):
         location="scratch",
     )
 
-    post_processing = proc.PostProcessing(case)
+    post_processing = post.PostProcessing(case)
 
     try:
         post_processing.run_postprocessing(gas="ch4", height=10)

@@ -19,11 +19,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import ipywidgets as widgets
 
-import microhh_processing.processing as proc
+import microhh_processing.preprocessing as pre
+import microhh_processing.postprocessing as post
 import microhh_processing.initialisation as init
 import microhh_processing.misc as misc
 import microhh_processing.io as io
 import microhh_processing.wind as wind_proc
+import microhh_processing.sources as src
 
 import ddeq
 
@@ -49,7 +51,7 @@ class Visualisation:
         self.name_spec = case.name_spec
         self.file_directory = case.file_directory
 
-        self.post = proc.PostProcessing(self.case)
+        self.post = post.PostProcessing(self.case)
 
     def plot_initial_conditions(
         self, ncols: int = 4, figsize: tuple[int, int] = (15, 10)
@@ -507,7 +509,7 @@ class Visualisation:
 
         # Information about sources
         try:
-            source_strength = self.post.model_emissions_to_kg_per_h()
+            source_strength = src.get_source_strength(self.case, to_unit="kg/h")
             source_height = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
             if len(source_strength) > 1:
                 # Multiple sources

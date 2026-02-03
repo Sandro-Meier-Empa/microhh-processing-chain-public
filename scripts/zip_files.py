@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-
-import os
-import sys
 import argparse
 
-sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
-import processing as proc
-import initialisation as init
+from microhh_processing import initialisation as init
+from microhh_processing import postprocessing as post
 
 
 def process_case(case_name, case_suffix):
@@ -18,7 +14,7 @@ def process_case(case_name, case_suffix):
         location="scratch",
     )
 
-    post_processing = proc.PostProcessing(case)
+    post_processing = post.PostProcessing(case)
 
     try:
         post_processing.zip_grid_files(remove_files=True)
