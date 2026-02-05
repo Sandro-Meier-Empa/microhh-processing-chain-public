@@ -4,9 +4,11 @@ __all__ = [
     "io",
     "misc",
     "ml",
+    "plume",
     "postprocessing",
     "preprocessing",
     "sources",
+    "spatial",
     "visualisation",
     "wind",
 ]
@@ -17,9 +19,11 @@ from . import (
     io,
     misc,
     ml,
+    plume,
     postprocessing,
     preprocessing,
     sources,
+    spatial,
     visualisation,
     wind,
 )

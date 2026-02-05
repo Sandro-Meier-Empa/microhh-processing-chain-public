@@ -41,6 +41,37 @@ def object_to_list(var) -> list:
     return var
 
 
+def to_cs_list(lst: Union[list, np.ndarray], n: int = 1, ndecimals: int = None) -> str:
+    """
+    From Python iterable to comma separated string.
+    Handles float precision artifacts (e.g. 209.20000000000002 -> 209.2)
+    while preserving small numbers (e.g. 0.00000123).
+
+    Args:
+        lst: List or array of items to convert to comma-separated string.
+        n: Number of times to repeat the list (default is 1).
+    """
+
+    # Helper to clean individual items
+    def clean_fmt(x):
+        if isinstance(x, (float, np.floating)):
+            # :.15g keeps up to 15 significant digits.
+            if ndecimals is not None:
+                return f"{x:.{ndecimals}f}"
+            return f"{x:.15g}"
+        return str(x)
+
+    # 1. Convert all items to clean strings
+    clean_items = [clean_fmt(x) for x in lst]
+
+    # 2. Repeat the list n times (as per your original logic)
+    # Using list multiplication is faster than a loop for string joining
+    repeated_items = clean_items * n
+
+    # 3. Join once (More efficient than string concatenation += in a loop)
+    return ",".join(repeated_items)
+
+
 def calculate_coriolis_force(lat: float) -> float:
     """Calculate the Coriolis force at a given latitude."""
     fc = 2 * 7.2921159e-5 * np.sin(np.radians(lat))

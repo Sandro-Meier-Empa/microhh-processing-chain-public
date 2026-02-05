@@ -22,12 +22,13 @@ import microhh_py.microhh_tools as mht
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
 import microhh_py.cross_to_nc as cross_to_nc
 
-import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
-import microhh_processing.wind as wind_proc
-import microhh_processing.misc as misc
+import microhh_processing.initialisation as init
 import microhh_processing.io as io
+import microhh_processing.misc as misc
 import microhh_processing.sources as src
+import microhh_processing.spatial as spatial
+import microhh_processing.wind as wind_proc
 
 logger = logging.getLogger(__name__)
 
@@ -716,7 +717,6 @@ class PostProcessing:
         Returns:
             xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
         """
-        var = var.upper()
 
         # Create a deep copy of the dataset to avoid modifying the original in-place
         data_copy = data.copy(deep=True)
@@ -883,7 +883,7 @@ class PostProcessing:
         """Convert the modelled MicroHH grid into a lat/lon grid.
         If lat and lon are specified in the .ini file, these values are
         used as domain centres.
-        If 'source' and 'sources' are provided, the lat and lon of the source
+        If 'source' is provided, the lat and lon of the source
         is used to convert the grid such that the source is located at the
         latitude and longitude specified in the 'sources' dataset.
 
@@ -924,78 +924,69 @@ class PostProcessing:
                 f"file or 'source' and 'sources' as arguments"
             )
 
-        # convert coordinates to metric crs
-        transformer = pyproj.Transformer.from_crs(
-            target_crs, microhh_crs, always_xy=True
+        # Create domain
+        domain = spatial.Domain(
+            xsize=self.ini_file["grid"]["xsize"],
+            ysize=self.ini_file["grid"]["ysize"],
+            itot=self.ini_file["grid"]["itot"],
+            jtot=self.ini_file["grid"]["jtot"],
+            lon=lon_ref,
+            lat=lat_ref,
+            anchor=(grid_x_ref, grid_y_ref),
+            epsg_code=microhh_crs,
         )
-        x_o, y_o = transformer.transform(lon_ref, lat_ref)
-
-        # create 2D grid with x and y values
-        xx, yy = np.meshgrid(data["x"], data["y"])
-
-        # shift grid of x and y values so that the source or domain center
-        # is at the location given by lat and lon
-        shifted_x = xx - grid_x_ref + x_o
-        shifted_y = yy - grid_y_ref + y_o
-
-        # transform shifted grid to lat / lon
-        lon_grid, lat_grid = transformer.transform(
-            shifted_x, shifted_y, direction="INVERSE"
+        lon_grid, lat_grid = domain.to_lonlat(
+            data.x.values, data.y.values, meshgrid=True
         )
 
-        # new_ds = data.copy()
-        # new_ds = new_ds.assign_coords(
-        #     {
-        #         "lat": (
-        #             ("y", "x"),
-        #             lat_grid,
-        #             {"units": "degrees_north", "standard_name": "latitude"},
-        #         ),
-        #         "lon": (
-        #             ("y", "x"),
-        #             lon_grid,
-        #             {"units": "degrees_east", "standard_name": "longitude"},
-        #         ),
-        #     }
-        # )
+        data = self._rename_dims(data)
+        data = data.assign_coords(
+            lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
+        )
 
-        time_attrs = {
-            "long_name": "time [UTC]",
-        }
-        lon_attrs = {
-            "units": "degrees_east",
-            "standard_name": "longitude",
-            "long_name": "longitude",
-            "epsg": target_crs.split(":")[-1],
-        }
-        lat_attrs = {
-            "units": "degrees_north",
-            "standard_name": "latitude",
-            "long_name": "latitude",
-            "epsg": target_crs.split(":")[-1],
-        }
-
-        data = data.rename({"y": "nrows", "x": "nobs"})
-
-        # define the coordinates
-        coords = {
-            "time": (["time"], data.time.data, time_attrs),
-            "lon": (["nrows", "nobs"], lon_grid, lon_attrs),
-            "lat": (["nrows", "nobs"], lat_grid, lat_attrs),
-        }
-
-        # extract only the variables that are not a dimension
-        vars_to_include = {
-            var: data[var] for var in data.variables if var not in data.dims
-        }
-
-        # create the new dataset
-        data = xr.Dataset(vars_to_include, coords=coords).drop_vars(["nrows", "nobs"])
+        # drop nrows and nobs from data vars
+        data = data.drop_vars(["nrows", "nobs"])
 
         return data
 
-        # new_ds.rename({"y": "nrows", "x": "nobs"}, inplace=True)
-        # return new_ds
+    def _broadcast_coords_to_2d_grid(
+        self, data: xr.Dataset, coord_names: Tuple[str, str]
+    ) -> xr.Dataset:
+        """Broadcast 1D x and y coordinates to a 2D grid.
+
+        Args:
+            data (xr.Dataset):
+                Dataset with 1D x and y coordinates.
+
+        Returns:
+            xr.Dataset:
+                Dataset with 2D x and y coordinates.
+        """
+        # Create 2D grids for x and y
+        x_2d, y_2d = np.meshgrid(data[coord_names[0]], data[coord_names[1]])
+
+        # Assign the new 2D coordinates
+        data = data.assign_coords(x=(coord_names, x_2d), y=(coord_names, y_2d))
+
+        return data
+
+    def _rename_dims(
+        self, data: xr.Dataset, dim_mapping: dict = {"x": "nobs", "y": "nrows"}
+    ) -> xr.Dataset:
+        """Rename dimensions in the dataset based on the provided mapping.
+
+        Args:
+            data (xr.Dataset):
+                Dataset with dimensions to rename.
+            dim_mapping (dict):
+                Dictionary mapping old dimension names to new dimension names.
+
+        Returns:
+            xr.Dataset:
+                Dataset with renamed dimensions.
+        """
+        data = data.rename(dim_mapping)
+        return data
 
     def convert_microhh_timestep_to_date(
         self,
@@ -1027,7 +1018,7 @@ class PostProcessing:
                 f"in .ini file"
             )
         else:
-            start_date = start_date
+            pass
 
         # Check if start_date is a string and convert it to a Timestamp if necessary
         if isinstance(start_date, str):
@@ -1055,39 +1046,6 @@ class PostProcessing:
         data["time"].attrs = time_attrs
 
         return data
-
-    def model_emissions_to_kg_per_h(self) -> np.ndarray:
-        """
-        Convert the prescribed emissions from the .ini file to kg/h
-
-        Returns:
-            np.array: Emitted quantities in kg/h
-        """
-        sourcelist = np.array(self.ini_file["source"]["sourcelist"])
-        swvmr = np.array(self.ini_file["source"]["swvmr"])
-        strength = np.array(self.ini_file["source"]["strength"])
-
-        # check if all sources emit the same gas
-        unique_sourcelist = np.unique(sourcelist)
-        if len(unique_sourcelist) > 1:
-            raise ValueError(
-                "Emissions can only be converted to kg/h if all sources "
-                "emit the same gas."
-            )
-
-        if all(swvmr):  # it true, units are kmol s-1
-            from_unit = "kmol s-1"
-        else:  # units are kg s-1
-            from_unit = "kg s-1"
-
-        strength = ucat.convert_mass_per_time_unit(
-            strength,
-            from_unit=from_unit,
-            to_unit="kg h-1",
-            gas_mass=unique_sourcelist[0].lower(),
-        )
-
-        return strength
 
     def convert_to_concentration(
         self,
@@ -1347,21 +1305,6 @@ class PostProcessing:
                 raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
 
         return mass_dict
-
-    def case_get_sacct_info(self) -> pd.DataFrame:
-        """Get SLURM sacct information for the current case.
-
-        Returns:
-            pd.DataFrame: DataFrame with sacct information.
-        """
-        if self.case.job_id is None:
-            raise ValueError("No job_id found in the case.")
-
-        try:
-            df = cscs.get_sacct_info(self.case.job_id)
-            return df
-        except Exception as e:
-            raise RuntimeError(f"Error retrieving sacct information: {e}")
 
     def calculate_centerline_position(
         self,
