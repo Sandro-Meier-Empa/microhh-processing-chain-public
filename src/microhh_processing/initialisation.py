@@ -462,6 +462,15 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
     GREEN = "\033[92m"
     RESET = "\033[0m"
 
+    case_path1 = Path(case_path1)
+    case_path2 = Path(case_path2)
+
+    # get parent folder if a file path is provided
+    if case_path1.is_file():
+        case_path1 = case_path1.parent
+    if case_path2.is_file():
+        case_path2 = case_path2.parent
+
     case1 = read_case(case_path1)
     case2 = read_case(case_path2)
 
@@ -684,127 +693,3 @@ def interpolate_to_model_profile(
         model_var_profile = np.interp(model_profile, input_profile, variable_profile)
 
     return model_var_profile
-
-
-def write_netcdf_input(
-    name: str,
-    path: Union[str, Path],
-    float_type: str,
-    init_profiles: dict,
-    tdep_surface: dict = None,
-    tdep_ls: dict = None,
-    tdep_source: dict = None,
-    radiation: dict = None,
-    soil: dict = None,
-):
-    """
-    Function for writing the MicroHH NetCDF input
-
-    Args:
-        name (str): Name of the simulated case
-        path (Union[str, Path]): Path where the NetCDF file should be stored
-        float_type (str): Float type for the NetCDF file ('f4' or 'f8')
-        init_profiles (dict): Dictionary containing the initial profiles
-        tdep_surface (dict, optional): Dictionary containing the time dependent surface values
-        tdep_ls (dict, optional): Dictionary containing the time dependent atmospheric values
-        tdep_source (dict, optional): Dictionary containing the time dependent source values
-        radiation (dict, optional): Dictionary containing the radiation values
-        soil (dict, optional): Dictionary containing the soil values
-    """
-
-    def add_variable(nc_group, name, dims, data, float_type):
-        """
-        Add variable to NetCDF file (or group), and write data
-        """
-        if dims is None:
-            var = nc_group.createVariable(name, float_type)
-            var[:] = data
-        else:
-            var = nc_group.createVariable(name, float_type, dims)
-            var[:] = data[:]
-
-    def is_array(data):
-        """
-        Check if value if array or scalar
-        """
-        if isinstance(data, np.ndarray) or isinstance(data, xr.DataArray):
-            return True
-        return False
-
-    # Define new NetCDF file
-    fname = Path(path) / f"{name}_input.nc"
-
-    # Check if the file exists and remove it if yes
-    if fname.exists():
-        fname.unlink()
-
-    # Create a new NetCDF file
-    nc_file = nc4.Dataset(fname, mode="w", datamodel="NETCDF4")
-
-    # Create height dimension, and set height coordinate
-    nc_file.createDimension("z", init_profiles["z"].size)
-    add_variable(nc_file, "z", ("z"), init_profiles["z"], float_type)
-
-    # Create a group called "init" for the initial profiles.
-    nc_group_init = nc_file.createGroup("init")
-
-    # Set the initial profiles
-    for name, data in init_profiles.items():
-        # Switch between vector and scalar values
-        dims = "z" if is_array(data) else None
-        add_variable(nc_group_init, name, dims, data, float_type)
-
-    # Create a group called "timedep" for the time dependent input
-    if tdep_surface is not None or tdep_ls is not None or tdep_source is not None:
-        nc_group_timedep = nc_file.createGroup("timedep")
-
-    # Write the time dependent surface values
-    if tdep_surface is not None:
-        nc_group_timedep.createDimension(
-            "time_surface", tdep_surface["time_surface"].size
-        )
-
-        for name, data in tdep_surface.items():
-            add_variable(nc_group_timedep, name, ("time_surface"), data, float_type)
-
-    # Write the time dependent atmospheric values
-    if tdep_ls is not None:
-        nc_group_timedep.createDimension("time_ls", tdep_ls["time_ls"].size)
-
-        for name, data in tdep_ls.items():
-            dims = ("time_ls") if name == "time_ls" else ("time_ls", "z")
-            add_variable(nc_group_timedep, name, dims, data, float_type)
-
-    # Write the time dependent source values
-    if tdep_source is not None:
-        nc_group_timedep.createDimension("time_source", tdep_source["time_source"].size)
-
-        for name, data in tdep_source.items():
-            dims = ("time_source") if name == "time_source" else ("time_source",)
-            add_variable(nc_group_timedep, name, dims, data, float_type)
-
-    # Write the radiation values
-    if radiation is not None:
-        nc_group_rad = nc_file.createGroup("radiation")
-
-        nc_group_rad.createDimension("lay", radiation["p_lay"].size)
-        nc_group_rad.createDimension("lev", radiation["p_lev"].size)
-
-        for name, data in radiation.items():
-            # Switch between vector and scalar values
-            if not is_array(data):
-                dims = None
-            else:
-                dims = ("lay") if data.size == radiation["p_lay"].size else ("lev")
-
-            add_variable(nc_group_rad, name, dims, data, float_type)
-
-    # Write the soil values
-    if soil is not None:
-        nc_group_soil = nc_file.createGroup("soil")
-        nc_group_soil.createDimension("z", soil["z"].size)
-
-        for name, data in soil.items():
-            add_variable(nc_group_soil, name, "z", data, float_type)
-
-    nc_file.close()

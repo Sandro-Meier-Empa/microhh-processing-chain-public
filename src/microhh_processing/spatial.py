@@ -6,6 +6,7 @@ from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
 
 
 class Domain:
@@ -33,6 +34,10 @@ class Domain:
             ] = "lower left",
         epsg_code: str = None,
     ):
+        """Initialize the Domain object.
+        Adapted from https://github.com/microhh/microhhpy
+        """
+
         if epsg_code is None:
             epsg_code_str = get_epsg_from_pyproj(lat, lon)
             epsg_code = f"epsg:{epsg_code_str}"
@@ -48,6 +53,8 @@ class Domain:
 
         self.y = np.linspace(self.dy / 2, ysize - self.dy / 2, jtot)
         self.yh = np.linspace(0, ysize, jtot + 1)
+
+        self.xx, self.yy = np.meshgrid(self.x, self.y, indexing="xy")  # Meshgrid for centers
 
         # Handle Offsets
         self.ref_lon, self.ref_lat = lon, lat
@@ -128,7 +135,7 @@ class Domain:
 
     def plot(self, lon: Union[float, np.ndarray] = None, lat: Union[float, np.ndarray] = None, figsize: Tuple[int, int]= (10, 8)) -> None:
 
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()},)
 
         # Plot the reference point
         ax.plot(self.ref_lon, self.ref_lat, "ko", markersize=5, label="Reference Point")
@@ -146,9 +153,18 @@ class Domain:
         ax.set_xlabel("Longitude [°]")
         ax.set_ylabel("Latitude [°]")
         ax.legend(loc="upper right")
-        ax.grid(True)
+        
+        gl = ax.gridlines(
+            crs=ccrs.PlateCarree(),
+            draw_labels=True,
+            linewidth=0.8,
+            linestyle="--",
+            alpha=0.6,
+        )
+        gl.top_labels = False
+        gl.right_labels = False
 
-        plt.show()
+        return fig
 
 
 def get_epsg_from_pyproj(lat, lon):

@@ -253,6 +253,7 @@ class PreProcessing:
         self._check_source_list()
         self._check_buffer_height()
         self._check_surface_roughness_height()
+        self._check_sample_times()
 
     def _check_ini_content(self):
         """check if the .ini file is not empty"""
@@ -302,14 +303,9 @@ class PreProcessing:
 
     def _check_grid_order(self):
         """Check that the grid order matches the orders of the advection schemes."""
-        swspatial = self.ini_file["grid"].get("swspatialorder", None)
-        swpres = swadvec = None
-
-        if "pres" in self.ini_file.groups:
-            swpres = self.ini_file.get("pres", {}).get("swpres", None)
-
-        if "advec" in self.ini_file.groups:
-            swadvec = str(self.ini_file["advec"].get("swadvec", None))
+        swspatial = self.ini_file.get("grid", "swspatialorder", None)
+        swpres = self.ini_file.get("pres", "swpres", None)
+        swadvec = str(self.ini_file.get("advec", "swadvec", None))
 
         if swspatial is None:
             return
@@ -326,12 +322,10 @@ class PreProcessing:
 
     def _check_thermo(self):
         """Check if the thermo settings are valid."""
-        if "thermo" not in self.ini_file.groups:
-            return
 
-        swthermo = self.ini_file["thermo"].get("swthermo", None)
-        swbasestate = self.ini_file["thermo"].get("swbasestate", None)
-        thref0 = self.ini_file["thermo"].get("thref0", None)
+        swthermo = self.ini_file.get("thermo", "swthermo", None)
+        swbasestate = self.ini_file.get("thermo", "swbasestate", None)
+        thref0 = self.ini_file.get("thermo", "thref0", None)
 
         if swbasestate is None:
             return
@@ -345,7 +339,7 @@ class PreProcessing:
                     )
 
         elif swbasestate == "anelastic":
-            swspatial = self.ini_file["grid"].get("swspatialorder", None)
+            swspatial = self.ini_file.get("grid", "swspatialorder", None)
             if swspatial == 4:
                 raise ValueError(
                     "'swbasestate'='anelastic' is not supported for 'swspatialorder'=4"
@@ -358,73 +352,79 @@ class PreProcessing:
 
     def _check_forcing(self):
         """Check if the specified forcing is valid."""
-        if "force" in self.ini_file.groups:
-            force = self.ini_file["force"].get("swlspres", None)
+        force = self.ini_file.get("force", "swlspres", None)
+        fc = self.ini_file.get("force", "fc", None)
+        dpdx = self.ini_file.get("force", "dpdx", None)
 
-            if force == "geo":
-                fc = self.ini_file["force"].get("fc", None)
-                if fc is None or fc == 0:
-                    raise ValueError(
-                        "Coriolis parameter 'fc' must be specified and non-zero "
-                        "when using 'swlspres = geo' forcing."
-                    )
-            elif force == "dpdx":
-                dpdx = self.ini_file["force"].get("dpdx", None)
-                if dpdx is None:
-                    raise ValueError(
-                        "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
-                    )
-            elif force == "uflux":
-                uflux = self.ini_file["force"].get("uflux", None)
-                if uflux is None:
-                    raise ValueError(
-                        "'uflux' must be specified when using "
-                        "'swlspres = uflux' forcing."
-                    )
-            elif force == 0:
-                pass
-            else:
+        if force is None:
+            return
+        elif force == 0:
+            return
+        if force == "geo":
+            if fc is None or fc == 0:
                 raise ValueError(
-                    f"Invalid value for 'swlspres': {force}. "
-                    "Valid options are 'geo', 'dpdx', or 'uflux'."
+                    "Coriolis parameter 'fc' must be specified and non-zero "
+                    "when using 'swlspres = geo' forcing."
                 )
+        elif force == "dpdx":
+            dpdx = self.ini_file["force"].get("dpdx", None)
+            if dpdx is None:
+                raise ValueError(
+                    "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
+                )
+        elif force == "uflux":
+            uflux = self.ini_file["force"].get("uflux", None)
+            if uflux is None:
+                raise ValueError(
+                    "'uflux' must be specified when using "
+                    "'swlspres = uflux' forcing."
+                )
+        else:
+            raise ValueError(
+                f"Invalid value for 'swlspres': {force}. "
+                "Valid options are 'geo', 'dpdx', or 'uflux'."
+            )
 
     def _check_source_position(self):
         """Check if the source position conflicts with the domain size."""
-        if "source" in self.ini_file.groups:
-            for coord in ["x", "y", "z"]:
-                source_0 = np.atleast_1d(self.ini_file["source"][f"source_{coord}0"])
-                sigma = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+        if "source" not in self.ini_file.groups:
+            return
 
-                if len(source_0) != len(sigma):
+        for coord in ["x", "y", "z"]:
+            source_0 = np.atleast_1d(self.ini_file["source"][f"source_{coord}0"])
+            sigma = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+
+            if len(source_0) != len(sigma):
+                raise ValueError(
+                    f"source_{coord}0 and sigma_{coord} must have the same length."
+                )
+
+            grid_size = float(self.ini_file["grid"][f"{coord}size"])
+
+            for s0, sig in zip(source_0, sigma):
+                source_ext = s0 + 2 * sig
+                if source_ext > grid_size:
                     raise ValueError(
-                        f"source_{coord}0 and sigma_{coord} must have the same length."
+                        f"{coord}-positioning conflicts with the domain size."
                     )
-
-                grid_size = float(self.ini_file["grid"][f"{coord}size"])
-
-                for s0, sig in zip(source_0, sigma):
-                    source_ext = s0 + 2 * sig
-                    if source_ext > grid_size:
-                        raise ValueError(
-                            f"{coord}-positioning conflicts with the domain size."
-                        )
 
     def _check_source_height(self):
         """Check if source height is greater than vertical resolution"""
-        if "source" in self.ini_file.groups:
-            source_heights = np.atleast_1d(self.ini_file["source"]["source_z0"])
+        if "source" not in self.ini_file.groups:
+            return
+        
+        source_heights = np.atleast_1d(self.ini_file["source"]["source_z0"])
 
-            vert_grid_extent = float(self.ini_file["grid"]["zsize"])
-            vert_grid_n = float(self.ini_file["grid"]["ktot"])
-            vert_res = vert_grid_extent / vert_grid_n
+        vert_grid_extent = float(self.ini_file["grid"]["zsize"])
+        vert_grid_n = float(self.ini_file["grid"]["ktot"])
+        vert_res = vert_grid_extent / vert_grid_n
 
-            for source_height in source_heights:
-                if source_height < vert_res:
-                    logger.warning(
-                        f"Source height of {source_height}m "
-                        f"is smaller than vertical resolution of {vert_res}m"
-                    )
+        for source_height in source_heights:
+            if source_height < vert_res:
+                logger.warning(
+                    f"Source height of {source_height}m "
+                    f"is smaller than vertical resolution of {vert_res}m"
+                )
 
     def _check_source_sigma(self):
         """Check if the source std is valid.
@@ -433,61 +433,67 @@ class PreProcessing:
         coords = ["x", "y", "z"]
         cells = ["itot", "jtot", "ktot"]
 
-        if "source" in self.ini_file.groups:
-            for coord, cell in zip(coords, cells):
-                sigmas = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
-                res = float(self.ini_file["grid"][f"{coord}size"]) / float(
-                    self.ini_file["grid"][cell]
-                )
+        if "source" not in self.ini_file.groups:
+            return
+    
+        for coord, cell in zip(coords, cells):
+            sigmas = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+            res = float(self.ini_file["grid"][f"{coord}size"]) / float(
+                self.ini_file["grid"][cell]
+            )
 
-                for sigma in sigmas:
-                    # check if sigma is zero
-                    if sigma <= 0:
-                        raise ValueError(f"'sigma_{coord}' cannot be <0.")
+            for sigma in sigmas:
+                # check if sigma is zero
+                if sigma <= 0:
+                    raise ValueError(f"'sigma_{coord}' cannot be <0.")
 
-                    # check if sigma is >= grid size/4 to grid size/2
-                    if not (res / 4 <= sigma <= res / 2):
-                        logger.warning(
-                            f"'sigma_{coord}' must be between {res / 4} and {res / 2}. "
-                            f"With your current setup, it could be that the source is not simulated."
-                        )
+                # check if sigma is >= grid size/4 to grid size/2
+                if not (res / 4 <= sigma <= res / 2):
+                    logger.warning(
+                        f"'sigma_{coord}' must be between {res / 4} and {res / 2}. "
+                        f"With your current setup, it could be that the source is not simulated."
+                    )
 
     def _check_source_list(self):
         """Check if all required variables have the same length."""
-        if "source" in self.ini_file.groups:
-            sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
-            source_x0 = np.atleast_1d(self.ini_file["source"]["source_x0"])
-            source_y0 = np.atleast_1d(self.ini_file["source"]["source_y0"])
-            source_z0 = np.atleast_1d(self.ini_file["source"]["source_z0"])
-            sigma_x = np.atleast_1d(self.ini_file["source"]["sigma_x"])
-            sigma_y = np.atleast_1d(self.ini_file["source"]["sigma_y"])
-            sigma_z = np.atleast_1d(self.ini_file["source"]["sigma_z"])
-            strength = np.atleast_1d(self.ini_file["source"]["strength"])
-            swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
+        if "source" not in self.ini_file.groups:
+            return
 
-            if not (
-                len(sourcelist)
-                == len(source_x0)
-                == len(source_y0)
-                == len(source_z0)
-                == len(sigma_x)
-                == len(sigma_y)
-                == len(sigma_z)
-                == len(strength)
-                == len(swvmr)
-            ):
-                raise ValueError("All source variables must have the same length.")
+        sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
+        source_x0 = np.atleast_1d(self.ini_file["source"]["source_x0"])
+        source_y0 = np.atleast_1d(self.ini_file["source"]["source_y0"])
+        source_z0 = np.atleast_1d(self.ini_file["source"]["source_z0"])
+        sigma_x = np.atleast_1d(self.ini_file["source"]["sigma_x"])
+        sigma_y = np.atleast_1d(self.ini_file["source"]["sigma_y"])
+        sigma_z = np.atleast_1d(self.ini_file["source"]["sigma_z"])
+        strength = np.atleast_1d(self.ini_file["source"]["strength"])
+        swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
+
+        if not (
+            len(sourcelist)
+            == len(source_x0)
+            == len(source_y0)
+            == len(source_z0)
+            == len(sigma_x)
+            == len(sigma_y)
+            == len(sigma_z)
+            == len(strength)
+            == len(swvmr)
+        ):
+            raise ValueError("All source variables must have the same length.")
 
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
-        if "buffer" in self.ini_file.groups:
-            zstart = self.ini_file["buffer"].get("zstart", 0)
-            zsize = self.ini_file["grid"]["zsize"]
-            if zstart > zsize:
-                raise ValueError(
-                    f"Buffer height={zstart} lies outside of the domain "
-                    f" with zsize={zsize}."
-                )
+        if "buffer" not in self.ini_file.groups:
+            return
+    
+        zstart = self.ini_file.get("buffer", "zstart", 0)
+        zsize = self.ini_file.get("grid", "zsize")
+        if zstart > zsize:
+            raise ValueError(
+                f"Buffer height={zstart} lies outside of the domain "
+                f" with zsize={zsize}."
+            )
 
     def _check_surface_roughness_height(self):
         """Check if the surface roughness is smaller than the lowest vertical grid level."""
@@ -498,22 +504,41 @@ class PreProcessing:
         lowest_grid_level = min(non_neg_grid_values)
         warning_threshold = 0.9 * lowest_grid_level
 
-        if "boundary" in self.ini_file.groups:
-            for roughness_type in ["z0m", "z0h"]:
-                if roughness_type in self.ini_file["boundary"]:
-                    surface_roughness = self.ini_file["boundary"][roughness_type]
-                    if surface_roughness >= lowest_grid_level:
-                        logger.warning(
-                            f"Surface roughness ({roughness_type} = {surface_roughness} m) "
-                            f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
-                            "This may cause the model to crash."
-                        )
-                    elif surface_roughness >= warning_threshold:
-                        logger.warning(
-                            f"Surface roughness ({roughness_type} = {surface_roughness} m) "
-                            f"similar to the lowest grid level (={lowest_grid_level} m). "
-                            "This may cause instability in the model."
-                        )
+        if "boundary" not in self.ini_file.groups:
+            return
+        
+        for roughness_type in ["z0m", "z0h"]:
+            if roughness_type in self.ini_file["boundary"]:
+                surface_roughness = self.ini_file["boundary"][roughness_type]
+                if surface_roughness >= lowest_grid_level:
+                    logger.warning(
+                        f"Surface roughness ({roughness_type} = {surface_roughness} m) "
+                        f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
+                        "This may cause the model to crash."
+                    )
+                elif surface_roughness >= warning_threshold:
+                    logger.warning(
+                        f"Surface roughness ({roughness_type} = {surface_roughness} m) "
+                        f"similar to the lowest grid level (={lowest_grid_level} m). "
+                        "This may cause instability in the model."
+                    )
+
+    def _check_sample_times(case) -> None:
+        sample_time_3d = case.ini_file.get("time", "savetime", None)
+        sample_time_2d = case.ini_file.get("cross", "sampletime", None)
+        sample_time_stats = case.ini_file.get("stats", "sampletime", None)
+
+        # Remove None values
+        sample_times = [sample_time_3d, sample_time_2d, sample_time_stats]
+        sample_times = [s for s in sample_times if s is not None]
+
+        # Logic: If more than one unique value exists among the found keys, warn the user
+        if len(set(sample_times)) > 1:
+            logger.warning(
+                "Sample times are not the same. It is recommended to have the same "
+                f"sample time for 3d output '{sample_time_3d:.0f}'s, 2d output '{sample_time_2d:.0f}'s, and "
+                f"statistics '{sample_time_stats:.0f}'s for postprocessing convenience."
+            )
 
     def copy_executable(self):
         """Copy MicroHH executable to scratch"""
@@ -545,11 +570,7 @@ class PreProcessing:
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = (
-            self.ini_file["time"]["iotimeprec"]
-            if "iotimeprec" in self.ini_file["time"]
-            else 0
-        )
+        iotimeprec = self.ini_file.get("time", "iotimeprec", 0)
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)

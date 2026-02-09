@@ -497,6 +497,7 @@ class PostProcessing:
 
     def _nc_assign_names_and_attributes(self, data: xr.Dataset) -> xr.Dataset:
         """Assign long_name and unit attributes to variables in a .nc file.
+        FIXME: Check if swvmr is in ini file
 
         Args:
             data (xr.Dataset):
@@ -939,13 +940,21 @@ class PostProcessing:
             data.x.values, data.y.values, meshgrid=True
         )
 
-        data = self._rename_dims(data)
+        data = data.rename({"x": "nobs", "y": "nrows"})
         data = data.assign_coords(
             lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
         )
 
+        # add attributes to lon and lat
+        data.lon.attrs["epsg"] = target_crs.split(":")[-1]
+        data.lat.attrs["epsg"] = target_crs.split(":")[-1]
+
         # drop nrows and nobs from data vars
         data = data.drop_vars(["nrows", "nobs"])
+
+        # add x and y coordinates
+        data["x"] = (("nrows", "nobs"), domain.xx + domain.x_offset, {"epsg": microhh_crs.split(":")[-1]})
+        data["y"] = (("nrows", "nobs"), domain.yy + domain.y_offset, {"epsg": microhh_crs.split(":")[-1]})
 
         return data
 
@@ -968,24 +977,6 @@ class PostProcessing:
         # Assign the new 2D coordinates
         data = data.assign_coords(x=(coord_names, x_2d), y=(coord_names, y_2d))
 
-        return data
-
-    def _rename_dims(
-        self, data: xr.Dataset, dim_mapping: dict = {"x": "nobs", "y": "nrows"}
-    ) -> xr.Dataset:
-        """Rename dimensions in the dataset based on the provided mapping.
-
-        Args:
-            data (xr.Dataset):
-                Dataset with dimensions to rename.
-            dim_mapping (dict):
-                Dictionary mapping old dimension names to new dimension names.
-
-        Returns:
-            xr.Dataset:
-                Dataset with renamed dimensions.
-        """
-        data = data.rename(dim_mapping)
         return data
 
     def convert_microhh_timestep_to_date(
@@ -1020,11 +1011,13 @@ class PostProcessing:
         else:
             pass
 
+        tz = "UTC"
         # Check if start_date is a string and convert it to a Timestamp if necessary
         if isinstance(start_date, str):
             start_date = pd.to_datetime(start_date, format=format)
-
-        time_attrs = data.time.attrs
+        # if it is a pd.Timestamp, make tz naive
+        if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
+            start_date = start_date.tz_convert("UTC").tz_localize(None)
 
         # check if the time coordinate is alreay given as datetime:
         if data["time"].dtype == "<M8[ns]":
@@ -1043,7 +1036,7 @@ class PostProcessing:
         else:
             raise ValueError("Data type of 'time' was not recognized.")
 
-        data["time"].attrs = time_attrs
+        data["time"].attrs.update({"timezone": tz})
 
         return data
 

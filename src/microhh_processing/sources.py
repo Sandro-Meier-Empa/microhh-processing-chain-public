@@ -8,6 +8,7 @@ import pandas as pd
 
 
 import ucat
+import xarray as xr
 import microhh_processing.initialisation as init
 import microhh_processing.io as io
 
@@ -131,23 +132,6 @@ def seconds_from_midnight(
         return delta.total_seconds().astype(int)
 
 
-def create_time_profile(
-    start_time: pd.Timestamp, end_time: pd.Timestamp, spacing: str = "1min"
-) -> np.ndarray:
-    if end_time < start_time:
-        raise ValueError(f"End time ({end_time}) must be after start time ({start_time})")
-
-    try:
-        time_range = pd.date_range(start=start_time, end=end_time, freq=spacing)
-    except ValueError as e:
-        raise ValueError(
-            f"Invalid spacing format '{spacing}'. Use pandas formats like '1s', '5min', '1h'."
-        ) from e
-
-    sec_from_midnight = seconds_from_midnight(time_range)
-    return sec_from_midnight.to_numpy()
-
-
 def create_strength_profiles(
     start_times: List[str],
     end_times: List[str],
@@ -157,6 +141,7 @@ def create_strength_profiles(
     from_unit: str,
     to_unit: str,
     gas_mass: Union[float, str],
+    time_format: str = "%H:%M:%S",
     spacing: str = "1min",
 ):
     """
@@ -174,38 +159,64 @@ def create_strength_profiles(
         spacing: Time spacing for the output time profile
 
     Returns:
-        List of strength profiles, one for each interval
+        xr.Dataset with strength profiles, dimensions (time, source)
     """
+
     strengths = np.array(strengths)
     strengths_converted = ucat.convert_mass_per_time_unit(
         strengths,
         from_unit,
         to_unit,
-        gas_mass=gas_mass
+        gas_mass=gas_mass,
     )
 
-    # convert reference start and end to utc
-    reference_start = reference_start.tz_convert("UTC")
-    reference_end = reference_end.tz_convert("UTC")
+    reference_start = _parse_reference(reference_start, "reference_start")
+    reference_end = _parse_reference(reference_end, "reference_end")
 
     if reference_start > reference_end:
         raise ValueError("reference_end must be after reference_start")
 
-    time_profile = create_time_profile(reference_start, reference_end, spacing=spacing)
+    time_range = pd.date_range(start=reference_start, end=reference_end, freq=spacing)
 
-    # Create result lists
     results = []
 
-    for start_time, end_time, strength in zip(
-        start_times, end_times, strengths_converted
-    ):
-        if start_time > end_time:
+    for start_time, end_time, strength in zip(start_times, end_times, strengths_converted):
+        # Parse start/end times (and compare as times, not strings)
+        start_t = pd.to_datetime(start_time, format=time_format).time()
+        end_t = pd.to_datetime(end_time, format=time_format).time()
+
+        if start_t > end_t:
             raise ValueError("end_time must be after start_time")
 
-        start_sec = seconds_from_midnight(start_time)
-        end_sec = seconds_from_midnight(end_time)
+        time_of_day = time_range.time
+        mask = (time_of_day >= start_t) & (time_of_day <= end_t)
 
-        result = np.where((time_profile >= start_sec) & (time_profile <= end_sec), strength, 0)
-        results.append(result)
+        results.append(np.where(mask, strength, 0.0))
 
-    return time_profile, results
+    strength_data = np.stack(results, axis=0)
+
+    time_sec = (time_range - reference_start).total_seconds().astype(int)
+
+    ds = xr.Dataset(
+        {
+            "strength": (["source", "time"], strength_data, {"unit": to_unit}),
+            "time_sec": (["time"], time_sec, {"unit": "s"}),
+        },
+        coords={
+            "time": time_range,
+            "source": np.arange(len(start_times)),
+        },
+    )
+
+    return ds
+
+def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
+    # Allow "HH:MM:SS" strings by anchoring to a fixed UTC date.
+    if isinstance(ref, str):
+        t = pd.to_datetime(ref, format="%H:%M:%S").time()
+        return pd.Timestamp.combine(pd.Timestamp("1970-01-01").date(), t).tz_localize("UTC")
+
+    if isinstance(ref, pd.Timestamp):
+        return ref.tz_convert("UTC")
+
+    raise TypeError(f"{name} must be a pd.Timestamp or a string 'HH:MM:SS'")
