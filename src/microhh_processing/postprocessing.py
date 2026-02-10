@@ -54,12 +54,6 @@ class PostProcessing:
                 Case to post-process.
         """
         self.case = case
-        self.name = case.name
-        self.suffix = case.suffix
-        self.name_spec = case.name_spec
-        self.ini_path = case.ini_path
-        self.ini_file = case.ini_file
-        self.file_directory = case.file_directory
 
     def run_postprocessing(
         self,
@@ -118,13 +112,13 @@ class PostProcessing:
                 Chunks used when opening the netCDF files with xarray. Defaults to None.
         """
         if gases is None:
-            gases = self.ini_file["fields"]["slist"]
+            gases = self.case.ini_file["fields"]["slist"]
         else:
             gases = np.atleast_1d(gas).tolist()
 
         vars = prognostic_vars + gases
 
-        logger.info(f"########## START PROCESSING OF {self.name_spec} ##########")
+        logger.info(f"########## START PROCESSING OF {self.case.name_spec} ##########")
 
         # skip post-processing if simulation failed at start
         current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
@@ -156,7 +150,7 @@ class PostProcessing:
             overwrite=overwrite,
             chunks=chunks,
         )
-        logger.info(f"########## FINISH PROCESSING OF {self.name_spec} ##########")
+        logger.info(f"########## FINISH PROCESSING OF {self.case.name_spec} ##########")
 
     def create_3d_output(
         self,
@@ -189,13 +183,13 @@ class PostProcessing:
         vars_to_process = vars.copy()
 
         if start_time is None:
-            start_time = self.ini_file["time"]["starttime"]
+            start_time = self.case.ini_file["time"]["starttime"]
         if end_time is None:
-            end_time = self.ini_file["time"]["endtime"]
-        sample_time = self.ini_file["time"]["savetime"]
+            end_time = self.case.ini_file["time"]["endtime"]
+        sample_time = self.case.ini_file["time"]["savetime"]
 
         for var in vars:
-            nc_file_path = Path(self.file_directory, f"{var}.nc")
+            nc_file_path = Path(self.case.file_directory, f"{var}.nc")
 
             if nc_file_path.exists():
                 if overwrite:
@@ -208,8 +202,8 @@ class PostProcessing:
             # run as python script
             if vars_to_process:
                 post_command = (
-                    f"{sys.executable} 3d_to_nc.py -d {self.file_directory} "
-                    f"-f {self.name}.ini -v {' '.join(vars_to_process)} "
+                    f"{sys.executable} 3d_to_nc.py -d {self.case.file_directory} "
+                    f"-f {self.case.name}.ini -v {' '.join(vars_to_process)} "
                     f"-p {precision} -t0 {start_time} -t1 {end_time} "
                     f"-tstep {sample_time}"
                 )
@@ -222,8 +216,8 @@ class PostProcessing:
             # run as module
             if vars_to_process:
                 convert_3d_to_nc.run(
-                    directory=self.file_directory,
-                    filename=f"{self.name}.ini",
+                    directory=self.case.file_directory,
+                    filename=f"{self.case.name}.ini",
                     vars=vars_to_process,
                     precision=precision,
                     starttime=start_time,
@@ -278,23 +272,23 @@ class PostProcessing:
         vars_to_process = vars.copy()
 
         if start_time is None:
-            start_time = self.ini_file["time"]["starttime"]
+            start_time = self.case.ini_file["time"]["starttime"]
         if end_time is None:
-            end_time = self.ini_file["time"]["endtime"]
+            end_time = self.case.ini_file["time"]["endtime"]
         if sample_time is None:
-            sample_time = self.ini_file["cross"]["sampletime"]
+            sample_time = self.case.ini_file["cross"]["sampletime"]
 
         # Determine modes to check for existing files
         cross_modes = ["xy", "xz", "yz"]
         if modes is None:
-            modes_to_check = list(self.ini_file["cross"].keys() & set(cross_modes))
+            modes_to_check = list(self.case.ini_file["cross"].keys() & set(cross_modes))
         else:
             modes_to_check = modes
 
         for var in vars:
             var_exists = False
             for mode in modes_to_check:
-                nc_file_path = Path(self.file_directory, f"{var}.{mode}.nc")
+                nc_file_path = Path(self.case.file_directory, f"{var}.{mode}.nc")
                 if nc_file_path.exists():
                     if overwrite:
                         os.remove(nc_file_path)
@@ -309,8 +303,8 @@ class PostProcessing:
             # run as python script
             if vars_to_process:
                 post_command = (
-                    f"{sys.executable} cross_to_nc.py -d {self.file_directory} "
-                    f"-f {self.name}.ini -v {' '.join(vars_to_process)} "
+                    f"{sys.executable} cross_to_nc.py -d {self.case.file_directory} "
+                    f"-f {self.case.name}.ini -v {' '.join(vars_to_process)} "
                     f"-p {precision} -t0 {start_time} -t1 {end_time} "
                     f"-tstep {sample_time}"
                 )
@@ -332,8 +326,8 @@ class PostProcessing:
             # run as module
             if vars_to_process:
                 cross_to_nc.run(
-                    directory=self.file_directory,
-                    filename=f"{self.name}.ini",
+                    directory=self.case.file_directory,
+                    filename=f"{self.case.name}.ini",
                     vars=vars_to_process,
                     modes=modes,
                     indexes=indexes,
@@ -366,7 +360,7 @@ class PostProcessing:
             move_processed_files (bool, optional):
                 Specify if the processed files (e.g. {gas}_2D.nc) should be moved. Defaults to True.
         """
-        store_path = Path(store_path) / self.name_spec
+        store_path = Path(store_path) / self.case.name_spec
 
         # Handle target path
         if not store_path.exists():
@@ -378,10 +372,10 @@ class PostProcessing:
 
         # Copy files for reproducibility
         file_patterns = [
-            "*" + self.name + ".ini",
-            "*" + self.name + "_input.nc",
-            "*" + self.name + ".out",
-            "*" + self.name + ".default.*.nc",
+            "*" + self.case.name + ".ini",
+            "*" + self.case.name + "_input.nc",
+            "*" + self.case.name + ".out",
+            "*" + self.case.name + ".default.*.nc",
             "run_microhh_*.out",
             "run_microhh.sbash",
             "microhh",
@@ -417,7 +411,7 @@ class PostProcessing:
                 Specify if existing files should be overwritten.
         """
 
-        for file in self.file_directory.glob(pattern):
+        for file in self.case.file_directory.glob(pattern):
             dest_file = Path(store_path, file.name)
             if not dest_file.exists() or overwrite:
                 shutil.copy(file, store_path)
@@ -433,7 +427,7 @@ class PostProcessing:
                 Specify if the grid files should be removed after zipping them together.
                 Defaults to False.
         """
-        zip_filename = Path(self.file_directory, "binary_grid_files.zip")
+        zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
 
         if zip_filename.exists():
             logger.info(f"{zip_filename} already exists. Skipping...")
@@ -441,7 +435,7 @@ class PostProcessing:
 
         pattern = re.compile(r"^.*\.\d{7}$")
         matching_files = [
-            file for file in self.file_directory.iterdir() if pattern.match(file.name)
+            file for file in self.case.file_directory.iterdir() if pattern.match(file.name)
         ]
 
         with zipfile.ZipFile(zip_filename, "w") as zip_file:
@@ -456,17 +450,17 @@ class PostProcessing:
 
     def unzip_grid_files(self, remove_zip_file: bool = False):
         """Unzip the binay grid files to scratch"""
-        zip_filename = Path(self.file_directory, "binary_grid_files.zip")
+        zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
             logger.warning(f"{zip_filename} does not exist. Skipping...")
             return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
-            zip_ref.extractall(self.file_directory)
+            zip_ref.extractall(self.case.file_directory)
 
         logger.info(
-            f"Files from '{zip_filename}' successfully extracted to '{self.file_directory}'"
+            f"Files from '{zip_filename}' successfully extracted to '{self.case.file_directory}'"
         )
 
         if remove_zip_file:
@@ -484,7 +478,7 @@ class PostProcessing:
         Returns:
             xr.Dataset: 3D netCDF file from model output.
         """
-        file_path = Path(self.file_directory, f"{variable.lower()}.nc")
+        file_path = Path(self.case.file_directory, f"{variable.lower()}.nc")
 
         if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
@@ -504,7 +498,7 @@ class PostProcessing:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
-        swvmr = np.all(self.ini_file["source"]["swvmr"])
+        swvmr = np.all(self.case.ini_file["source"]["swvmr"])
         if swvmr:
             unit = "mol mol-1"
             prefix = "volume"
@@ -586,7 +580,7 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
-        file_path = Path(self.file_directory, f"{filename}.nc")
+        file_path = Path(self.case.file_directory, f"{filename}.nc")
 
         # Check if the output file already exists
         if file_path.exists() and not overwrite:
@@ -807,7 +801,7 @@ class PostProcessing:
             xr.Dataset: Dataset with source information.
         """
 
-        source_list = np.atleast_1d(self.ini_file["source"]["sourcelist"])
+        source_list = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
         nr_sources = len(source_list)
 
         source_names = (
@@ -815,8 +809,8 @@ class PostProcessing:
         )
         source_labels = source_labels or source_names
 
-        sigma_x = np.array(self.ini_file["source"]["sigma_x"])
-        sigma_y = np.array(self.ini_file["source"]["sigma_y"])
+        sigma_x = np.array(self.case.ini_file["source"]["sigma_x"])
+        sigma_y = np.array(self.case.ini_file["source"]["sigma_y"])
         source_diameter = np.maximum(sigma_x, sigma_y) * 4  # 4 sigma rule
 
         data = {
@@ -825,19 +819,19 @@ class PostProcessing:
             "source_x0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.ini_file["source"]["source_x0"], dtype=float)
+                    np.array(self.case.ini_file["source"]["source_x0"], dtype=float)
                 ),
             ),
             "source_y0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.ini_file["source"]["source_y0"], dtype=float)
+                    np.array(self.case.ini_file["source"]["source_y0"], dtype=float)
                 ),
             ),
             "source_z0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.ini_file["source"]["source_z0"], dtype=float)
+                    np.array(self.case.ini_file["source"]["source_z0"], dtype=float)
                 ),
             ),
             "label": (
@@ -909,11 +903,11 @@ class PostProcessing:
         """
 
         # if lat/lon is defined in .ini file: use these values to convert grid
-        if "lat" in self.ini_file["grid"] and source is None:
-            lat_ref = self.ini_file["grid"]["lat"]
-            lon_ref = self.ini_file["grid"]["lon"]
-            grid_x_ref = self.ini_file["grid"]["xsize"] / 2
-            grid_y_ref = self.ini_file["grid"]["ysize"] / 2
+        if "lat" in self.case.ini_file["grid"] and source is None:
+            lat_ref = self.case.ini_file["grid"]["lat"]
+            lon_ref = self.case.ini_file["grid"]["lon"]
+            grid_x_ref = self.case.ini_file["grid"]["xsize"] / 2
+            grid_y_ref = self.case.ini_file["grid"]["ysize"] / 2
         elif source is not None:
             lat_ref = source.lat.values
             lon_ref = source.lon.values
@@ -921,16 +915,16 @@ class PostProcessing:
             grid_y_ref = source.source_y0.values
         else:
             raise ValueError(
-                f"Provide 'lat' and 'lon' in the {self.name} "
+                f"Provide 'lat' and 'lon' in the {self.case.name} "
                 f"file or 'source' and 'sources' as arguments"
             )
 
         # Create domain
         domain = spatial.Domain(
-            xsize=self.ini_file["grid"]["xsize"],
-            ysize=self.ini_file["grid"]["ysize"],
-            itot=self.ini_file["grid"]["itot"],
-            jtot=self.ini_file["grid"]["jtot"],
+            xsize=self.case.ini_file["grid"]["xsize"],
+            ysize=self.case.ini_file["grid"]["ysize"],
+            itot=self.case.ini_file["grid"]["itot"],
+            jtot=self.case.ini_file["grid"]["jtot"],
             lon=lon_ref,
             lat=lat_ref,
             anchor=(grid_x_ref, grid_y_ref),
@@ -1000,12 +994,12 @@ class PostProcessing:
                 The dataset with the time converted to a timestamp.
         """
         # use 'datetime_utc' if available in the .ini file
-        if "datetime_utc" in self.ini_file["time"] and start_date is None:
-            start_date = self.ini_file["time"]["datetime_utc"]
-        elif "datetime_utc" in self.ini_file["time"] and start_date is not None:
+        if "datetime_utc" in self.case.ini_file["time"] and start_date is None:
+            start_date = self.case.ini_file["time"]["datetime_utc"]
+        elif "datetime_utc" in self.case.ini_file["time"] and start_date is not None:
             start_date = start_date
             logger.info(
-                f"Using {start_date} to overwrite {self.ini_file['time']['datetime_utc']} "
+                f"Using {start_date} to overwrite {self.case.ini_file['time']['datetime_utc']} "
                 f"in .ini file"
             )
         else:

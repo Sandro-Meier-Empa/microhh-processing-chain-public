@@ -51,18 +51,12 @@ class PreProcessing:
 
         """
         self.case = case
-        self.name = case.name
-        self.suffix = case.suffix
-        self.name_spec = case.name_spec
-        self.scratch_path = case.scratch_path
-        self.microhh_executable_path = case.microhh_executable_path
-        self.ini_path = case.ini_path
-        self.ini_file = mht.Read_namelist(self.ini_path)
+        self.microhh_executable_path = self.case.microhh_executable_path
         self.processor = alps_setup.processor
         self.alps_setup = alps_setup
 
         self._check_microhh_build_exists()
-        self._check_micrhh_build_architecture()
+        self._check_microhh_build_architecture()
 
     def _check_microhh_build_exists(self):
         """Check if the selected model build exists.
@@ -74,7 +68,7 @@ class PreProcessing:
         if self.alps_setup.processor == "gpu" and self.alps_setup.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
         
-    def _check_micrhh_build_architecture(self):
+    def _check_microhh_build_architecture(self):
         """
         Check if the architecture of the selected MicroHH build matches the system architecture.
         """
@@ -127,16 +121,16 @@ class PreProcessing:
 
         # check if all files are present
         files_required = [
-            f"{self.name}_input.nc",
-            f"{self.name}.ini",
+            f"{self.case.name}_input.nc",
+            f"{self.case.name}.ini",
             "microhh",
         ]
 
         for filename in files_required:
-            file_path = Path(self.scratch_path, filename)
+            file_path = Path(self.case.scratch_path, filename)
             if not file_path.exists():
                 raise FileNotFoundError(
-                    f"Required file '{filename}' not found in '{self.scratch_path}'."
+                    f"Required file '{filename}' not found in '{self.case.scratch_path}'."
                 )
 
         # Create bash script if it does not exist
@@ -163,7 +157,7 @@ class PreProcessing:
 
         # copy microHH restart files
         restart_str = self.get_restart_str(restart_time)
-        self.copy_restart_files(origin=restart_case.file_directory, timestr=restart_str)
+        self.copy_restart_files(origin=restart_self.case.file_directory, timestr=restart_str)
 
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode="rerun")
@@ -185,14 +179,14 @@ class PreProcessing:
             restart_time (int):
                 Time in seconds from which the simulation is restarted.
         """
-        starttime = self.ini_file["time"]["starttime"]
+        starttime = self.case.ini_file["time"]["starttime"]
 
         if starttime != restart_time:
             raise ValueError(
                 f"starttime ({starttime}s) in .ini file does not match "
                 f"the specified restart_time ({restart_time}s)."
             )
-        endtime = self.ini_file["time"]["endtime"]
+        endtime = self.case.ini_file["time"]["endtime"]
         if endtime <= restart_time:
             raise ValueError(
                 f"endtime ({endtime}s) must be larger than restart_time ({restart_time}s)."
@@ -231,7 +225,7 @@ class PreProcessing:
     def create_run_script(
         self, overwrite: bool = False, mode: Literal["run", "rerun"] = "run"
     ) -> Path:
-        job_file = Path(self.scratch_path, "run_microhh.sbash")
+        job_file = Path(self.case.scratch_path, "run_microhh.sbash")
 
         commands = self._get_microhh_run_commands(mode)
 
@@ -240,7 +234,7 @@ class PreProcessing:
                 commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
-                scratch_path=self.scratch_path,
+                scratch_path=self.case.scratch_path,
             )
         else:
             logger.info(f"Reading existing bash script {job_file}")
@@ -252,12 +246,12 @@ class PreProcessing:
     ) -> list[str]:
         if mode == "run":
             commands = [
-                f"srun {self.scratch_path}/microhh init {self.name}",
-                f"srun {self.scratch_path}/microhh run {self.name}",
+                f"srun {self.case.scratch_path}/microhh init {self.case.name}",
+                f"srun {self.case.scratch_path}/microhh run {self.case.name}",
             ]
         elif mode == "rerun":
             commands = [
-                f"srun {self.scratch_path}/microhh run {self.name}",
+                f"srun {self.case.scratch_path}/microhh run {self.case.name}",
             ]
         else:
             raise ValueError("mode must be either 'run' or 'rerun'")
@@ -285,29 +279,29 @@ class PreProcessing:
 
     def _check_ini_content(self):
         """check if the .ini file is not empty"""
-        if len(self.ini_file.groups) == 0:
-            raise ValueError(f"{self.name}.ini is empty.")
+        if len(self.case.ini_file.groups) == 0:
+            raise ValueError(f"{self.case.name}.ini is empty.")
 
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
         if (
             not self.alps_setup.mpi
-            and not self.ini_file["master"]["npx"] == 1
-            and not self.ini_file["master"]["npy"] == 1
+            and not self.case.ini_file["master"]["npx"] == 1
+            and not self.case.ini_file["master"]["npy"] == 1
         ):
             for dim in ["x", "y"]:
-                self.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
-            self.ini_file.save(self.ini_path, allow_overwrite=True)
+                self.case.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
+            self.case.ini_file.save(self.case.ini_path, allow_overwrite=True)
             logger.warning("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
     def _check_grid_match(self):
         """Check if the grid size matches the number of processes."""
         itot, jtot, ktot = (
-            self.ini_file["grid"]["itot"],
-            self.ini_file["grid"]["jtot"],
-            self.ini_file["grid"]["ktot"],
+            self.case.ini_file["grid"]["itot"],
+            self.case.ini_file["grid"]["jtot"],
+            self.case.ini_file["grid"]["ktot"],
         )
-        npx, npy = self.ini_file["master"]["npx"], self.ini_file["master"]["npy"]
+        npx, npy = self.case.ini_file["master"]["npx"], self.case.ini_file["master"]["npy"]
 
         if itot % npx != 0:
             raise ValueError(f"itot ({itot}) is not divisible by npx ({npx})")
@@ -322,7 +316,7 @@ class PreProcessing:
 
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
-        expected_nodes = self.ini_file["master"]["npx"] * self.ini_file["master"]["npy"]
+        expected_nodes = self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
         if expected_nodes != self.alps_setup.ntasks_per_node:
             raise ValueError(
                 f"Task per node ({self.alps_setup.ntasks_per_node}) does "
@@ -331,9 +325,9 @@ class PreProcessing:
 
     def _check_grid_order(self):
         """Check that the grid order matches the orders of the advection schemes."""
-        swspatial = self.ini_file.get("grid", "swspatialorder", None)
-        swpres = self.ini_file.get("pres", "swpres", None)
-        swadvec = str(self.ini_file.get("advec", "swadvec", None))
+        swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
+        swpres = self.case.ini_file.get("pres", "swpres", None)
+        swadvec = str(self.case.ini_file.get("advec", "swadvec", None))
 
         if swspatial is None:
             return
@@ -351,9 +345,9 @@ class PreProcessing:
     def _check_thermo(self):
         """Check if the thermo settings are valid."""
 
-        swthermo = self.ini_file.get("thermo", "swthermo", None)
-        swbasestate = self.ini_file.get("thermo", "swbasestate", None)
-        thref0 = self.ini_file.get("thermo", "thref0", None)
+        swthermo = self.case.ini_file.get("thermo", "swthermo", None)
+        swbasestate = self.case.ini_file.get("thermo", "swbasestate", None)
+        thref0 = self.case.ini_file.get("thermo", "thref0", None)
 
         if swbasestate is None:
             return
@@ -367,7 +361,7 @@ class PreProcessing:
                     )
 
         elif swbasestate == "anelastic":
-            swspatial = self.ini_file.get("grid", "swspatialorder", None)
+            swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
             if swspatial == 4:
                 raise ValueError(
                     "'swbasestate'='anelastic' is not supported for 'swspatialorder'=4"
@@ -380,9 +374,9 @@ class PreProcessing:
 
     def _check_forcing(self):
         """Check if the specified forcing is valid."""
-        force = self.ini_file.get("force", "swlspres", None)
-        fc = self.ini_file.get("force", "fc", None)
-        dpdx = self.ini_file.get("force", "dpdx", None)
+        force = self.case.ini_file.get("force", "swlspres", None)
+        fc = self.case.ini_file.get("force", "fc", None)
+        dpdx = self.case.ini_file.get("force", "dpdx", None)
 
         if force is None:
             return
@@ -395,13 +389,13 @@ class PreProcessing:
                     "when using 'swlspres = geo' forcing."
                 )
         elif force == "dpdx":
-            dpdx = self.ini_file["force"].get("dpdx", None)
+            dpdx = self.case.ini_file["force"].get("dpdx", None)
             if dpdx is None:
                 raise ValueError(
                     "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
                 )
         elif force == "uflux":
-            uflux = self.ini_file["force"].get("uflux", None)
+            uflux = self.case.ini_file["force"].get("uflux", None)
             if uflux is None:
                 raise ValueError(
                     "'uflux' must be specified when using "
@@ -415,19 +409,19 @@ class PreProcessing:
 
     def _check_source_position(self):
         """Check if the source position conflicts with the domain size."""
-        if "source" not in self.ini_file.groups:
+        if "source" not in self.case.ini_file.groups:
             return
 
         for coord in ["x", "y", "z"]:
-            source_0 = np.atleast_1d(self.ini_file["source"][f"source_{coord}0"])
-            sigma = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
+            source_0 = np.atleast_1d(self.case.ini_file["source"][f"source_{coord}0"])
+            sigma = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
 
             if len(source_0) != len(sigma):
                 raise ValueError(
                     f"source_{coord}0 and sigma_{coord} must have the same length."
                 )
 
-            grid_size = float(self.ini_file["grid"][f"{coord}size"])
+            grid_size = float(self.case.ini_file["grid"][f"{coord}size"])
 
             for s0, sig in zip(source_0, sigma):
                 source_ext = s0 + 2 * sig
@@ -438,13 +432,13 @@ class PreProcessing:
 
     def _check_source_height(self):
         """Check if source height is greater than vertical resolution"""
-        if "source" not in self.ini_file.groups:
+        if "source" not in self.case.ini_file.groups:
             return
         
-        source_heights = np.atleast_1d(self.ini_file["source"]["source_z0"])
+        source_heights = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
 
-        vert_grid_extent = float(self.ini_file["grid"]["zsize"])
-        vert_grid_n = float(self.ini_file["grid"]["ktot"])
+        vert_grid_extent = float(self.case.ini_file["grid"]["zsize"])
+        vert_grid_n = float(self.case.ini_file["grid"]["ktot"])
         vert_res = vert_grid_extent / vert_grid_n
 
         for source_height in source_heights:
@@ -461,13 +455,13 @@ class PreProcessing:
         coords = ["x", "y", "z"]
         cells = ["itot", "jtot", "ktot"]
 
-        if "source" not in self.ini_file.groups:
+        if "source" not in self.case.ini_file.groups:
             return
     
         for coord, cell in zip(coords, cells):
-            sigmas = np.atleast_1d(self.ini_file["source"][f"sigma_{coord}"])
-            res = float(self.ini_file["grid"][f"{coord}size"]) / float(
-                self.ini_file["grid"][cell]
+            sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            res = float(self.case.ini_file["grid"][f"{coord}size"]) / float(
+                self.case.ini_file["grid"][cell]
             )
 
             for sigma in sigmas:
@@ -484,18 +478,18 @@ class PreProcessing:
 
     def _check_source_list(self):
         """Check if all required variables have the same length."""
-        if "source" not in self.ini_file.groups:
+        if "source" not in self.case.ini_file.groups:
             return
 
-        sourcelist = np.atleast_1d(self.ini_file["source"]["sourcelist"])
-        source_x0 = np.atleast_1d(self.ini_file["source"]["source_x0"])
-        source_y0 = np.atleast_1d(self.ini_file["source"]["source_y0"])
-        source_z0 = np.atleast_1d(self.ini_file["source"]["source_z0"])
-        sigma_x = np.atleast_1d(self.ini_file["source"]["sigma_x"])
-        sigma_y = np.atleast_1d(self.ini_file["source"]["sigma_y"])
-        sigma_z = np.atleast_1d(self.ini_file["source"]["sigma_z"])
-        strength = np.atleast_1d(self.ini_file["source"]["strength"])
-        swvmr = np.atleast_1d(self.ini_file["source"]["swvmr"])
+        sourcelist = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
+        source_x0 = np.atleast_1d(self.case.ini_file["source"]["source_x0"])
+        source_y0 = np.atleast_1d(self.case.ini_file["source"]["source_y0"])
+        source_z0 = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
+        sigma_x = np.atleast_1d(self.case.ini_file["source"]["sigma_x"])
+        sigma_y = np.atleast_1d(self.case.ini_file["source"]["sigma_y"])
+        sigma_z = np.atleast_1d(self.case.ini_file["source"]["sigma_z"])
+        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
+        swvmr = np.atleast_1d(self.case.ini_file["source"]["swvmr"])
 
         if not (
             len(sourcelist)
@@ -512,11 +506,11 @@ class PreProcessing:
 
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
-        if "buffer" not in self.ini_file.groups:
+        if "buffer" not in self.case.ini_file.groups:
             return
     
-        zstart = self.ini_file.get("buffer", "zstart", 0)
-        zsize = self.ini_file.get("grid", "zsize")
+        zstart = self.case.ini_file.get("buffer", "zstart", 0)
+        zsize = self.case.ini_file.get("grid", "zsize")
         if zstart > zsize:
             raise ValueError(
                 f"Buffer height={zstart} lies outside of the domain "
@@ -532,12 +526,12 @@ class PreProcessing:
         lowest_grid_level = min(non_neg_grid_values)
         warning_threshold = 0.9 * lowest_grid_level
 
-        if "boundary" not in self.ini_file.groups:
+        if "boundary" not in self.case.ini_file.groups:
             return
         
         for roughness_type in ["z0m", "z0h"]:
-            if roughness_type in self.ini_file["boundary"]:
-                surface_roughness = self.ini_file["boundary"][roughness_type]
+            if roughness_type in self.case.ini_file["boundary"]:
+                surface_roughness = self.case.ini_file["boundary"][roughness_type]
                 if surface_roughness >= lowest_grid_level:
                     logger.warning(
                         f"Surface roughness ({roughness_type} = {surface_roughness} m) "
@@ -552,9 +546,9 @@ class PreProcessing:
                     )
 
     def _check_sample_times(case) -> None:
-        sample_time_3d = case.ini_file.get("time", "savetime", None)
-        sample_time_2d = case.ini_file.get("cross", "sampletime", None)
-        sample_time_stats = case.ini_file.get("stats", "sampletime", None)
+        sample_time_3d = self.case.ini_file.get("time", "savetime", None)
+        sample_time_2d = self.case.ini_file.get("cross", "sampletime", None)
+        sample_time_stats = self.case.ini_file.get("stats", "sampletime", None)
 
         # Remove None values
         sample_times = [sample_time_3d, sample_time_2d, sample_time_stats]
@@ -572,11 +566,11 @@ class PreProcessing:
         """Copy MicroHH executable to scratch"""
         microhh_executable_path = self.microhh_executable_path / "microhh"
 
-        shutil.copy(microhh_executable_path, self.scratch_path)
+        shutil.copy(microhh_executable_path, self.case.scratch_path)
 
     def copy_restart_files(self, origin: Union[str, Path], timestr: str):
         """Copy MicroHH restart files to scratch. The .ini and input.nc files
-        are already copied when creating the case using case.initialise_case()."""
+        are already copied when creating the case using self.case.initialise_case()."""
 
         origin = Path(origin)
 
@@ -593,12 +587,12 @@ class PreProcessing:
             restart_files.extend(origin.glob(pattern))
 
         for file in restart_files:
-            shutil.copy(file, self.scratch_path)
+            shutil.copy(file, self.case.scratch_path)
 
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = self.ini_file.get("time", "iotimeprec", 0)
+        iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0)
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)

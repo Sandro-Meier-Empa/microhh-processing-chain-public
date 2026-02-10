@@ -46,12 +46,6 @@ class Visualisation:
 
         """
         self.case = case
-        self.name = case.name
-        self.suffix = case.suffix
-        self.name_spec = case.name_spec
-        self.file_directory = case.file_directory
-
-        self.post = post.PostProcessing(self.case)
 
     def plot_initial_conditions(
         self, ncols: int = 4, figsize: tuple[int, int] = (15, 10)
@@ -73,7 +67,7 @@ class Visualisation:
             ValueError: If no data groups are found in the file.
         """
 
-        file_path = Path(self.file_directory) / f"{self.name}_input.nc"
+        file_path = Path(self.case.file_directory) / f"{self.case.name}_input.nc"
 
         if not file_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {file_path}")
