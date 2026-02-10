@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import dask
+import platform
 import pyproj
 import re
 import scipy
@@ -61,6 +62,7 @@ class PreProcessing:
         self.alps_setup = alps_setup
 
         self._check_microhh_build_exists()
+        self._check_micrhh_build_architecture()
 
     def _check_microhh_build_exists(self):
         """Check if the selected model build exists.
@@ -71,6 +73,32 @@ class PreProcessing:
         # Check if build exists
         if self.alps_setup.processor == "gpu" and self.alps_setup.mpi:
             raise ValueError("MPI is not enabled for GPU accelerated version.")
+        
+    def _check_micrhh_build_architecture(self):
+        """
+        Check if the architecture of the selected MicroHH build matches the system architecture.
+        """
+        if not os.path.exists(self.microhh_executable_path):
+            return False, f"Error: File {self.microhh_executable_path} not found."
+
+        # Get the current system architecture (e.g., 'x86_64' or 'aarch64')
+        current_arch = platform.machine().lower()
+        
+
+        result = subprocess.check_output(
+            ['file', self.microhh_executable_path],
+            stderr=subprocess.STDOUT).decode()
+        result_lower = result.lower()
+
+        if "aarch64" in result_lower:
+            exec_arch = "aarch64"
+        elif "x86-64" in result_lower:
+            exec_arch = "x86_64"
+        else:
+            exec_arch = "unknown"
+
+        if current_arch != exec_arch:
+            logger.error(f"Mismatch: System is {current_arch}, but binary is {exec_arch}.")
 
     def prepare_simulation(
         self,

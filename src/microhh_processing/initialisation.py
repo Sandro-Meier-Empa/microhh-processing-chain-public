@@ -57,7 +57,21 @@ class Case:
         self.suffix = suffix
         self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
         self.job_id = None
-        self.run_state = None
+
+    @property
+    def run_state(self) -> str:
+        """Get run state of the case based on SLURM sacct information."""
+        if self.job_id is None:
+            return "NOT SUBMITTED"
+
+        sacct_info = cscs.get_sacct_info(self.job_id)
+
+        # filter sacct info for the specific job name
+        try:
+            sacct_info = sacct_info[sacct_info["JobName"] == "run_microhh"]
+            return sacct_info["State"].values[0]
+        except (KeyError, IndexError):
+            return "UNKNOWN"
 
     # add method when printing case
     def __repr__(self):
@@ -120,7 +134,6 @@ class Case:
         self._handle_running_method(init_from)
 
         self.job_id = self.job_id if self.job_id is not None else self._get_job_id()
-        self.run_state = self._get_run_state()
 
     def _handle_method(
         self,
@@ -205,21 +218,6 @@ class Case:
             job_id = int(re.search(r"\d+", file_name).group())
 
         return job_id
-
-    def _get_run_state(self) -> str:
-        """Get run state of the case based on SLURM sacct information."""
-        if self.job_id is None:
-            return "NOT SUBMITTED"
-
-        sacct_info = cscs.get_sacct_info(self.job_id)
-
-        # filter sacct info for the specific job name
-        try:
-            sacct_info = sacct_info[sacct_info["JobName"] == "run_microhh"]
-        except KeyError:
-            return "UNKNOWN"
-
-        return sacct_info["State"].iloc[0]
 
     def _check_case_setup(self, case_path: Union[str, Path]):
         """Check if the case is set up.
@@ -597,7 +595,6 @@ def read_case(case_directory: Union[str, Path]) -> Case:
     case.ini_path = Path(case.file_directory, f"{case.name}.ini")
 
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
-    case.run_state = case._get_run_state()
 
     if not case.ini_path.exists():
         raise FileNotFoundError(

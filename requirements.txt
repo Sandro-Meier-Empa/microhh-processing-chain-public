@@ -1,0 +1,4 @@
+-e ~/LS2D
+-e ~/ucat
+-e ~/ddeq
+-e ~/microhh/microhh_py

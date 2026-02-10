@@ -203,7 +203,7 @@ def create_strength_profiles(
             "time_sec": (["time"], time_sec, {"unit": "s"}),
         },
         coords={
-            "time": time_range,
+            "time": time_range.tz_localize(None),
             "source": np.arange(len(start_times)),
         },
     )
