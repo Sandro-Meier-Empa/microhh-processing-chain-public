@@ -318,11 +318,12 @@ class PreProcessing:
 
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
-        expected_nodes = self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
-        if expected_nodes != self.alps_setup.ntasks_per_node:
+        expected_cores = self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
+        requested_cores = self.alps_setup.ntasks_per_node * self.alps_setup.nodes
+        if expected_cores != requested_cores:
             raise ValueError(
-                f"Task per node ({self.alps_setup.ntasks_per_node}) does "
-                f"not match the expected value."
+                f"Requested cores ({requested_cores}) does not match the "
+                f"expected cores ({expected_cores})."
             )
 
     def _check_grid_order(self):
@@ -547,7 +548,7 @@ class PreProcessing:
                         "This may cause instability in the model."
                     )
 
-    def _check_sample_times(case) -> None:
+    def _check_sample_times(self) -> None:
         sample_time_3d = self.case.ini_file.get("time", "savetime", None)
         sample_time_2d = self.case.ini_file.get("cross", "sampletime", None)
         sample_time_stats = self.case.ini_file.get("stats", "sampletime", None)

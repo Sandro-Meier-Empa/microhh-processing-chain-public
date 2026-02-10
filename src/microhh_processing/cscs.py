@@ -333,19 +333,28 @@ class AlpsSetup:
         return file_path
 
 
-def execute_bash_script(job_file: Path, wait: bool = True) -> int:
+def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None) -> int:
     """Run a simulation using sbatch
 
     Args:
-        job_file (Path):
+        job_file (Union[str, Path]):
             Specify the path of the bash script which should be run.
         wait (bool, optional. Default: False):
             Specify if the next job should only be submitted
             after the previous one has stopped.
-
+        ssh_connect (str):
+            If specified, the command will be executed on a remote server via ssh.
+            The string should be in the format "user@hostname" or 
+            "hostname" if the remote machine is configured for passwordless ssh access.
 
     """
-    cmd = ["sbatch"]
+    job_file = Path(job_file)
+
+    if ssh_connect:
+        cmd = ["ssh", ssh_connect, "sbatch"]
+    else:
+        cmd = ["sbatch"]
+
     if wait:
         cmd.append("--wait")
     cmd.append(str(job_file))
