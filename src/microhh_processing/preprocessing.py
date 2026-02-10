@@ -1,16 +1,7 @@
-import glob
-import json
 import os
-import dask
 import platform
-import pyproj
-import re
-import scipy
 import shutil
 import subprocess
-import sys
-import warnings
-import zipfile
 import logging
 
 from pathlib import Path
@@ -19,12 +10,6 @@ from typing import Literal, Union, Tuple
 import pandas as pd
 import xarray as xr
 import numpy as np
-
-import ucat
-
-import microhh_py.microhh_tools as mht
-import microhh_py.convert_3d_to_nc as convert_3d_to_nc
-import microhh_py.cross_to_nc as cross_to_nc
 
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
@@ -40,6 +25,7 @@ class PreProcessing:
         self,
         case: init.Case,
         alps_setup: cscs.AlpsSetup,
+        microhh_executable_path: Union[str, Path],
     ):
         """Class used for pre-processing and running MicroHH cases
 
@@ -48,15 +34,31 @@ class PreProcessing:
                 Case to pre-process and run.
             alps_setup (cscs.AlpsSetup):
                 Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
-
+            microhh_executable_path (Union[str, Path]):
+                Path to the MicroHH executable or the directory containing the MicroHH executable.
         """
         self.case = case
-        self.microhh_executable_path = self.case.microhh_executable_path
         self.processor = alps_setup.processor
         self.alps_setup = alps_setup
-
+        self._microhh_executable_path = microhh_executable_path
+        self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_exists()
         self._check_microhh_build_architecture()
+
+    def _get_microhh_executable_path(self) -> Path:
+        microhh_executable_path = Path(self._microhh_executable_path)
+
+        if microhh_executable_path.is_file():
+            return microhh_executable_path
+        
+        mhh_files = list(microhh_executable_path.glob("microhh"))
+
+        if len(mhh_files) != 1:
+            raise ValueError(
+                f"Expected exactly one 'microhh' executable in {microhh_executable_path}, but found {len(mhh_files)}."
+            )
+
+        return mhh_files[0]
 
     def _check_microhh_build_exists(self):
         """Check if the selected model build exists.
@@ -564,9 +566,8 @@ class PreProcessing:
 
     def copy_executable(self):
         """Copy MicroHH executable to scratch"""
-        microhh_executable_path = self.microhh_executable_path / "microhh"
 
-        shutil.copy(microhh_executable_path, self.case.scratch_path)
+        shutil.copy(self.microhh_executable_path, self.case.scratch_path)
 
     def copy_restart_files(self, origin: Union[str, Path], timestr: str):
         """Copy MicroHH restart files to scratch. The .ini and input.nc files

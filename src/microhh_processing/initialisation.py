@@ -43,16 +43,7 @@ class Case:
             suffix (str):
                 Suffix for the specific model run.
                 Is combined as {name}.{suffix}.
-            scratch_path (Union[str, Path]):
-                Path of personal folder on 'scratch'.
-            store_path (Union[str, Path]):
-                Path of personal folder on 'store'.
-            microhh_executable_path (Union[str, Path]):
-                Path to the MicroHH executable.
-            file_directory (Union[str, Path], optional):
-                Directory where the model output files are stored.
         """
-        self.user = os.environ["USER"]
         self.name = name
         self.suffix = suffix
         self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
@@ -105,7 +96,6 @@ class Case:
     def _initialise(
         self,
         scratch_path: Union[str, Path],
-        microhh_executable_path: Union[str, Path],
         method: Literal["default", "interactive", "rerun"] = "interactive",
         init_from: Union[str, Path] = None,
         overwrite: bool = False,
@@ -125,7 +115,6 @@ class Case:
                 Specify if existing case should be overwritten.
         """
         self.scratch_path = Path(scratch_path, self.name_spec)
-        self.microhh_executable_path = Path(microhh_executable_path)
         self.file_directory = self.scratch_path
         self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
 
@@ -536,7 +525,6 @@ def initialise_case(
     name: str,
     suffix: str,
     scratch_path: Union[str, Path],
-    microhh_executable_path: Union[str, Path],
     method: Literal["default", "interactive", "rerun"] = "interactive",
     init_from: Union[str, Path] = None,
     overwrite: bool = False,
@@ -550,10 +538,13 @@ def initialise_case(
             Is combined as {name}.{suffix}.
         scratch_path (Union[str, Path]):
             Path of personal folder on 'scratch'.
-        store_path (Union[str, Path]):
-            Path of personal folder on 'store'.
-        microhh_executable_path (Union[str, Path]):
-            Path to the MicroHH executable.
+        method (Literal["default", "interactive", "rerun"], optional. Default: "interactive"):
+            Method of how the case should be set up.
+        init_from (Union[str, Path], optional. Default: None):
+            Path to the case which should be used as a template for the new case.
+            Required when method is "default" or "rerun".
+        overwrite (bool, optional. Default: False):
+            Specify if existing case should be overwritten.
     Returns:
         Case: Initialised MicroHH case.
     """
@@ -563,7 +554,6 @@ def initialise_case(
     )
     case._initialise(
         scratch_path=scratch_path,
-        microhh_executable_path=microhh_executable_path,
         method=method,
         init_from=init_from,
         overwrite=overwrite,
