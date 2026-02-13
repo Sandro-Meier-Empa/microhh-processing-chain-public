@@ -442,6 +442,75 @@ class Case:
 
         return float(last_time_value)
 
+    def rename(self, new_name: str = None, new_suffix: str = None) -> "Case":
+        """Rename this MicroHH case by renaming its directory and .ini file.
+
+        Args:
+            new_name (str, optional): New name for the case. If not provided, the existing name will be kept.
+            new_suffix (str, optional): New suffix for the case.
+                If not provided, the existing suffix will be kept.
+
+        Returns:
+            Case: Self (renamed MicroHH case).
+        """
+        if new_name is None and new_suffix is None:
+            raise ValueError("Please provide a new name or a new suffix for the case.")
+
+        new_name = new_name if new_name is not None else self.name
+        new_suffix = new_suffix if new_suffix is not None else self.suffix
+        new_name_spec = f"{new_name}.{new_suffix}" if new_suffix else f"{new_name}"
+        new_file_directory = self.file_directory.parent / new_name_spec
+
+        if new_file_directory.exists():
+            raise FileExistsError(f"Directory '{new_file_directory}' already exists.")
+
+        # Rename the directory
+        shutil.move(str(self.file_directory), str(new_file_directory))
+
+        # Update the case attributes
+        self.name = new_name
+        self.suffix = new_suffix
+        self.name_spec = new_name_spec
+        self.file_directory = new_file_directory
+        self.ini_path = Path(new_file_directory, f"{new_name}.ini")
+
+        return self
+
+    def clean(self) -> None:
+        """Clean this MicroHH case by removing all files except the
+            - .ini file,
+            - _input.nc file and
+            - microhh executable.
+        """
+        files_to_keep = [
+            f"{self.name}.ini",
+            f"{self.name}_input.nc",
+            "microhh",
+        ]
+        user_input = input(
+            f"Are you sure you want to clean the case at {self.file_directory}? (y/n): "
+        )
+        if user_input.lower() == "y":
+            for item in self.file_directory.iterdir():
+                if item.name not in files_to_keep:
+                    if item.is_file():
+                        item.unlink()
+                    elif item.is_dir():
+                        shutil.rmtree(item)
+            logger.info(f"Cleaned case at {self.file_directory}.")
+
+    def delete(self) -> None:
+        """Delete this MicroHH case by removing its directory."""
+        if not self.file_directory.exists():
+            raise FileNotFoundError(f"Case directory '{self.file_directory}' does not exist.")
+
+        user_input = input(
+            f"Are you sure you want to delete the case at {self.file_directory}? (y/n): "
+        )
+        if user_input.lower() == "y":
+            shutil.rmtree(self.file_directory)
+            logger.info(f"Deleted case at {self.file_directory}.")
+
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
     """Compare the .ini file of this case with another case in a Git-diff style.
@@ -607,87 +676,6 @@ def read_case(case_directory: Union[str, Path]) -> Case:
     case.ini_file = mht.Read_namelist(case.ini_path)
 
     return case
-
-def rename_case(case: Case, new_name: str = None, new_suffix: str = None) -> Case:
-    """Rename a MicroHH case by renaming its directory and .ini file.
-
-    Args:
-        case (Case): Case to be renamed.
-        new_name (str, optional): New name for the case. If not provided, the existing name will be kept.
-        new_suffix (str, optional): New suffix for the case.
-        If not provided, the existing suffix will be kept.
-
-    Returns:
-        Case: Renamed MicroHH case.
-    """
-    # if new_name or new_suffix is None, do not change anything
-    if new_name is None and new_suffix is None:
-        raise ValueError("Please provide a new name or a new suffix for the case.")
-    
-    new_name = new_name if new_name is not None else case.name
-    new_suffix = new_suffix if new_suffix is not None else case.suffix
-    new_name_spec = f"{new_name}.{new_suffix}" if new_suffix else f"{new_name}"
-    new_file_directory = case.file_directory.parent / new_name_spec
-
-    if new_file_directory.exists():
-        raise FileExistsError(f"Directory '{new_file_directory}' already exists.")
-
-    # Rename the directory
-    shutil.move(str(case.file_directory), str(new_file_directory))
-
-    # Update the case attributes
-    case.name = new_name
-    case.suffix = new_suffix
-    case.name_spec = new_name_spec
-    case.file_directory = new_file_directory
-    case.ini_path = Path(new_file_directory, f"{new_name}.ini")
-
-    return case
-
-def clean_case(case: Case) -> None:
-    """Clean a MicroHH case by removing all files except the
-        - .ini file,
-        - _input.nc file and
-        - microhh executable.
-    Args:
-        case (Case): Case to be cleaned.
-    """
-    files_to_keep = [
-        f"{case.name}.ini",
-        f"{case.name}_input.nc",
-        "microhh",
-    ]
-    user_input = input(
-        f"Are you sure you want to clean the case at {case.file_directory}? (y/n): "
-    )
-    if user_input.lower() == "y":
-        for item in case.file_directory.iterdir():
-            if item.name not in files_to_keep:
-                if item.is_file():
-                    item.unlink()
-                elif item.is_dir():
-                    shutil.rmtree(item)
-        logger.info(f"Cleaned case at {case.file_directory}.")
-        
-
-def delete_case(file_directory: Union[str, Path]) -> None:
-    """Delete a MicroHH case by removing its directory.
-
-    Args:
-        file_directory (Union[str, Path]):
-            Directory where the case is stored.
-    """
-    file_directory = Path(file_directory)
-
-    if not file_directory.exists():
-        raise FileNotFoundError(f"Case directory '{file_directory}' does not exist.")
-
-    user_input = input(
-        f"Are you sure you want to delete the case at {file_directory}? (y/n): "
-    )
-    if user_input.lower() == "y":
-        shutil.rmtree(file_directory)
-        logger.info(f"Deleted case at {file_directory}.")
 
 
 def interpolate_to_model_profile(
