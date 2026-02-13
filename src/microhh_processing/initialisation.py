@@ -237,14 +237,21 @@ class Case:
         case_path: Union[str, Path],
         pattern: str,
         new_filename: str,
+        exclude_pattern: str | None = None,
     ):
         """Generic helper to copy a single file matching a pattern from case_path to scratch."""
         case_path = Path(case_path)
         matched_files = list(case_path.rglob(pattern))
 
+        if exclude_pattern:
+            matched_files = [
+                p for p in matched_files
+                if exclude_pattern not in p.name
+            ]
+
         if len(matched_files) != 1:
             raise FileNotFoundError(
-                f"Expected one file in '{case_path}', found {len(matched_files)}."
+                f"Expected one file with pattern '{pattern}' in '{case_path}', found {len(matched_files)}."
             )
 
         src = matched_files[0]
@@ -255,8 +262,9 @@ class Case:
         """Provide .ini file based on the default method when initialising a case."""
         self._copy_single_file(
             case_path=case_path,
-            pattern=f"{self.name}.ini",
+            pattern=f"*.ini",
             new_filename=f"{self.name}.ini",
+            exclude_pattern="_base.ini"
         )
 
     def _copy_initial(self, case_path: Union[str, Path]):
@@ -360,20 +368,23 @@ class Case:
         else:
             logger.info(f"{file_path} does not exist.")
 
-    def get_benchmark(self, save: bool = False) -> dict:
+    def get_benchmark(self, save: bool = False, ssh_connect: str = None) -> dict:
         """Get benchmark information from the .out file of the case.
 
         Args:
             save (bool, optional. Default: False):
                 Specify if the benchmark information should be saved
                 as a .json file in the case directory.
+            ssh_connect (str, optional. Default: None):
+                Specify the SSH connection string if the job is running on a remote cluster.
 
         Returns:
             dict: A dictionary containing the benchmark information.
         """
         benchmark = {}
 
-        simulated_time = self._get_simulated_time()
+        simulated_time_s = self._get_simulated_time()
+        simulated_time = pd.to_timedelta(simulated_time_s, unit="s")
 
         # get setup from ini file
         itot = self.ini_file["grid"]["itot"]
@@ -385,13 +396,13 @@ class Case:
         zsize = self.ini_file["grid"]["zsize"]
 
         # get saccing info
-        info = cscs.get_sacct_info(self.job_id)
+        info = cscs.get_sacct_info(self.job_id, ssh_connect=ssh_connect)
 
         # get first row of info
         info = info.iloc[0]
         nnodes = info["NNodes"]
         ncpus = info["NCPUS"]
-        elapsed = info["Elapsed"]
+        elapsed = pd.to_timedelta(info["Elapsed"])
 
         benchmark["itot"] = itot
         benchmark["jtot"] = jtot
@@ -400,8 +411,10 @@ class Case:
         benchmark["dy"] = ysize / jtot
         benchmark["dz"] = zsize / ktot
 
-        benchmark["simulated_time_s"] = simulated_time
-        benchmark["elapsed_time"] = elapsed
+        benchmark["simulated_time"] = str(simulated_time)
+        benchmark["simulated_time_s"] = simulated_time_s
+        benchmark["elapsed_time"] = str(elapsed)
+        benchmark["elapsed_time_s"] = elapsed.total_seconds()
         benchmark["nnodes"] = int(nnodes)
         benchmark["ncpus"] = int(ncpus)
 
@@ -595,6 +608,67 @@ def read_case(case_directory: Union[str, Path]) -> Case:
 
     return case
 
+def rename_case(case: Case, new_name: str = None, new_suffix: str = None) -> Case:
+    """Rename a MicroHH case by renaming its directory and .ini file.
+
+    Args:
+        case (Case): Case to be renamed.
+        new_name (str, optional): New name for the case. If not provided, the existing name will be kept.
+        new_suffix (str, optional): New suffix for the case.
+        If not provided, the existing suffix will be kept.
+
+    Returns:
+        Case: Renamed MicroHH case.
+    """
+    # if new_name or new_suffix is None, do not change anything
+    if new_name is None and new_suffix is None:
+        raise ValueError("Please provide a new name or a new suffix for the case.")
+    
+    new_name = new_name if new_name is not None else case.name
+    new_suffix = new_suffix if new_suffix is not None else case.suffix
+    new_name_spec = f"{new_name}.{new_suffix}" if new_suffix else f"{new_name}"
+    new_file_directory = case.file_directory.parent / new_name_spec
+
+    if new_file_directory.exists():
+        raise FileExistsError(f"Directory '{new_file_directory}' already exists.")
+
+    # Rename the directory
+    shutil.move(str(case.file_directory), str(new_file_directory))
+
+    # Update the case attributes
+    case.name = new_name
+    case.suffix = new_suffix
+    case.name_spec = new_name_spec
+    case.file_directory = new_file_directory
+    case.ini_path = Path(new_file_directory, f"{new_name}.ini")
+
+    return case
+
+def clean_case(case: Case) -> None:
+    """Clean a MicroHH case by removing all files except the
+        - .ini file,
+        - _input.nc file and
+        - microhh executable.
+    Args:
+        case (Case): Case to be cleaned.
+    """
+    files_to_keep = [
+        f"{case.name}.ini",
+        f"{case.name}_input.nc",
+        "microhh",
+    ]
+    user_input = input(
+        f"Are you sure you want to clean the case at {case.file_directory}? (y/n): "
+    )
+    if user_input.lower() == "y":
+        for item in case.file_directory.iterdir():
+            if item.name not in files_to_keep:
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+        logger.info(f"Cleaned case at {case.file_directory}.")
+        
 
 def delete_case(file_directory: Union[str, Path]) -> None:
     """Delete a MicroHH case by removing its directory.

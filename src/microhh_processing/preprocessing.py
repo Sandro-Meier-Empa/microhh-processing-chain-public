@@ -38,9 +38,9 @@ class PreProcessing:
                 Path to the MicroHH executable or the directory containing the MicroHH executable.
         """
         self.case = case
-        self.processor = alps_setup.processor
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
+
         self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_exists()
         self._check_microhh_build_architecture()
@@ -75,11 +75,9 @@ class PreProcessing:
         Check if the architecture of the selected MicroHH build matches the system architecture.
         """
         if not os.path.exists(self.microhh_executable_path):
-            return False, f"Error: File {self.microhh_executable_path} not found."
+            logger.warning(f"File {self.microhh_executable_path} not found.")
 
-        # Get the current system architecture (e.g., 'x86_64' or 'aarch64')
-        current_arch = platform.machine().lower()
-        
+        arch = self._get_architecture()
 
         result = subprocess.check_output(
             ['file', self.microhh_executable_path],
@@ -93,8 +91,23 @@ class PreProcessing:
         else:
             exec_arch = "unknown"
 
-        if current_arch != exec_arch:
-            logger.error(f"Mismatch: System is {current_arch}, but binary is {exec_arch}.")
+        if arch != exec_arch:
+            logger.error(f"Mismatch: System is {arch}, but binary is {exec_arch}.")
+
+    def _get_architecture(self) -> str:
+        """Get the architecture of the system.
+        If ssh_connect is provided, get the architecture of the remote system.
+        Returns:
+            str: Architecture of the system (e.g., 'x86_64', 'aarch64').
+        """
+        if self.alps_setup.ssh_connect:
+            result = subprocess.check_output(
+                ['ssh', self.alps_setup.ssh_connect, 'uname -m'],
+                stderr=subprocess.STDOUT).decode().strip()
+        else:
+            result = platform.machine()
+
+        return result
 
     def prepare_simulation(
         self,
@@ -159,7 +172,7 @@ class PreProcessing:
 
         # copy microHH restart files
         restart_str = self.get_restart_str(restart_time)
-        self.copy_restart_files(origin=restart_self.case.file_directory, timestr=restart_str)
+        self.copy_restart_files(origin=restart_case.file_directory, timestr=restart_str)
 
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode="rerun")
@@ -196,13 +209,18 @@ class PreProcessing:
 
     def start_simulation(self, wait: bool = False):
         """Start the MicroHH simulation by executing the bash script on CSCS Alps.
-        Check if another job is in the queue"""
+        
+        Args:
+            wait (bool, optional. Default: False):
+                Specify if the next job should only be submitted
+                after the previous one has stopped.
+        """
         running_jobs = cscs.jobs_in_queue()
         jobs_in_debug_queue = False
 
         # check if any other job is running in the debug queue
         if not running_jobs.empty:
-            jobs_in_debug_queue = running_jobs[running_jobs["PARTITION"] == "debug"]
+            jobs_in_debug_queue = not running_jobs[running_jobs["PARTITION"] == "debug"].empty
 
         if self.alps_setup.partition == "debug" and jobs_in_debug_queue:
             logger.warning(
@@ -213,7 +231,7 @@ class PreProcessing:
             self.case.job_id = None
             return
 
-        self.case.job_id = cscs.execute_bash_script(self.job_file, wait)
+        self.case.job_id = cscs.execute_bash_script(self.job_file, wait, ssh_connect=self.alps_setup.ssh_connect)
 
     def cancel_simulation(self):
         # check if self has attribute "job_id"

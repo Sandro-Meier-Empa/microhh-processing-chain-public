@@ -34,9 +34,7 @@ class AlpsSetup:
         # no gpu feature, cpu = cores per socket (64) * sockets (2)
         "eiger": {"cpu": 128},
         # no cpu frature, gpu = cores per socket (72) * sockets (4)
-        # due to low noise mode, one core per socket cannot be used
-        # (see https://eth-cscs.github.io/cscs-docs/guides/gb2025/)
-        "santis": {"gpu": 284},
+        "santis": {"gpu": 288},
         # not implemented
         "daint": {None},
         # not implemented
@@ -47,10 +45,10 @@ class AlpsSetup:
 
     PARTITION_CONDITIONS = {
         "debug": {"time_limit": 30 * 60, "max_nodes": 10},
-        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": np.inf},
+        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
         "xfer": {"time_limit": 24 * 60 * 60, "max_nodes": 1},
         "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
-        "low": {"time_limit": 24 * 30 * 60, "max_nodes": np.inf},
+        "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
     }
 
     def __init__(
@@ -66,7 +64,7 @@ class AlpsSetup:
         ntasks_per_core: int = 1,
         ntasks_per_node: int = None,
         cpus_per_task: int = 1,
-        large_memory: bool = False,
+        gpus_per_task: int = 1,
         partition: Literal["debug", "normal", "prepost", "low"] = "debug",
         uenv: str = "",
     ):
@@ -96,18 +94,19 @@ class AlpsSetup:
         ntasks_per_node (int, optional):
             Number of tasks per node.
             If not specified, the default for 'cpu' is set to
-            36 and 12 for 'gpu'. If 'mpi = False', it is set to 1.
+            128 and 288 for 'gpu'. If 'mpi = False', it is set to 1.
         cpus_per_task (int, optional. Default: 1):
             Number of cpus per task.
             Specify the number of cpus per task.
             Defines the number of OpenMP threads per MPI rank.
             The maximum value depends on the number of tasks per node.
-        large_memory (bool, optional. Defaults False):
-            Specifies if nodes with large memory should be used.
+        gpus_per_task (int, optional. Default: 1):
+            Number of gpus per task.
+            Specify the number of gpus per task.
         partition (str, optional. Default: 'debug')
             ['debug', 'normal', 'prepost', 'low']:
             Queue to be used on alps.
-        uven (str, optional):
+        uenv (str, optional):
             User environment to be used for running a job
             e.g. 'prgenv-gnu'
         """
@@ -122,12 +121,17 @@ class AlpsSetup:
         self.ntasks_per_core = ntasks_per_core
         self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
         self.cpus_per_task = cpus_per_task
-        self.large_memory = large_memory
+        self.gpus_per_task = gpus_per_task
         self.partition = partition
         self.uenv = uenv
 
-        self._check_cscs_setup_valid()
+        self._check_wall_time_valid()
+        self._check_node_number_valid()
+        self._check_processor_valid()
         self._check_mail_setup_valid()
+
+        # check if the user wants to remotely submit jobs via ssh
+        self._set_ssh_connect()
 
     @property
     def cluster(self):
@@ -164,7 +168,7 @@ class AlpsSetup:
         else:
             return 1
 
-    def _check_cscs_setup_valid(self):
+    def _check_wall_time_valid(self):
         """Checks if the setup is valid to be run on alps based
         on the selected queue, wall time and number of nodes.
 
@@ -182,14 +186,33 @@ class AlpsSetup:
             and run_time_delta.total_seconds() > conditions["time_limit"]
         ):
             raise ValueError("Invalid time limit for the selected partition.")
+        
+    def _check_node_number_valid(self):
+        conditions = self.PARTITION_CONDITIONS.get(self.partition, {})
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
+        
+    def _check_processor_valid(self):
+        if self.processor not in self.PROCESSOR_VERSIONS[self.cluster]:
+            raise ValueError(
+                f"{self.processor} is not available on {self.cluster}."
+            )
 
     def _check_mail_setup_valid(self):
         if self.mail_type != "NONE" and self.email is None:
             raise ValueError(
                 "Please provide an email address to receive notifications."
             )
+        
+    def _set_ssh_connect(self):
+        # get name of the current machine
+        current_cluster = os.environ["CLUSTER_NAME"]
+        if current_cluster != self.cluster:
+            user = os.environ["USER"]
+            self.ssh_connect = f"{user}@{self.cluster}"
+            logger.info(f"SSH connection set to {self.ssh_connect}")
+        else:
+            self.ssh_connect = None
 
     def _parse_run_time(self, run_time: str) -> pd.Timedelta:
         """Parse the run_time string and return a timedelta object
@@ -241,13 +264,13 @@ class AlpsSetup:
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        command = f"srun {python_path} {py_file_path} --case-name {case.name} --case-suffix {case.suffix}"
+        cmd = f"srun {python_path} {py_file_path} --case-name {case.name} --case-suffix {case.suffix}"
 
         if additional_args:
             additional_args_str = " ".join(
                 [f"{key}={str(value)}" for key, value in additional_args.items()]
             )
-            command = f"{command} --additional-args {additional_args_str}"
+            cmd = f"{cmd} --additional-args {additional_args_str}"
 
         # submit bash script to run post processing in parallel on alps
         job_file = Path(case.scratch_path, f"{job_name_formatted}.sbash")
@@ -257,7 +280,7 @@ class AlpsSetup:
 
         if not job_file.exists() or overwrite:
             job_file = self.create_bash_script(
-                commands=command,
+                commands=cmd,
                 job_name=job_name_formatted,
                 file_path=job_file,
                 scratch_path=case.scratch_path,
@@ -277,7 +300,9 @@ class AlpsSetup:
         scratch_path: Union[str, Path],
     ) -> Union[str, Path]:
         """Create bash script to run a simulation.
-        For more info, see https://slurm.schedmd.com/sbatch.html
+        For more info, see 
+        - https://docs.cscs.ch/running/slurm/
+        - https://slurm.schedmd.com/sbatch.html
 
         Args:
             start_jobs (bool, optional. Default: False):
@@ -293,8 +318,9 @@ class AlpsSetup:
         constraint = "mc" if self.processor == "cpu" else "gpu"
 
         with open(file_path, "w") as bash_script:
-            header = "#!/bin/bash -l \n\n"
+            header = "#!/usr/bin/env bash\n\n"
 
+            header += f"#SBATCH --exclusive\n"
             header += f"#SBATCH --job-name={job_name} \n"
             header += f"#SBATCH --account={self.account}\n"
             header += f"#SBATCH --mail-type={self.mail_type}\n"
@@ -305,8 +331,8 @@ class AlpsSetup:
             header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
             header += f"#SBATCH --ntasks-per-node={self.ntasks_per_node}\n"
             header += f"#SBATCH --cpus-per-task={self.cpus_per_task}\n"
-            if self.large_memory:
-                header += "#SBATCH --mem=120GB"
+            if self.processor == "gpu":
+                header += f"#SBATCH --gpus-per-task={self.gpus_per_task}\n"
             header += f"#SBATCH --partition={self.partition} \n"
             header += f"#SBATCH --constraint={constraint}\n"
             header += f"#SBATCH --hint={multithread}\n"
@@ -314,15 +340,12 @@ class AlpsSetup:
             header += f"#SBATCH --chdir={str(scratch_path)}\n"
             if self.uenv:
                 header += f"#SBATCH --uenv={self.uenv}\n\n"
-                header += "export LD_LIBRARY_PATH='/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH'\n"
+                header += 'export LD_LIBRARY_PATH="/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH"\n'
             else:
                 header += "\n"
 
             header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
-            if self.processor == "gpu":
-                header += "export CRAY_CUDA_MPS=1\n\n"
-            else:
-                header += "\n"
+            header += "\n"
 
             # append commands to the file
             for command in commands:
@@ -350,13 +373,11 @@ def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_conne
     """
     job_file = Path(job_file)
 
-    if ssh_connect:
-        cmd = ["ssh", ssh_connect, "sbatch"]
-    else:
-        cmd = ["sbatch"]
+    cmd = ["ssh", ssh_connect, "sbatch"] if ssh_connect else ["sbatch"]
 
     if wait:
         cmd.append("--wait")
+        
     cmd.append(str(job_file))
 
     result = subprocess.run(
@@ -415,6 +436,7 @@ def jobs_in_queue(
         "SCHEDNODES",
     ],
     add_progress: bool = False,
+    ssh_connect: str = None,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 
@@ -430,9 +452,10 @@ def jobs_in_queue(
     user = os.environ["USER"]
 
     # call squeue returning only all variables of the jobs
-    squeue = subprocess.Popen(
-        ["squeue", "-u", user, "-o", "%all"], stdout=subprocess.PIPE
-    )
+    cmd = ["ssh", ssh_connect] if ssh_connect else []
+    cmd.extend(["squeue", "-u", user, "-o", "%all"])
+
+    squeue = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # get the output
     output = squeue.communicate()[0]
@@ -525,9 +548,6 @@ def get_simulation_progress(case) -> Tuple[int, int]:
         Tuple[int, int]:
             Current and max time step of a simulation.
     """
-    # only import the dependencies if this function is called
-    import microhh_py.microhh_tools as mht
-
     current_timestep = 0
 
     def process_file(file):
@@ -548,8 +568,7 @@ def get_simulation_progress(case) -> Tuple[int, int]:
             timestep = future.result()
             current_timestep = max(current_timestep, timestep)
 
-    ini_file = mht.Read_namelist(case.ini_path)
-    max_timestep = int(ini_file["time"]["endtime"])
+    max_timestep = int(case.ini_file["time"]["endtime"])
 
     return current_timestep, max_timestep
 
@@ -567,7 +586,7 @@ def extract_job_id(case) -> int | None:
     return None
 
 
-def get_sacct_info(jobid, fields=None):
+def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
     """
     Query Slurm accounting (sacct) for a given job ID and return a pandas DataFrame.
 
@@ -588,13 +607,15 @@ def get_sacct_info(jobid, fields=None):
         fields = ["JobID", "JobName", "NNodes", "NCPUS", "Elapsed", "State"]
 
     # Build sacct command
-    cmd = [
+    cmd = ["ssh", ssh_connect] if ssh_connect else []
+
+    cmd.extend([
         "sacct",
         "-j",
         str(jobid),
         "-P",  # pipe-delimited
         f"--format={','.join(fields)}",
-    ]
+    ])
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -613,23 +634,3 @@ def get_sacct_info(jobid, fields=None):
     df = df[~df["JobID"].str.contains(r"\.batch$|\.extern$|\.0$", regex=True)]
 
     return df
-
-
-def get_sacct_case(case) -> pd.DataFrame:
-    """
-    Get sacct information for a given case.
-
-    Parameters
-    ----------
-    case : init.Case
-        The case object containing job information.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing the sacct output for the case.
-    """
-    jobid = extract_job_id(case)
-    if jobid is None:
-        raise ValueError("Job ID could not be extracted from the case.")
-    return get_sacct_info(jobid)
