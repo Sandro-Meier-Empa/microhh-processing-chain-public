@@ -79,6 +79,10 @@ class PreProcessing:
 
         arch = self._get_architecture()
 
+        if arch is None:
+            logger.warning("Unable to determine system architecture. Skipping architecture check.")
+            return
+
         result = subprocess.check_output(
             ['file', self.microhh_executable_path],
             stderr=subprocess.STDOUT).decode()
@@ -101,9 +105,13 @@ class PreProcessing:
             str: Architecture of the system (e.g., 'x86_64', 'aarch64').
         """
         if self.alps_setup.ssh_connect:
-            result = subprocess.check_output(
-                ['ssh', self.alps_setup.ssh_connect, 'uname -m'],
-                stderr=subprocess.STDOUT).decode().strip()
+            try:
+                result = subprocess.check_output(
+                    ['ssh', self.alps_setup.ssh_connect, 'uname -m'],
+                    stderr=subprocess.STDOUT).decode().strip()
+            except subprocess.CalledProcessError:
+                logger.warning(f"Failed to connect to {self.alps_setup.ssh_connect}. Unable to determine remote architecture.")
+                result = None
         else:
             result = platform.machine()
 
@@ -115,26 +123,31 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ):
-        """Prepare MicroHH for running a simulation and executes the simulation.
-        - Copy the initial conditions {name}_input.nc
-        - Copy the specified build of MicroHH to scratch
-        - Create bash script and execute it to run the model
+        """Prepare the case for running the MicroHH simulation by
+        - checking if the .ini setup is valid,
+        - copying the MicroHH executable to the scratch directory,
+        - checking if all required files are present,
+        - creating a bash script to run the simulation
 
-        Args:
-            start_jobs (bool, optional. Default: False):
-                Specify if the job should be started.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
-
-        Raises:
-            FileNotFoundError: Raise error if oen of the files cannot be found on scatch.
         """
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
 
         # copy microHH to directory
         self.copy_executable()
 
-        # check if all files are present
+        # Check if required files are present
+        self._check_required_files()
+
+        # Create bash script if it does not exist
+        self.job_file = self.create_run_script(overwrite, mode="run")
+
+        if start_jobs:
+            # Launch the job on alps
+            self.start_simulation(wait)
+
+    def _check_required_files(self):
+        """Check if all required files are present in the scratch directory."""
         files_required = [
             f"{self.case.name}_input.nc",
             f"{self.case.name}.ini",
@@ -147,17 +160,7 @@ class PreProcessing:
                 raise FileNotFoundError(
                     f"Required file '{filename}' not found in '{self.case.scratch_path}'."
                 )
-
-        # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite, mode="run")
-
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
-
-        if start_jobs:
-            # Launch the job on alps
-            self.start_simulation(wait)
-
+    
     def prepare_restart_simulation(
         self,
         restart_case: init.Case,
@@ -166,6 +169,12 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ):
+        
+        # Check if .ini file has been updated for restart
+        self._check_restart_ini_updated(restart_time)
+
+        # check if the .ini setup is valid
+        self._check_ini_setup_valid()
 
         # copy microHH to directory
         self.copy_executable()
@@ -176,12 +185,6 @@ class PreProcessing:
 
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode="rerun")
-
-        # Check if .ini file has been updated for restart
-        self._check_restart_ini_updated(restart_time)
-
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
 
         if start_jobs:
             # Launch the job on alps
@@ -194,17 +197,17 @@ class PreProcessing:
             restart_time (int):
                 Time in seconds from which the simulation is restarted.
         """
-        starttime = self.case.ini_file["time"]["starttime"]
+        start_time = self.case.ini_file["time"]["starttime"]
 
-        if starttime != restart_time:
+        if start_time != restart_time:
             raise ValueError(
-                f"starttime ({starttime}s) in .ini file does not match "
+                f"start time ({start_time}s) in .ini file does not match "
                 f"the specified restart_time ({restart_time}s)."
             )
-        endtime = self.case.ini_file["time"]["endtime"]
-        if endtime <= restart_time:
+        end_time = self.case.ini_file["time"]["endtime"]
+        if end_time <= restart_time:
             raise ValueError(
-                f"endtime ({endtime}s) must be larger than restart_time ({restart_time}s)."
+                f"end time ({end_time}s) must be larger than restart_time ({restart_time}s)."
             )
 
     def start_simulation(self, wait: bool = False):
