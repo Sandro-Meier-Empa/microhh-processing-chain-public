@@ -1,5 +1,12 @@
 import numpy as np
 
+__all__ = [
+    "calculate_plume_centerline",
+    "calculate_absolute_dispersion",
+    "calculate_meandering_dispersion",
+]
+
+
 def calculate_plume_centerline(grid_y, concentration_2d):
     """
     Calculates the crosswind centerline position y_m for a given x-slice.

@@ -8,6 +8,11 @@ from pyproj.database import query_utm_crs_info
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 
+__all__ = [
+    "Domain",
+    "get_epsg_from_pyproj",
+]
+
 
 class Domain:
     def __init__(

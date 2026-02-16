@@ -5,26 +5,17 @@ import re
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Literal
+from typing import Union, Tuple, Optional
 from io import StringIO
 
 import pandas as pd
 import numpy as np
 
-import microhh_processing.misc as misc
+from microhh_processing.enums import Cluster, Processor, Partition, MailType
+from microhh_processing.constants import PrintColor
+from microhh_processing import utils
 
 logger = logging.getLogger(__name__)
-
-class print_colors:
-    CYAN = "\033[96m"
-    VIOLET = "\033[95m"
-    BLUE = "\033[94m"
-    YELLOW = "\033[93m"
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    UNDERLINE = "\033[4m"
-    BOLD = "\033[1m"
-    ENDC = "\033[0m"
 
 
 class AlpsSetup:
@@ -53,19 +44,19 @@ class AlpsSetup:
 
     def __init__(
         self,
-        cluster: Literal["clariden", "daint", "eiger", "santis", "todi"],
-        processor: Literal["cpu", "gpu"],
+        cluster: Union[Cluster, str],
+        processor: Union[Processor, str],
         mpi: bool,
         account: str,
-        mail_type: Literal["NONE", "BEGIN", "END", "FAIL", "REQUEUE", "ALL"] = "NONE",
-        email: str = None,
+        mail_type: Union[MailType, str] = MailType.NONE,
+        email: Optional[str] = None,
         run_time: str = "00:30:00",
         nodes: int = 1,
         ntasks_per_core: int = 1,
-        ntasks_per_node: int = None,
+        ntasks_per_node: Optional[int] = None,
         cpus_per_task: int = 1,
         gpus_per_task: int = 1,
-        partition: Literal["debug", "normal", "prepost", "low"] = "debug",
+        partition: Union[Partition, str] = Partition.DEBUG,
         uenv: str = "",
     ):
         """A class handling everything around the workflow on cscs's supercomputers.
@@ -134,22 +125,29 @@ class AlpsSetup:
         self._set_ssh_connect()
 
     @property
-    def cluster(self):
-        if self._cluster.lower() in ["santis", "eiger"]:
-            return self._cluster.lower()
-        elif self._cluster.lower() in self.PROCESSOR_VERSIONS.keys():
-            raise NotImplementedError
+    def cluster(self) -> str:
+        cluster_val = self._cluster.value if isinstance(self._cluster, Cluster) else str(self._cluster).lower()
+        if cluster_val in ["santis", "eiger"]:
+            return cluster_val
+        elif cluster_val in self.PROCESSOR_VERSIONS.keys():
+            raise NotImplementedError(f"Cluster '{cluster_val}' is not yet implemented.")
         else:
             raise ValueError(f"{self._cluster} is invalid.")
 
     @property
-    def processor(self):
-        if self._processor.lower() in self.PROCESSOR_VERSIONS[self.cluster]:
-            return self._processor.lower()
+    def processor(self) -> str:
+        processor_val = self._processor.value if isinstance(self._processor, Processor) else str(self._processor).lower()
+        if processor_val in self.PROCESSOR_VERSIONS[self.cluster]:
+            return processor_val
         else:
             raise ValueError(
-                f"{self._processor.lower()} is not available on {self.cluster}."
+                f"{processor_val} is not available on {self.cluster}."
             )
+
+    @property
+    def partition_key(self) -> str:
+        """Get partition value as string for dictionary lookups."""
+        return self.partition.value if isinstance(self.partition, Partition) else str(self.partition).lower()
 
     def _get_default_ntasks_per_node(self) -> int:
         """Determines the default number of tasks per node
@@ -180,7 +178,7 @@ class AlpsSetup:
         """
         # Check if CSCS setup is valid
         run_time_delta = self._parse_run_time(self.run_time)
-        conditions = self.PARTITION_CONDITIONS.get(self.partition, {})
+        conditions = self.PARTITION_CONDITIONS.get(self.partition_key, {})
         if (
             conditions.get("time_limit")
             and run_time_delta.total_seconds() > conditions["time_limit"]
@@ -188,7 +186,7 @@ class AlpsSetup:
             raise ValueError("Invalid time limit for the selected partition.")
         
     def _check_node_number_valid(self):
-        conditions = self.PARTITION_CONDITIONS.get(self.partition, {})
+        conditions = self.PARTITION_CONDITIONS.get(self.partition_key, {})
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
         
@@ -199,7 +197,8 @@ class AlpsSetup:
             )
 
     def _check_mail_setup_valid(self):
-        if self.mail_type != "NONE" and self.email is None:
+        mail_val = self.mail_type.value if isinstance(self.mail_type, MailType) else self.mail_type
+        if mail_val != "NONE" and self.email is None:
             raise ValueError(
                 "Please provide an email address to receive notifications."
             )
@@ -312,7 +311,7 @@ class AlpsSetup:
                 after the previous one has stopped.
         """
         # make sure commands is a list:
-        commands = misc.object_to_list(commands)
+        commands = utils.object_to_list(commands)
 
         multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
         constraint = "mc" if self.processor == "cpu" else "gpu"
@@ -525,14 +524,14 @@ def print_simulation_progress(case):
     progress_percentage = current_timestep / max_timestep * 100
 
     if progress_percentage == 0.0:
-        color = print_colors.RED
+        color = PrintColor.RED
     elif progress_percentage == 100.0:
-        color = print_colors.GREEN
+        color = PrintColor.GREEN
     else:
-        color = print_colors.YELLOW
+        color = PrintColor.YELLOW
 
     print(
-        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){print_colors.ENDC}"
+        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){PrintColor.ENDC}"
     )
 
 
@@ -634,3 +633,16 @@ def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
     df = df[~df["JobID"].str.contains(r"\.batch$|\.extern$|\.0$", regex=True)]
 
     return df
+
+
+__all__ = [
+    "AlpsSetup",
+    "execute_bash_script",
+    "jobs_in_queue",
+    "cancel_all",
+    "add_progress_to_df",
+    "print_simulation_progress",
+    "get_simulation_progress",
+    "extract_job_id",
+    "get_sacct_info"
+    ]

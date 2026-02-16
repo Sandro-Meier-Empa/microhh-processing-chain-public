@@ -5,24 +5,14 @@ import numpy as np
 import netCDF4 as nc4
 
 from pathlib import Path
-from typing import Union, Literal, Optional
+from typing import Union, Optional
 from functools import wraps
 
 import microhhpy
 
 
-def open_in_vscode(file_path: Union[str, Path]):
-    """Open the bash script in VS Code.
 
-    Args:
-        file_path (Path):
-            Specify the path of the bash script which should be opened.
-    """
-    file_path = Path(file_path)
-    subprocess.run(["code", str(file_path)], cwd=file_path.parent)
-
-
-def open_microhh_nc(case, variable: str, chunks: Union[str, dict] = None) -> xr.Dataset:
+def open_microhh_nc(case, variable: str, chunks: Optional[Union[str, dict]] = None) -> xr.Dataset:
     """Open a .nc file related to MicroHH output.
 
     Args:
@@ -131,3 +121,12 @@ def save_case_input(
         trajectories=trajectories,
         output_dir=output_dir,
     )
+
+
+__all__ = [
+    "open_microhh_nc",
+    "open_initial_cond",
+    "open_statistics",
+    "open_microhh_out",
+    "save_case_input",
+]

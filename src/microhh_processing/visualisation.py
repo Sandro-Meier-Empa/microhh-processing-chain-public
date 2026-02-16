@@ -29,6 +29,14 @@ import microhh_processing.sources as src
 
 import ddeq
 
+__all__ = [
+    "Visualisation",
+    "VariableViewer",
+    "plot_gas_weight",
+    "plot_case_comparison",
+]
+
+
 class Visualisation:
 
     wind_dims = {

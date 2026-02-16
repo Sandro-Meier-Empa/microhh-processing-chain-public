@@ -1,4 +1,4 @@
-from typing import List, Literal, Union
+from typing import List, Union, Optional
 from collections.abc import Iterable
 
 import logging
@@ -11,6 +11,7 @@ import ucat
 import xarray as xr
 import microhh_processing.initialisation as init
 import microhh_processing.io as io
+from microhh_processing.enums import Stability
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +221,175 @@ def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
         return ref.tz_convert("UTC")
 
     raise TypeError(f"{name} must be a pd.Timestamp or a string 'HH:MM:SS'")
+
+# Note: Stability enum is imported from enums.py
+
+
+def briggs_momentum_rise(
+    x: Union[float, np.ndarray],
+    u: Union[float, np.ndarray],
+    d: Union[float, np.ndarray],
+    Vs: Union[float, np.ndarray],
+    stability: Stability = Stability.NEUTRAL,
+) -> Union[float, np.ndarray]:
+    """
+    Briggs (1969) momentum-dominated plume rise Δh(x) for neutral conditions.
+    Taken from Seinfeld and Pandis (2016), p. 868
+
+    Table form used (neutral):
+        near-field: Δh = 1.44 * (d*Vs)^(2/3) * x^(1/3) / u^(2/3)
+        final:      Δh = 3 * d * Vs / u
+    with the condition Vs/u >= 4.
+
+    Parameters
+    ----------
+    x : float
+        Downwind distance (m).
+    u : float
+        Wind speed at stack height (m/s).
+    d : float
+        Stack diameter (m).
+    Vs : float
+        Stack exit velocity (m/s).
+    stability : {"neutral"}
+        Atmospheric stability regime. Only "neutral" is supported in this implementation.
+
+    Returns
+    -------
+    Δh : float
+        Plume rise above source (m).
+    """
+    _validate_input(x, u, d, Vs)
+    
+    if not isinstance(stability, Stability):
+        stability = Stability(stability)
+
+    if stability != Stability.NEUTRAL:
+        raise ValueError(
+            "This momentum implementation uses the Briggs neutral (1969) form."
+        )
+
+    if np.any(Vs / u < 4):
+        logger.warning(
+            f"Briggs momentum rise is only valid for Vs/u >= 4. Invalid value will be masked as Nan."
+        )
+        valid_mask = np.where(Vs / u >= 4, True, False)
+    else:
+        valid_mask = np.ones_like(Vs, dtype=bool)
+
+    if x == 0:
+        return 0.0
+
+    # Compute near-field and final rise
+    dh_near = _generic_plume_rise_form(E=1.44 * (d * Vs) ** (2.0 / 3.0), x=x, b=1.0 / 3.0, u=u, a=2.0 / 3.0)
+    dh_final = _generic_plume_rise_form(E=3.0 * d * Vs, x=x, b=0, u=u, a=1.0)
+    
+    # return the element wise minimum of near-field and final rise
+    dh = np.minimum(dh_near, dh_final)
+
+    return np.where(valid_mask, dh, np.nan)
+
+def asme_momentum_rise(
+    x: Union[float, np.ndarray],
+    u: Union[float, np.ndarray],
+    d: Union[float, np.ndarray],
+    Vs: Union[float, np.ndarray],
+) -> Union[float, np.ndarray]:
+    """
+    ASME (1973) momentum-dominated plume rise Δh(x) for neutral conditions.
+    Taken from Seinfeld and Pandis (2016), p. 868
+
+    Conditions for momentum-dominated rise:
+        - Vs >= 10 m/s
+        - Vs > u
+        - ΔT < 50 K
+
+    Parameters
+    ----------
+    x : float
+        Downwind distance (m).
+    u : float
+        Wind speed at stack height (m/s).
+    d : float
+        Stack diameter (m).
+    Vs : float
+        Stack exit velocity (m/s).
+
+    Returns
+    -------
+    Δh : float
+        Plume rise above source (m).
+    """
+
+    _validate_input(x, u, d, Vs)
+
+    if x == 0:
+        return 0.0
+
+    if np.any(Vs < 10) or np.any(Vs <= u):
+        logger.warning(
+            f"ASME momentum rise is only valid for Vs >= 10 m/s and Vs > u. Invalid value will be masked as Nan."
+        )
+        valid_mask = np.where((Vs >= 10) & (Vs > u), True, False)
+    else:
+        valid_mask = np.ones_like(Vs, dtype=bool)
+
+    # Compute final rise
+    dh_final = _generic_plume_rise_form(E=(d * Vs)**1.4, x=x, b=0, u=u, a=1.4)
+
+    return np.where(valid_mask, dh_final, np.nan)
+
+
+def _generic_plume_rise_form(
+        E: float,
+        x: Union[float, np.ndarray],
+        b: float,
+        u: Union[float, np.ndarray],
+        a: float) -> Union[float, np.ndarray]:
+    """
+    Generic form for plume rise equations:
+        Δh = E * (x^b) * (u^-a)
+
+    Parameters
+    ----------
+    E : float
+        Empirical constant.
+    x : float or np.ndarray
+        Downwind distance (m).
+    b : float
+        Exponent for downwind distance.
+    u : float or np.ndarray
+        Wind speed at stack height (m/s).
+    a : float
+        Exponent for wind speed.
+
+    Returns
+    -------
+    Δh : float or np.ndarray
+        Plume rise above source (m).
+    """
+    return E * (x ** b) * (u ** -a)
+
+def _validate_input(
+    x: Union[float, np.ndarray], 
+    u: Union[float, np.ndarray], 
+    d: Union[float, np.ndarray], 
+    Vs: Union[float, np.ndarray]) -> None:
+    if np.array(x).any() < 0:
+        raise ValueError("x must be >= 0 (m).")
+    if np.array(u).any() <= 0:
+        raise ValueError("u must be > 0 (m/s).")
+    if np.array(d).any() <= 0:
+        raise ValueError("d must be > 0 (m).")
+    if np.array(Vs).any() <= 0:
+        raise ValueError("Vs must be > 0 (m/s).")
+
+
+__all__ = [
+    "get_source_strength",
+    "seconds_from_midnight",
+    "create_strength_profiles",
+    "Stability",
+    "briggs_momentum_rise",
+    "asme_momentum_rise",
+]

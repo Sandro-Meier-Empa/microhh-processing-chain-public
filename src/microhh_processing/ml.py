@@ -5,6 +5,12 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 
+__all__ = [
+    "flip_data",
+    "flip_variable",
+    "scale_emissions",
+]
+
 
 def flip_data(data: xr.Dataset, flip_x: bool, flip_y: bool) -> xr.Dataset:
     """Flip all 2D variables in a dataset along the x and/or y axis.

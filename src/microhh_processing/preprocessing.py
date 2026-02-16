@@ -5,7 +5,7 @@ import subprocess
 import logging
 
 from pathlib import Path
-from typing import Literal, Union, Tuple
+from typing import Union, Tuple, Optional
 
 import pandas as pd
 import xarray as xr
@@ -14,8 +14,9 @@ import numpy as np
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
 import microhh_processing.wind as wind_proc
-import microhh_processing.misc as misc
+from microhh_processing import utils
 import microhh_processing.io as io
+from microhh_processing.enums import RunMode
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ class PreProcessing:
             logger.info(f"Cancelling simulation {self.case.job_id}")
 
     def create_run_script(
-        self, overwrite: bool = False, mode: Literal["run", "rerun"] = "run"
+        self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
     ) -> Path:
         job_file = Path(self.case.scratch_path, "run_microhh.sbash")
 
@@ -265,14 +266,16 @@ class PreProcessing:
         return job_file
 
     def _get_microhh_run_commands(
-        self, mode: Literal["run", "rerun"] = "run"
+        self, mode: Union[RunMode, str] = RunMode.RUN
     ) -> list[str]:
-        if mode == "run":
+        mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
+        
+        if mode_val == RunMode.RUN.value:
             commands = [
                 f"srun {self.case.scratch_path}/microhh init {self.case.name}",
                 f"srun {self.case.scratch_path}/microhh run {self.case.name}",
             ]
-        elif mode == "rerun":
+        elif mode_val == RunMode.RERUN.value:
             commands = [
                 f"srun {self.case.scratch_path}/microhh run {self.case.name}",
             ]
@@ -619,3 +622,8 @@ class PreProcessing:
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)
+
+
+__all__ = [
+    "PreProcessing",
+]

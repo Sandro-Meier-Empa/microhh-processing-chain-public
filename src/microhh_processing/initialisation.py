@@ -7,7 +7,7 @@ import sys
 import logging
 
 from pathlib import Path
-from typing import Union, Literal
+from typing import Union, Optional
 
 import netCDF4 as nc4
 import pandas as pd
@@ -17,7 +17,8 @@ import numpy as np
 import microhh_py.microhh_tools as mht
 import ls2d
 
-import microhh_processing.misc as misc
+from microhh_processing.enums import InitMethod, FileType
+from microhh_processing import utils
 import microhh_processing.io as io
 import microhh_processing.cscs as cscs
 
@@ -96,8 +97,8 @@ class Case:
     def _initialise(
         self,
         scratch_path: Union[str, Path],
-        method: Literal["default", "interactive", "rerun"] = "interactive",
-        init_from: Union[str, Path] = None,
+        method: Union[InitMethod, str] = InitMethod.INTERACTIVE,
+        init_from: Optional[Union[str, Path]] = None,
         overwrite: bool = False,
     ):
         """Initialise a case by creating or reading in a directory.
@@ -126,19 +127,21 @@ class Case:
 
     def _handle_method(
         self,
-        method: Literal["default", "interactive", "rerun"],
-        init_from: Union[str, Path] = None,
+        method: Union[InitMethod, str],
+        init_from: Optional[Union[str, Path]] = None,
         overwrite: bool = False,
     ):
-        self.method = method
+        # Normalize method to string for comparison
+        method_val = method.value if isinstance(method, InitMethod) else str(method).lower()
+        self.method = method_val
 
-        if self.method in ["default", "rerun"] and init_from is None:
+        if self.method in [InitMethod.DEFAULT.value, InitMethod.RERUN.value] and init_from is None:
             raise ValueError(
                 "When using 'default' or 'rerun' method, please provide "
                 "the path of the directory containing `.ini` and initial condition files."
             )
 
-        if self.method == "rerun" and overwrite:
+        if self.method == InitMethod.RERUN.value and overwrite:
             raise ValueError(
                 "When using 'rerun' method, overwriting existing files is not allowed. "
                 "Please rename your case."
@@ -173,15 +176,15 @@ class Case:
             'interactive': Create .ini file and initial conditions object oriented.
             'rerun': Rerun a case which is on store or scratch.
         """
-        if self.method == "default":
+        if self.method == InitMethod.DEFAULT.value:
             case_path = Path(init_from)
             self._check_case_setup(case_path)
             self._create_initial(case_path)
             self._copy_ini(case_path)
             self._copy_initial(case_path)
-        elif self.method == "interactive":
+        elif self.method == InitMethod.INTERACTIVE.value:
             self.ini_path.touch()
-        elif self.method == "rerun":
+        elif self.method == InitMethod.RERUN.value:
             case_path = Path(init_from)
             self._copy_ini(case_path)
             self._copy_initial(case_path)
@@ -340,17 +343,23 @@ class Case:
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def open_mhh_in_vscode(self, filetype: Literal["ini", "out", "sbash", "sbash_out"]):
+    def open_mhh_in_vscode(self, filetype: Union[FileType, str]):
         """Open the specified file in VS Code.
-        filetype can be "ini", "out", "sbash", "sbash_out"
+        
+        Args:
+            filetype: File type to open. Can be FileType enum or string
+                ('ini', 'out', 'sbash', 'sbash_out').
         """
-        if filetype == "ini":
+        # Normalize filetype to string
+        filetype_val = filetype.value if isinstance(filetype, FileType) else str(filetype).lower()
+        
+        if filetype_val == FileType.INI.value:
             filename = f"{self.name}.ini"
-        elif filetype == "out":
+        elif filetype_val == FileType.OUT.value:
             filename = f"{self.name}.out"
-        elif filetype == "sbash":
-            filename = f"run_microhh.sbash"
-        elif filetype == "sbash_out":
+        elif filetype_val == FileType.SBASH.value:
+            filename = "run_microhh.sbash"
+        elif filetype_val == FileType.SBASH_OUT.value:
             # Use wildcard matching
             matches = list(Path(self.file_directory).glob("run_microhh*.out"))
             if not matches:
@@ -364,7 +373,7 @@ class Case:
         file_path = self.file_directory / filename
 
         if file_path.exists():
-            io.open_in_vscode(file_path)
+            utils.open_in_vscode(file_path)
         else:
             logger.info(f"{file_path} does not exist.")
 
@@ -607,8 +616,8 @@ def initialise_case(
     name: str,
     suffix: str,
     scratch_path: Union[str, Path],
-    method: Literal["default", "interactive", "rerun"] = "interactive",
-    init_from: Union[str, Path] = None,
+    method: Union[InitMethod, str] = InitMethod.INTERACTIVE,
+    init_from: Optional[Union[str, Path]] = None,
     overwrite: bool = False,
 ) -> Case:
     """Initialise a MicroHH case.
@@ -620,7 +629,7 @@ def initialise_case(
             Is combined as {name}.{suffix}.
         scratch_path (Union[str, Path]):
             Path of personal folder on 'scratch'.
-        method (Literal["default", "interactive", "rerun"], optional. Default: "interactive"):
+        method (Union[InitMethod, str], optional. Default: InitMethod.INTERACTIVE):
             Method of how the case should be set up.
         init_from (Union[str, Path], optional. Default: None):
             Path to the case which should be used as a template for the new case.
@@ -742,3 +751,12 @@ def interpolate_to_model_profile(
         model_var_profile = np.interp(model_profile, input_profile, variable_profile)
 
     return model_var_profile
+
+
+__all__ = [
+    "Case",
+    "compare_ini",
+    "initialise_case",
+    "read_case",
+    "interpolate_to_model_profile",
+]

@@ -10,7 +10,7 @@ import zipfile
 import logging
 
 from pathlib import Path
-from typing import Literal, Union, Tuple
+from typing import Union, Tuple, Optional
 
 import pandas as pd
 import xarray as xr
@@ -25,25 +25,15 @@ import microhh_py.cross_to_nc as cross_to_nc
 import microhh_processing.cscs as cscs
 import microhh_processing.initialisation as init
 import microhh_processing.io as io
-import microhh_processing.misc as misc
+from microhh_processing import utils
 import microhh_processing.sources as src
 import microhh_processing.spatial as spatial
 import microhh_processing.wind as wind_proc
+from microhh_processing.enums import Precision, WindIntegrationMethod
+from microhh_processing.constants import GAS_MOLAR_MASS
 
 logger = logging.getLogger(__name__)
 
-# molar mass (g/mol)
-gas_mass = {
-    "air": 28.9664,  # dry air
-    "co": 28.01,
-    "co2": 44.01,
-    "h2o": 18.01528,
-    "no2": 46.0055,
-    "no": 30.01,
-    "o3": 48.00,
-    "so2": 64.066,
-    "ch4": 16.0425,
-}
 
 class PostProcessing:
     def __init__(self, case: init.Case):
@@ -60,17 +50,15 @@ class PostProcessing:
         py_file_path: Union[str, Path],
         gas: Union[str, list] = None,
         prognostic_vars=["u", "v", "th"],
-        precision: Literal["single", "double"] = "double",
+        precision: Union[Precision, str] = Precision.DOUBLE,
         start_time=None,
         end_time=None,
-        method: Literal[
-            "mean", "median", "height", "concentration_weighted"
-        ] = "height",
-        height: Union[int, float] = None,
-        profile_gas: str = None,
+        method: Union[WindIntegrationMethod, str] = WindIntegrationMethod.HEIGHT,
+        height: Optional[Union[int, float]] = None,
+        profile_gas: Optional[str] = None,
         overwrite: bool = False,
         save: bool = True,
-        chunks: Union[str, dict] = None,
+        chunks: Optional[Union[str, dict]] = None,
     ):
         """Run all post-processing steps to...
             ... create netCDF files from grid output files
@@ -156,10 +144,10 @@ class PostProcessing:
         self,
         vars: Union[str, list],
         overwrite: bool = False,
-        precision: Literal["single", "double"] = "single",
+        precision: Union[Precision, str] = Precision.SINGLE,
         start_time=None,
         end_time=None,
-        py_file_path: Union[str, Path] = None,
+        py_file_path: Optional[Union[str, Path]] = None,
     ):
         """Create 3D netCDF files for the variables specified
 
@@ -228,16 +216,16 @@ class PostProcessing:
     def create_2d_output(
         self,
         vars: Union[str, list],
-        modes: list = None,
-        indexes: list = None,
+        modes: Optional[list] = None,
+        indexes: Optional[list] = None,
         overwrite: bool = False,
-        precision: Literal["single", "double"] = "single",
+        precision: Union[Precision, str] = Precision.SINGLE,
         start_time=None,
         end_time=None,
         sample_time=None,
         nocompression: bool = False,
-        nprocs: int = None,
-        py_file_path: Union[str, Path] = None,
+        nprocs: Optional[int] = None,
+        py_file_path: Optional[Union[str, Path]] = None,
     ):
         """Create cross-section netCDF files for the variables specified.
 
@@ -507,7 +495,7 @@ class PostProcessing:
             prefix = "mass"
 
         variables = {
-            var: (f"{var} {prefix} mixing ratio", unit) for var in gas_mass.keys()
+            var: (f"{var} {prefix} mixing ratio", unit) for var in GAS_MOLAR_MASS.keys()
         }
         variables.update(
             {
@@ -531,14 +519,14 @@ class PostProcessing:
 
     def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
         """Capitalize variable names in an xr.Dataset if they match
-        keys in the gas_mass dictionary.
+        keys in the GAS_MOLAR_MASS dictionary.
 
         Args:
             dataset (xr.Dataset): The xarray dataset to process.
 
         Returns:
             xr.Dataset: The dataset with variable names capitalized if they match
-            keys in the gas_mass dictionary.
+            keys in the GAS_MOLAR_MASS dictionary.
         """
         for var_name in list(dataset.variables):
             new_var_name = self._capitalise_gas_key(var_name)
@@ -548,7 +536,7 @@ class PostProcessing:
 
     def _capitalise_gas_key(self, variable_name: str) -> str:
         """Capitalise gases to make them consistent with 'ddeq'"""
-        for key in gas_mass.keys():
+        for key in GAS_MOLAR_MASS.keys():
             if key in variable_name:
                 return key.upper()
         return variable_name
@@ -1313,3 +1301,8 @@ class PostProcessing:
         den = data[variable].integrate(coord=[zdim_name, ydim_name])
 
         return num / den
+
+
+__all__ = [
+    "PostProcessing"
+    ]

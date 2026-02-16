@@ -2,10 +2,10 @@ import os
 import scipy
 import sys
 import logging
+from typing import Union, Tuple, Optional
+from pathlib import Path
 
 from scipy.optimize import fsolve
-from typing import Literal, Union, Tuple
-from pathlib import Path
 
 import numpy as np
 import xarray as xr
@@ -15,6 +15,8 @@ import ucat
 
 import ls2d
 import microhh_processing.initialisation as init
+from microhh_processing.enums import WindIntegrationMethod
+from microhh_processing.constants import EARTH_ROTATION_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +38,12 @@ class WindProcessing:
         source: str,
         sources: xr.Dataset,
         radius: int,
-        method: Literal["mean", "median", "height", "concentration_weighted"],
-        gas: str = None,
-        height: Union[int, float] = None,
+        method: Union[WindIntegrationMethod, str],
+        gas: Optional[str] = None,
+        height: Optional[Union[int, float]] = None,
         save: bool = True,
         overwrite: bool = False,
-        chunks: dict = None,
+        chunks: Optional[dict] = None,
     ) -> xr.Dataset:
         """Create a dataset containing the wind information around a source
         which is used for estimating emissions in 'ddeq'.
@@ -145,12 +147,12 @@ class WindProcessing:
 
     def create_2D_wind(
         self,
-        method: Literal["mean", "median", "height", "concentration_weighted"],
-        gas: str = None,
-        height: Union[int, float] = None,
+        method: Union[WindIntegrationMethod, str],
+        gas: Optional[str] = None,
+        height: Optional[Union[int, float]] = None,
         save: bool = True,
         overwrite: bool = False,
-        chunks: Union[str, dict] = None,
+        chunks: Optional[Union[str, dict]] = None,
     ) -> xr.Dataset:
         """Create a 2D wind dataset from 3D MicroHH wind fields.
 
@@ -223,13 +225,12 @@ class WindProcessing:
         return wind_data
 
     def _get_wind_vars(
-        self, method: Literal["mean", "median", "height", "concentration_weighted"]
+        self, method: Union[WindIntegrationMethod, str]
     ) -> list:
         """Get list of prognostic variables used for the given wind integration method.
 
         Args:
-            method (str):
-                Method to vertically integrate wind speeds. Available options are
+            method: Method to vertically integrate wind speeds. Available options are
                 "mean", "median", "height", "concentration_weighted"
 
         Raises:
@@ -238,9 +239,11 @@ class WindProcessing:
         Returns:
             list: List of prognostic variables used for the given wind integration method.
         """
-        if method in ["mean", "median", "height"]:
+        method_val = method.value if isinstance(method, WindIntegrationMethod) else str(method).lower()
+        
+        if method_val in [WindIntegrationMethod.MEAN.value, WindIntegrationMethod.MEDIAN.value, WindIntegrationMethod.HEIGHT.value]:
             return ["u", "v"]
-        elif method == "concentration_weighted":
+        elif method_val == WindIntegrationMethod.CONCENTRATION_WEIGHTED.value:
             return ["u", "v", "ch4"]
         else:
             raise NotImplementedError(f"Method {method} is not implemented.")
@@ -1017,3 +1020,58 @@ def compute_smagorinsky_constant(delta, L, z, kappa=0.4, c0=0.135, alpha=0.135, 
     term1 = (1 + (c0 / alpha) * ramp(delta / L)) ** -1
     term2 = (1 + (c0 * delta / (kappa * z)) ** n) ** (-1 / n)
     return c0 * term1 * term2
+
+
+# ============================================================================
+# Physics functions
+# ============================================================================
+
+def calculate_coriolis_force(lat: float) -> float:
+    """Calculate the Coriolis force at a given latitude.
+    
+    Args:
+        lat: Latitude in degrees.
+        
+    Returns:
+        Coriolis parameter f_c (s^-1).
+    """
+    return 2 * EARTH_ROTATION_RATE * np.sin(np.radians(lat))
+
+
+def calculate_richardson_number(
+    stats: xr.Dataset,
+    threshold: Optional[float] = 1e-10,
+) -> xr.Dataset:
+    """Calculate the Richardson flux number.
+    
+    The Richardson number is the ratio of buoyant production to shear 
+    production of turbulence kinetic energy.
+    
+    Args:
+        stats: Dataset containing u_w, u_grad, v_w, v_grad, and b_w variables.
+        threshold: Threshold for denominator to avoid division by near-zero.
+        
+    Returns:
+        Dataset with Richardson number added as 'Ri' variable.
+    """
+    denom = stats.u_w * stats.u_grad + stats.v_w * stats.v_grad  # m^2 s^-3
+    Rf = stats.b_w / denom
+    attrs = {
+        "long_name": "Richardson number",
+        "units": "1",
+        "description": "Ratio of buoyant production to shear production of turbulence kinetic energy",
+    }
+
+    da = xr.DataArray(Rf, dims=Rf.dims, coords=Rf.coords, attrs=attrs)
+    stats["Ri"] = da.where(np.abs(denom) > threshold)
+    return stats
+
+
+__all__ = [
+    "WindProcessing",
+    "ekman_spiral",
+    "get_wind_profile",
+    "get_wind_profile_standard",
+    "calculate_coriolis_force",
+    "calculate_richardson_number",
+]
