@@ -135,7 +135,7 @@ class PreProcessing:
         self._check_ini_setup_valid()
 
         # copy microHH to directory
-        self.copy_executable()
+        self._copy_executable()
 
         # Check if required files are present
         self._check_required_files()
@@ -178,7 +178,7 @@ class PreProcessing:
         self._check_ini_setup_valid()
 
         # copy microHH to directory
-        self.copy_executable()
+        self._copy_executable()
 
         # copy microHH restart files
         restart_str = self.get_restart_str(restart_time)
@@ -318,7 +318,7 @@ class PreProcessing:
             for dim in ["x", "y"]:
                 self.case.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
             self.case.ini_file.save(self.case.ini_path, allow_overwrite=True)
-            logger.warning("Overwriting 'npx' and 'npy' because MPI is disabled.")
+            logger.info("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
     def _check_grid_match(self):
         """Check if the grid size matches the number of processes."""
@@ -463,45 +463,28 @@ class PreProcessing:
             return
         
         source_heights = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
-
-        vert_grid_extent = float(self.case.ini_file["grid"]["zsize"])
-        vert_grid_n = float(self.case.ini_file["grid"]["ktot"])
-        vert_res = vert_grid_extent / vert_grid_n
+        lowest_grid_level = self._get_lowest_grid_level()
 
         for source_height in source_heights:
-            if source_height < vert_res:
-                logger.warning(
+            if source_height < lowest_grid_level:
+                logger.info(
                     f"Source height of {source_height}m "
-                    f"is smaller than vertical resolution of {vert_res}m"
+                    f"is smaller than the lowest grid level of {lowest_grid_level}m"
                 )
 
     def _check_source_sigma(self):
         """Check if the source std is valid.
         It must be >0 and between grid size/4 and grid size/2 since the source is
         simulated within 4*sigma."""
-        coords = ["x", "y", "z"]
-        cells = ["itot", "jtot", "ktot"]
 
         if "source" not in self.case.ini_file.groups:
             return
     
-        for coord, cell in zip(coords, cells):
-            sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
-            res = float(self.case.ini_file["grid"][f"{coord}size"]) / float(
-                self.case.ini_file["grid"][cell]
-            )
-
-            for sigma in sigmas:
-                # check if sigma is zero
-                if sigma <= 0:
-                    raise ValueError(f"'sigma_{coord}' cannot be <0.")
-
-                # check if sigma is >= grid size/4 to grid size/2
-                if not (res / 4 <= sigma <= res / 2):
-                    logger.warning(
-                        f"'sigma_{coord}' must be between {res / 4} and {res / 2}. "
-                        f"With your current setup, it could be that the source is not simulated."
-                    )
+        # check if sigma is zero
+        for coord in ["x", "y", "z"]:
+            sigma = self.case.ini_file["source"][f"sigma_{coord}"]
+            if sigma <= 0:
+                raise ValueError(f"'sigma_{coord}' cannot be <=0.")
 
     def _check_source_list(self):
         """Check if all required variables have the same length."""
@@ -547,10 +530,7 @@ class PreProcessing:
     def _check_surface_roughness_height(self):
         """Check if the surface roughness is smaller than the lowest vertical grid level."""
         # read in {case}_input.nc file:
-        initial_cond = io.open_initial_cond(self.case)
-        grid_values = initial_cond.z.values
-        non_neg_grid_values = [value for value in grid_values if value >= 0]
-        lowest_grid_level = min(non_neg_grid_values)
+        lowest_grid_level = self._get_lowest_grid_level()
         warning_threshold = 0.9 * lowest_grid_level
 
         if "boundary" not in self.case.ini_file.groups:
@@ -563,13 +543,13 @@ class PreProcessing:
                     logger.warning(
                         f"Surface roughness ({roughness_type} = {surface_roughness} m) "
                         f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
-                        "This may cause the model to crash."
+                        "This will result in NaNs in the output or cause the model to crash."
                     )
                 elif surface_roughness >= warning_threshold:
                     logger.warning(
                         f"Surface roughness ({roughness_type} = {surface_roughness} m) "
                         f"similar to the lowest grid level (={lowest_grid_level} m). "
-                        "This may cause instability in the model."
+                        "This will result in NaNs in the output or cause the model to crash."
                     )
 
     def _check_sample_times(self) -> None:
@@ -589,7 +569,15 @@ class PreProcessing:
                 f"statistics '{sample_time_stats:.0f}'s for postprocessing convenience."
             )
 
-    def copy_executable(self):
+    def _get_lowest_grid_level(self) -> float:
+        """Get the lowest atmospheric grid level from the {case}_input.nc file."""
+        initial_cond = io.open_initial_cond(self.case)
+        grid_values = initial_cond.z.values
+        non_neg_grid_values = [value for value in grid_values if value >= 0]
+        lowest_grid_level = min(non_neg_grid_values)
+        return lowest_grid_level
+
+    def _copy_executable(self):
         """Copy MicroHH executable to scratch"""
 
         shutil.copy(self.microhh_executable_path, self.case.scratch_path)

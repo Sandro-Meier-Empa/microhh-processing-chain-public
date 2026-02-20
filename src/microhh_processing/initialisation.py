@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 from typing import Union, Optional
 
-import netCDF4 as nc4
 import pandas as pd
 import xarray as xr
 import numpy as np
@@ -18,9 +17,7 @@ import microhh_py.microhh_tools as mht
 import ls2d
 
 from microhh_processing.enums import InitMethod, FileType
-from microhh_processing import utils
-import microhh_processing.io as io
-import microhh_processing.cscs as cscs
+from microhh_processing import cscs, io, utils
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +108,7 @@ class Case:
                     initial conditions.
                     ...'interactive': create .ini file and initial conditions object
                     oriented.
-                    ...'rerun': use .ini file and initial condition from store.
+                    ...'rerun': use .ini file and initial condition from an existing case.
             overwrite (bool, default: False):
                 Specify if existing case should be overwritten.
         """
@@ -119,7 +116,7 @@ class Case:
         self.file_directory = self.scratch_path
         self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
 
-        self._handle_method(method, init_from, overwrite)
+        self._handle_method(method, init_from)
         self._handle_scratch_dir(overwrite)
         self._handle_running_method(init_from)
 
@@ -129,7 +126,6 @@ class Case:
         self,
         method: Union[InitMethod, str],
         init_from: Optional[Union[str, Path]] = None,
-        overwrite: bool = False,
     ):
         # Normalize method to string for comparison
         method_val = method.value if isinstance(method, InitMethod) else str(method).lower()
@@ -139,12 +135,6 @@ class Case:
             raise ValueError(
                 "When using 'default' or 'rerun' method, please provide "
                 "the path of the directory containing `.ini` and initial condition files."
-            )
-
-        if self.method == InitMethod.RERUN.value and overwrite:
-            raise ValueError(
-                "When using 'rerun' method, overwriting existing files is not allowed. "
-                "Please rename your case."
             )
 
     def _handle_scratch_dir(self, overwrite: bool = False):
@@ -160,14 +150,11 @@ class Case:
             logger.info(f"Creating {self.scratch_path}")
             os.makedirs(self.scratch_path)
         elif overwrite:
-            # ask for user input to confirm overwriting
-            user_input = input(
-                f"Are you sure you want to overwrite {self.scratch_path}? (y/n): "
-            )
-            if user_input.lower() == "y":
-                shutil.rmtree(self.scratch_path)
-                logger.info(f"Overwriting {self.scratch_path}")
-                os.makedirs(self.scratch_path)
+            with utils.confirm_action(f"Are you sure you want to overwrite {self.scratch_path}?") as confirmed:
+                if confirmed:
+                    shutil.rmtree(self.scratch_path)
+                    logger.info(f"Overwriting {self.scratch_path}")
+                    os.makedirs(self.scratch_path)
 
     def _handle_running_method(self, init_from: Union[str, Path]):
         """Check if the running method is correct.
@@ -285,17 +272,14 @@ class Case:
             f"{self.name}_input.nc",
             "microhh",
         ]
-        user_input = input(
-            "Are you sure you want to remove all "
-            f"files in {self.scratch_path}? (y/n): "
-        )
-        if user_input.lower() != "y":
-            return
+        with utils.confirm_action(f"Are you sure you want to remove all files in {self.scratch_path}?") as confirmed:
+            if not confirmed:
+                return
 
-        for item in self.scratch_path.iterdir():
-            if item.name not in files_to_keep:
-                if item.is_file():
-                    item.unlink()
+            for item in self.scratch_path.iterdir():
+                if item.name not in files_to_keep:
+                    if item.is_file():
+                        item.unlink()
 
     def _create_initial(self, case_path: Union[str, Path]):
         """Create the initial conditions for a case.
@@ -377,7 +361,7 @@ class Case:
         else:
             logger.info(f"{file_path} does not exist.")
 
-    def get_benchmark(self, save: bool = False, ssh_connect: str = None) -> dict:
+    def calculate_benchmark(self, save: bool = False, ssh_connect: str = None) -> dict:
         """Get benchmark information from the .out file of the case.
 
         Args:
@@ -434,6 +418,31 @@ class Case:
                 json.dump(benchmark, f, indent=4)
 
         return benchmark
+    
+    def load_benchmark(self) -> dict:
+        """Load benchmark information from a .json file in the case directory.
+
+        Returns:
+            dict: A dictionary containing the benchmark information.
+        Raises:
+            FileNotFoundError: If the benchmark .json file does not exist.
+        """
+        json_file_path = self.file_directory / f"{self.name}_benchmark.json"
+
+        if not json_file_path.exists():
+            raise FileNotFoundError(f"Benchmark file '{json_file_path}' does not exist.")
+
+        with open(json_file_path, "r") as f:
+            benchmark = json.load(f)
+
+        # add some newly calculated fields
+        if "simulated_time" not in benchmark:
+            benchmark["simulated_time"] = pd.to_timedelta(benchmark["simulated_time_s"], unit="s")
+
+        if "elapsed_time_s" not in benchmark:
+            benchmark["elapsed_time_s"] = pd.to_timedelta(benchmark["elapsed_time"]).total_seconds()
+
+        return benchmark
 
     def _get_simulated_time(self) -> float:
         """Get the total simulated time from the .out file of the case.
@@ -483,8 +492,6 @@ class Case:
         self.file_directory = new_file_directory
         self.ini_path = Path(new_file_directory, f"{new_name}.ini")
 
-        return self
-
     def clean(self) -> None:
         """Clean this MicroHH case by removing all files except the
             - .ini file,
@@ -496,29 +503,25 @@ class Case:
             f"{self.name}_input.nc",
             "microhh",
         ]
-        user_input = input(
-            f"Are you sure you want to clean the case at {self.file_directory}? (y/n): "
-        )
-        if user_input.lower() == "y":
-            for item in self.file_directory.iterdir():
-                if item.name not in files_to_keep:
-                    if item.is_file():
-                        item.unlink()
-                    elif item.is_dir():
-                        shutil.rmtree(item)
-            logger.info(f"Cleaned case at {self.file_directory}.")
+        with utils.confirm_action(f"Are you sure you want to clean the case at {self.file_directory}?") as confirmed:
+            if confirmed:
+                for item in self.file_directory.iterdir():
+                    if item.name not in files_to_keep:
+                        if item.is_file():
+                            item.unlink()
+                        elif item.is_dir():
+                            shutil.rmtree(item)
+                logger.info(f"Cleaned case at {self.file_directory}.")
 
     def delete(self) -> None:
         """Delete this MicroHH case by removing its directory."""
         if not self.file_directory.exists():
             raise FileNotFoundError(f"Case directory '{self.file_directory}' does not exist.")
 
-        user_input = input(
-            f"Are you sure you want to delete the case at {self.file_directory}? (y/n): "
-        )
-        if user_input.lower() == "y":
-            shutil.rmtree(self.file_directory)
-            logger.info(f"Deleted case at {self.file_directory}.")
+        with utils.confirm_action(f"Are you sure you want to delete the case at {self.file_directory}?") as confirmed:
+            if confirmed:
+                shutil.rmtree(self.file_directory)
+                logger.info(f"Deleted case at {self.file_directory}.")
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:

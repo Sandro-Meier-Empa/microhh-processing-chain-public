@@ -36,17 +36,18 @@ def object_to_list(var: Any) -> List:
     """
     if var is None:
         raise ValueError("Input should not be 'None'")
-
-    if isinstance(var, str):
-        return _parse_string_to_list(var)
-    elif isinstance(var, xr.DataArray):
-        return var.values.tolist()
-    elif isinstance(var, np.ndarray):
-        return var.tolist()
-    elif isinstance(var, list):
-        return var
-    else:
-        return [var]
+    
+    match var:
+        case str():
+            return _parse_string_to_list(var)
+        case xr.DataArray():
+            return var.values.tolist()
+        case np.ndarray():
+            return var.tolist()
+        case list():
+            return var
+        case _:
+            return [var]
 
 
 def _parse_string_to_list(var: str) -> List:
@@ -113,11 +114,6 @@ def confirm_action(prompt: str):
         
     Yields:
         True if user confirmed, False otherwise.
-        
-    Example:
-        with confirm_action("Delete files?") as confirmed:
-            if confirmed:
-                delete_files()
     """
     user_input = input(f"{prompt} (y/n): ")
     yield user_input.lower() == "y"

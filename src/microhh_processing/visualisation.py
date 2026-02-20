@@ -12,7 +12,6 @@ from matplotlib.colors import Normalize, TwoSlopeNorm
 from IPython.display import display
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-import netCDF4 as nc
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -55,152 +54,85 @@ class Visualisation:
         """
         self.case = case
 
+
     def plot_initial_conditions(
-        self, ncols: int = 4, figsize: tuple[int, int] = (15, 10)
-    ) -> None:
+            self,
+            ncols: int = 4,
+            figsize: tuple = (15, 10),
+            cmap: str = "viridis"
+            ) -> None:
         """
-        Visualize initial conditions for different groups in a NetCDF dataset.
-
-        This method creates subplots for variables within each group, handling
-        different dimensional structures and plotting strategies.
-
+        Plot all variables from the initial conditions file, grouped by their dimensions.
         Args:
-            case (init.Case): Case containing the initial conditions to visualize.
             ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
-            figsize (tuple[int, int], optional): Figure size (width, height) in inches.
-                Defaults to (15, 10).
-
-        Raises:
-            FileNotFoundError: If the NetCDF file for the case cannot be found.
-            ValueError: If no data groups are found in the file.
+            figsize (tuple, optional): Size of the figure. Defaults to (15, 10).
+            cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
         """
-
         file_path = Path(self.case.file_directory) / f"{self.case.name}_input.nc"
 
         if not file_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {file_path}")
 
-        # Open dataset with context manager for proper resource management
-        with nc.Dataset(file_path) as nc_dataset:
-            groups = list(nc_dataset.groups.keys())
+        # Use netCDF4 just to get group names, then switch to xarray
+        data_tree = xr.open_datatree(file_path)
 
-            if not groups:
-                raise ValueError(f"No data groups found in {file_path}")
+        if not data_tree.groups:
+            raise ValueError(f"No data groups found in {file_path}")
 
-        # Process each group
-        for group in groups:
-            self._plot_group_variables(file_path, group, ncols, figsize)
+        for node in data_tree.subtree:
+            group = node.path.strip("/")
+            group_ds = node.dataset
+            sharey = (group != "timedep")
+            self._plot_group_variables(group_ds, ncols, figsize, cmap, sharey=sharey)
 
-    def _plot_group_variables(
-        self, file_path: Path, group: str, ncols: int, figsize: tuple[int, int]
-    ) -> None:
-        """
-        Plot variables for a specific group with intelligent subplot generation.
+    def _plot_group_variables(self, ds, ncols, figsize, cmap, sharey=True) -> None:
 
-        Args:
-            file_path (Path): Path to the NetCDF file.
-            group (str): Name of the group to process.
-            ncols (int): Number of columns in the subplot grid.
-            figsize (tuple[int, int]): Figure size.
-        """
-        if group in ["timedep"]:
-            sharey = False
-        else:
-            sharey = True
+        # Group variables by their dimension signature
+        dim_groups = {}
+        for var in ds.data_vars:
+            dim_groups.setdefault(ds[var].dims, []).append(var)
 
-        # Use xarray for more convenient data handling
-        with xr.open_dataset(file_path, group=group, decode_times=False) as data_group:
-            # Group variables by their dimensions
-            vars_by_dims = {}
-            for var in data_group.data_vars:
-                dims = data_group[var].dims
-                if dims not in vars_by_dims:
-                    vars_by_dims[dims] = []
-                vars_by_dims[dims].append(var)
+        for dims, vars_list in dim_groups.items():
+            n_vars = len(vars_list)
+            nrows = int(np.ceil(n_vars / ncols))
+            
+            # squeeze=False ensures axs is always a 2D array
+            fig, axs = plt.subplots(nrows, ncols, figsize=figsize, sharey=sharey, 
+                                    layout="constrained", squeeze=False)
 
-            # Plot each dimensional group
-            for dims, vars_list in vars_by_dims.items():
-                nrows = int(np.ceil(len(vars_list) / ncols))
-                fig, axs = plt.subplots(
-                    ncols=ncols,
-                    nrows=nrows,
-                    figsize=figsize,
-                    sharey=sharey,
-                    layout="constrained",
-                )
+            for i, var_name in enumerate(vars_list):
+                ax = axs.flat[i]
+                self._plot_variable(ds[var_name], ax, cmap)
+                ax.set_title(var_name)
 
-                fig.suptitle(f"Group: {group}")
+            # Hide empty subplots
+            for ax in axs.flat[n_vars:]:
+                ax.axis("off")
+            
+            plt.show()
+    
 
-                # Determine auxiliary dimension for vertical plotting
-                aux_dim = next((d for d in ["z", "lay"] if d in data_group.dims), None)
-
-                # Flatten axs for consistent iteration
-                axs_flat = axs.flat if nrows > 1 else [axs] if ncols == 1 else axs
-
-                for i, (ax, var) in enumerate(zip(axs_flat, vars_list)):
-                    self._plot_variable(data_group, var, dims, ax, aux_dim)
-                    ax.set_title(var)
-
-                # Hide unused subplots
-                for ax in axs_flat[len(vars_list) :]:
-                    ax.axis("off")
-
-                # Label axes based on dimensions
-                if aux_dim:
-                    fig.supylabel(f"{aux_dim.upper()} [m]")
-
-                if any("time" in str(d) for d in dims):
-                    fig.supxlabel("Time [s]")
-
-                plt.show()
-
-    def _plot_variable(
-        self,
-        data_group: xr.Dataset,
-        var: str,
-        dims: tuple,
-        ax: plt.Axes,
-        aux_dim: str,
-    ) -> None:
-        """
-        Intelligently plot a single variable based on its dimensions.
-
-        Args:
-            data_group (xr.Dataset): Dataset group containing the variable.
-            var (str): Variable name to plot.
-            dims (tuple): Dimensions of the variable.
-            ax (plt.Axes): Matplotlib axis to plot on.
-            aux_dim (str | None): Auxiliary dimension for vertical plots.
-        """
-        var_data = data_group[var]
+    def _plot_variable(self, data: xr.DataArray, ax: plt.Axes, cmap: str) -> None:
+        dims = data.dims
+        # Check if it is a height profile
+        aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
+        # Check if it is a time series
+        time_dim = next((d for d in dims if "time_" in d), None)
 
         if len(dims) == 0:
-            if aux_dim:
-                ax.plot(
-                    np.full(len(data_group[aux_dim]), var_data.values),
-                    data_group[aux_dim],
-                )
-            else:
-                # Fallback if no auxiliary dimension
-                ax.plot([var_data.values])
-
+            ax.axhline(data.values, linestyle='--')
+            
         elif len(dims) == 1:
-            # get dimension name that contains "time_"
-            time_dim = next((d for d in dims if "time_" in d), None)
-
-            if time_dim in dims:
-                ax.plot(data_group[time_dim], var_data, marker="x")
-            elif aux_dim in dims:
-                ax.plot(var_data, data_group[aux_dim], marker="x")
+            if aux_dim:
+                ax.plot(data.values, data[aux_dim], marker="x")
+                ax.set_ylabel(aux_dim)
+            elif time_dim:
+                data.plot(ax=ax, marker="x")
             else:
-                ax.plot(var_data, marker="x")
+                data.plot(ax=ax)
 
         elif len(dims) == 2:
-            # 2D heatmap
-            im = ax.pcolormesh(data_group[dims[0]], data_group[dims[1]], var_data.T)
-
-            # add colorbar to bottom
-            cbar = plt.colorbar(im, ax=ax, orientation="horizontal")
+            data.T.plot(ax=ax, cmap=cmap, cbar_kwargs={'orientation': 'horizontal', 'pad': 0.1})
 
     def plot_prognostic_variables(
         self,
@@ -532,13 +464,15 @@ class Visualisation:
 
         return "\n".join(text)
 
-    def plot_stats(self, variables: Union[str, list]):
+    def plot_stats(self, variables: Union[str, list], cmap: str = "viridis") -> None:
         """
         Plot variables from the statistics netcdf file.
 
         Args:
             variables (str, list(str)):
                 Variables within the statistics file to plot.
+            cmap: str:
+                Colormap to use for plotting.
         """
         stats = io.open_statistics(self.case)
 
@@ -556,9 +490,9 @@ class Visualisation:
                 ydim = None
 
             if ydim is not None:
-                stats[var].plot(ax=axs, y=ydim)
+                stats[var].plot(ax=axs, y=ydim, cmap=cmap)
             else:
-                stats[var].plot(ax=axs)
+                stats[var].plot(ax=axs, cmap=cmap)
 
             plt.tight_layout()
             plt.show()
@@ -617,6 +551,7 @@ class Visualisation:
                     "orientation": "horizontal",
                 },
             )
+            axs[c].set_title(stat_var)
 
         plt.tight_layout()
         plt.show()

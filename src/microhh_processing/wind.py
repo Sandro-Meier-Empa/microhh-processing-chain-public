@@ -2,7 +2,7 @@ import os
 import scipy
 import sys
 import logging
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, Literal
 from pathlib import Path
 
 from scipy.optimize import fsolve

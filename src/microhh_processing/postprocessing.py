@@ -10,7 +10,7 @@ import zipfile
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, Literal
 
 import pandas as pd
 import xarray as xr
@@ -272,6 +272,8 @@ class PostProcessing:
             modes_to_check = list(self.case.ini_file["cross"].keys() & set(cross_modes))
         else:
             modes_to_check = modes
+
+        #FIXME: modes_to_check is always empty => never reads in existing files
 
         for var in vars:
             var_exists = False
@@ -1228,15 +1230,13 @@ class PostProcessing:
         dy = ysize / jtot
 
         scalars = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
-        strength = np.array(self.case.ini_file["source"]["strength"])
+        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
 
-        time_range = list(
-            range(
+        time_range = np.arange(
                 0,
                 int(self.case.ini_file["time"]["endtime"] + 1),
                 int(self.case.ini_file["time"]["savetime"]),
             )
-        )
 
         def read_mass_from_binary(scalar, time_range):
             mass_array = []
@@ -1272,12 +1272,16 @@ class PostProcessing:
 
         mass_dict = {"time": time_range}
         for i, scalar in enumerate(scalars):
+            scalar = str(scalar)
             if read_method == "binary":
-                mass_dict[scalar] = read_mass_from_binary(scalar, time_range)
+                simulated_scalar = read_mass_from_binary(scalar, time_range)
             elif read_method == "netcdf":
-                mass_dict[scalar] = read_mass_from_netcdf(scalar, time_range)
+                simulated_scalar = read_mass_from_netcdf(scalar, time_range)
             else:
                 raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
+            
+            mass_dict[f"prescribed_{scalar}_mass"] = strength[i] * time_range
+            mass_dict[f"simulated_{scalar}_mass"] = simulated_scalar
 
         return mass_dict
 

@@ -105,7 +105,7 @@ class AlpsSetup:
         self._processor = processor
         self.mpi = mpi
         self.account = account
-        self.mail_type = mail_type
+        self.mail_type = mail_type.value if isinstance(mail_type, MailType) else str(mail_type.upper())
         self.email = email
         self.run_time = run_time
         self.nodes = nodes
@@ -530,8 +530,10 @@ def print_simulation_progress(case):
     else:
         color = PrintColor.YELLOW
 
+    end_color = PrintColor.ENDC
+
     print(
-        f"{color}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){PrintColor.ENDC}"
+        f"{color.value}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
     )
 
 
@@ -633,6 +635,15 @@ def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
     df = df[~df["JobID"].str.contains(r"\.batch$|\.extern$|\.0$", regex=True)]
 
     return df
+
+def calculate_expected_runtime(benchmark, simulation_time: pd.Timedelta) -> pd.Timedelta:
+    """Calculate the expected runtime based on a benchmark and a given time to be simulated."""
+    simulation_time_s = simulation_time.total_seconds()
+    simulated_time_s = float(benchmark["simulated_time_s"])
+    elapsed_time_s = float(benchmark["elapsed_time_s"])
+    expected_runtime = (elapsed_time_s / simulated_time_s) * simulation_time_s
+
+    return pd.to_timedelta(expected_runtime, unit="s")
 
 
 __all__ = [
