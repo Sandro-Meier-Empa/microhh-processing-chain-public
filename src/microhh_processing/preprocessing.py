@@ -1,3 +1,4 @@
+import fnmatch
 import os
 import platform
 import re
@@ -6,7 +7,7 @@ import subprocess
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, List
 
 import pandas as pd
 import xarray as xr
@@ -299,10 +300,14 @@ class PreProcessing:
         self._adjust_mpi_settings()
         self._check_grid_match()
         self._check_nodes_match()
+        self._check_tdep_bc()
         self._check_grid_order()
         self._check_thermo()
+        self._check_tdep_pbot()
         self._check_forcing()
-        self._check_tdep_forcing()
+        self._check_tdep_geo()
+        self._check_tdep_ls_forcing()
+        self._check_dtep_wls()
         self._check_nudging()
         self._check_tdep_nudging()
         self._check_nudgelists()
@@ -363,6 +368,47 @@ class PreProcessing:
                 f"expected cores ({expected_cores})."
             )
 
+    def _check_switch_list_vars_alignment(
+        self,
+        switch_config: Tuple[str, str, bool],
+        initial_cond_var_name: str,
+        list_config: Optional[Tuple[str, str, list]] = None,
+    ) -> None:
+        """Check if switches, variable lists, and initial condition variables align.
+
+        Args:
+            switch_config: Tuple of (group, key, default) for the switch in the ini file.
+            initial_cond_var_name: The name of the variable to check in initial conditions.
+            list_config: Optional tuple of (group, key, default) for the list in the ini file.
+        """
+        switch_group, switch_key, switch_default = switch_config
+        switch_value = self.case.ini_file.get(switch_group, switch_key, switch_default)
+
+        initial_cond = io.open_initial_cond(self.case)
+
+        # Determine if relevant variables exist in initial conditions
+        matching_vars = [v for v in initial_cond.data_vars if fnmatch.fnmatch(v, initial_cond_var_name)]
+        has_vars = len(matching_vars) > 0
+
+        # Check alignment
+        if list_config is not None:
+            list_group, list_key, list_default = list_config
+            list_value = self.case.ini_file.get(list_group, list_key, list_default)
+            if bool(switch_value) != bool(list_value) != has_vars:
+                raise ValueError(f"Switch '{switch_key}' in group '{switch_group}', list '{list_key}' in group '{list_group}', and initial condition variables do not align.")
+        else:
+            if bool(switch_value) != has_vars:
+                raise ValueError(f"Switch '{switch_key}' in group '{switch_group}' and initial condition variables do not align.")
+
+    def _check_tdep_bc(self):
+        """Check if switches for dtep boundary conditions, timedeplist and initial conditions align"""
+        self._check_switch_list_vars_alignment(
+            switch_config=("boundary", "swtimedep", False),
+            initial_cond_var_name="*_sbot",
+            list_config=("boundary", "timedeplist", []),
+        )
+
+
     def _check_grid_order(self):
         """Check that the grid order matches the orders of the advection schemes."""
         swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
@@ -412,6 +458,13 @@ class PreProcessing:
                 "Valid options are 'boussinesq' or 'anelastic'."
             )
 
+    def _check_tdep_pbot(self):
+        """Check if switches for dtep pbot and initial conditions align"""
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swtimedep_pbot", False),
+            initial_cond_var_name="p_bot",
+        )
+
     def _check_forcing(self):
         """Check if the specified forcing is valid."""
         force = self.case.ini_file.get("force", "swlspres", None)
@@ -446,54 +499,48 @@ class PreProcessing:
                 f"Invalid value for 'swlspres': {force}. "
                 "Valid options are 'geo', 'dpdx', or 'uflux'."
             )
+        
+    def _check_tdep_geo(self):
+        """Check if switches for dtep geostrophic forcing and initial conditions align"""
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swtimedep_geo", False),
+            initial_cond_var_name="?_geo"
+        )
 
-    def _check_tdep_forcing(self):
+    def _check_dtep_wls(self):
+        """Check if switches for dtep wls and initial conditions align"""
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swtimedep_wls", False),
+            initial_cond_var_name="w_ls",
+        )
+        
+    def _check_tdep_ls_forcing(self):
         """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
-
-        swtimedep_ls = self.case.ini_file.get("force", "swtimedep_ls", False)
-        timedeplist_ls = self.case.ini_file.get("force", "timedeplist_ls", [])
-
-        # check if there are tdep ls variables in the initial conditions:
-        initial_cond = io.open_initial_cond(self.case)
-        tdep_ls_vars = [var for var in initial_cond.data_vars if var.endswith("_ls")]
-
-        if bool(swtimedep_ls) != bool(timedeplist_ls) != bool(tdep_ls_vars):
-            raise ValueError(
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swtimedep_ls", False),
+            list_config=("force", "timedeplist_ls", []),
+            var_filter=lambda var: var.endswith("_ls"),
+            error_message=(
                 "swtimedep_ls, timedeplist_ls and tdep_ls variables in the initial conditions do not align. "
                 "Either set swtimedep_ls=False, or provide a list of tdep_ls variables in timedeplist_ls."
-            )
+            ),
+        )
 
     def _check_nudging(self):
         """Check if switches for nudging, nudging list and initial conditions align"""
-
-        swnudging = self.case.ini_file.get("force", "swnudge", False)
-        nudgelist = self.case.ini_file.get("force", "nudgelist", [])
-
-        # check if there are nudging variables in the initial conditions:
-        initial_cond = io.open_initial_cond(self.case)
-        nudgefac = "nudgefac" in initial_cond.data_vars
-
-        if bool(swnudging) != bool(nudgelist) != bool(nudgefac):
-            raise ValueError(
-                "swnudge, nudgelist, nudging variables and nudgefac in the initial conditions do not align. "
-                "Either set swnudge=False, or provide a list of nudging variables in nudgelist and nudgefac."
-            )
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swnudge", False),
+            list_config=("force", "nudgelist", []),
+            initial_cond_var_name="nudgefac",
+        )
 
     def _check_tdep_nudging(self):
         """Check if switches for dtep nudging, tdep nudging list and initial conditions align"""
-
-        swtimedep_nudging = self.case.ini_file.get("force", "swtimedep_nudge", False)
-        timedeplist_nudging = self.case.ini_file.get("force", "timedeplist_nudge", [])
-
-        # check if there are tdep nudging variables in the initial conditions:
-        initial_cond = io.open_initial_cond(self.case)
-        tdep_nudging_vars = [var for var in initial_cond.data_vars if var.endswith("_nudge")]
-
-        if bool(swtimedep_nudging) != bool(timedeplist_nudging) != bool(tdep_nudging_vars):
-            raise ValueError(
-                "swtimedep_nudging, timedeplist_nudging and tdep nudging variables in the initial conditions do not align. "
-                "Either set swtimedep_nudging=False, or provide a list of tdep nudging variables in timedeplist_nudging."
-            )
+        self._check_switch_list_vars_alignment(
+            switch_config=("force", "swtimedep_nudge", False),
+            initial_cond_var_name="*_nudge",
+            list_config=("force", "timedeplist_nudge", []),
+        )
 
     def _check_nudgelists(self):
         """Check if the variables specified in the tdep nudging list are also present in the nudging list."""
@@ -588,36 +635,17 @@ class PreProcessing:
         
     def _check_tdep_source_location(self):
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-
-        swtimedep_source = self.case.ini_file.get("source", "swtimedep_location", False)
-
-        # check if there are tdep source variables in the initial conditions:
-        initial_cond = io.open_initial_cond(self.case)
-        pattern = re.compile(r"^source_[xyz]0_\d+$")
-        tdep_source_vars = [
-            var for var in initial_cond.data_vars
-            if pattern.match(var)
-        ]
-        if bool(swtimedep_source) != bool(tdep_source_vars):
-            raise ValueError(
-                "swtimedep_location and tdep source variables in the initial conditions do not align. "
-                "Either set swtimedep_location=False, or provide tdep source variables in the initial conditions."
-            )
+        self._check_switch_list_vars_alignment(
+            switch_config=("source", "swtimedep_location", False),
+            initial_cond_var_name="source_?0_*",
+        )
         
     def _check_tdep_source_strength(self):
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-
-        swtimedep_source = self.case.ini_file.get("source", "swtimedep_strength", False)
-
-        # check if there are tdep source variables in the initial conditions:
-        initial_cond = io.open_initial_cond(self.case)
-        tdep_source_vars = [var for var in initial_cond.data_vars if var.startswith("source_strength_")]
-
-        if bool(swtimedep_source) != bool(tdep_source_vars):
-            raise ValueError(
-                "swtimedep_strength and tdep source variables in the initial conditions do not align. "
-                "Either set swtimedep_strength=False, or provide tdep source variables in the initial conditions."
-            )
+        self._check_switch_list_vars_alignment(
+            switch_config=("source", "swtimedep_strength", False),
+            initial_cond_var_name="source_strength_*",
+        )
 
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""
