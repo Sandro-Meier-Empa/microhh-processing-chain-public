@@ -18,13 +18,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import ipywidgets as widgets
 
-import microhh_processing.preprocessing as pre
-import microhh_processing.postprocessing as post
 import microhh_processing.initialisation as init
-import microhh_processing.misc as misc
-import microhh_processing.io as io
-import microhh_processing.wind as wind_proc
+import microhh_processing.postprocessing as post
+import microhh_processing.preprocessing as pre
 import microhh_processing.sources as src
+import microhh_processing.visualisation as vis
+import microhh_processing.wind as wind_proc
+from microhh_processing import cscs, enums, io, spatial, utils
 
 import ddeq
 
@@ -148,7 +148,7 @@ class Visualisation:
         Plot the prognostic variables
         """
         no_data = True if data is None else False
-        variables = misc.object_to_list(variables)
+        variables = utils.object_to_list(variables)
         time_factor = self._get_time_factor(time_format)
 
         # read in initial conditions
@@ -912,100 +912,77 @@ def plot_case_comparison(
     figsize : tuple[int, int], optional
         Figure size passed to `plt.subplots`.
     """
-    cases = misc.object_to_list(cases)
-    variables = misc.object_to_list(variables)
+    cases = utils.object_to_list(cases)
+    variables = utils.object_to_list(variables)
 
-    # read in stats from all cases
+    # Load and interpolate stats to common time axis
     case_stats = [io.open_statistics(case) for case in cases]
+    ref_time = case_stats[int(np.argmax([s.sizes["time"] for s in case_stats]))].time
+    case_stats = [stats.interp(time=ref_time) for stats in case_stats]
 
-    # Case with the most timesteps
-    max_time_case_idx = int(np.argmax([stats.sizes["time"] for stats in case_stats]))
-    ref_time = case_stats[max_time_case_idx].time
-    # Reindex all cases to the reference time dimension
-    case_stats_reindexed = [
-        stats.reindex(time=ref_time, method="nearest", tolerance=1e-6)
-        for stats in case_stats
-    ]
-
-    # If plotting differences, select default case but do not mutate lists
+    # Prepare cases for comparison
     if difference:
-        default_case_stats = case_stats_reindexed[default_case_index]
-        default_case = cases[default_case_index]
-        # All other (case, stats) pairs
+        default_stats = case_stats[default_case_index]
         comp_cases_stats = [
-            (case, stats)
-            for i, (case, stats) in enumerate(zip(cases, case_stats_reindexed))
+            (case, stats) for i, (case, stats) in enumerate(zip(cases, case_stats))
             if i != default_case_index
         ]
     else:
-        default_case_stats = None  # for type checkers only
-        default_case = None  # unused when difference=False
-        comp_cases_stats = list(zip(cases, case_stats_reindexed))
+        comp_cases_stats = list(zip(cases, case_stats))
 
-    n_plots = len(comp_cases_stats)
-    if n_plots == 0:
+    if not comp_cases_stats:
         raise ValueError("No cases to compare after excluding default case.")
 
     for var in variables:
-        fig, axs = plt.subplots(1, ncols=n_plots, figsize=figsize, sharey=True)
-        axs = np.atleast_1d(axs)
-        ax_flat = axs.flatten()
-
-        # Colorbar axis attached to the last subplot
-        divider = make_axes_locatable(ax_flat[-1])
-        cax = divider.append_axes("right", size="3%", pad=0.1)
-
-        # Use the first stats object as reference for metadata
+        # Extract values and metadata
         ref_stats = comp_cases_stats[0][1]
-        data_array = ref_stats[var]
-        units = data_array.attrs.get("units", "-")
-        dim_names = data_array.dims
+        units = ref_stats[var].attrs.get("units", "-")
+        dims = ref_stats[var].dims
 
-        # Prepare values (differences or absolute)
-        vals: List[np.ndarray] = []
+        # Prepare data values
         if difference:
-            default_values = default_case_stats[var].values
-            for _, stats in comp_cases_stats:
-                vals.append(stats[var].values - default_values)
-            clabel = f"{var} difference to default case [{units}]"
+            default_values = default_stats[var].values
+            vals = [stats[var].values - default_values for _, stats in comp_cases_stats]
+            clabel = f"{var} difference [{units}]"
         else:
-            for _, stats in comp_cases_stats:
-                vals.append(stats[var].values)
+            vals = [stats[var].values for _, stats in comp_cases_stats]
             clabel = f"{var} [{units}]"
 
-        # Determine color scale from all values
+        # Determine color normalization
         concatenated = np.concatenate([v.ravel() for v in vals])
-        vmin = np.nanquantile(concatenated, 0.001)
-        vmax = np.nanquantile(concatenated, 0.999)
+        vmin, vmax = np.nanquantile(concatenated, [0.001, 0.999])
+        norm = _get_norm(vmin, vmax, difference)
 
-        center = 0.0 if difference else (vmin + vmax) / 2.0
-        norm = TwoSlopeNorm(vcenter=center, vmin=vmin, vmax=vmax)
+        # Create subplots
+        fig, axs = plt.subplots(1, len(comp_cases_stats), figsize=figsize, sharey=True)
+        axs = np.atleast_1d(axs)
 
-        # Plot each case
-        for ax, val, (case, stats) in zip(ax_flat, vals, comp_cases_stats):
-            x_coord = stats[dim_names[0]]
-            y_coord = stats[dim_names[1]]
-
-            cm = ax.pcolormesh(
-                x_coord.values,
-                y_coord.values,
-                val.T,
-                shading="auto",
-                cmap=cmap,
-                norm=norm,
-            )
-
-            x_units = x_coord.attrs.get("units", "-")
-            x_label = x_coord.attrs.get("long_name", "")
-            ax.set_xlabel(f"{x_label} [{x_units}]")
+        # Plot data
+        for ax, val, (case, stats) in zip(axs, vals, comp_cases_stats):
+            x_coord, y_coord = stats[dims[0]], stats[dims[1]]
+            ax.pcolormesh(x_coord.values, y_coord.values, val.T, 
+                         shading="auto", cmap=cmap, norm=norm)
+            ax.set_xlabel(f"{x_coord.attrs.get('long_name', '')} [{x_coord.attrs.get('units', '-')}]")
             ax.set_title(case.suffix)
 
-        # Shared y-label from reference stats
-        y_coord = ref_stats[dim_names[1]]
-        y_units = y_coord.attrs.get("units", "-")
-        y_label = y_coord.attrs.get("long_name", "")
-        ax_flat[0].set_ylabel(f"{y_label} [{y_units}]")
+        axs[0].set_ylabel(f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]")
 
-        fig.colorbar(cm, cax=cax, label=clabel)
+        # Add colorbar
+        divider = make_axes_locatable(axs[-1])
+        cax = divider.append_axes("right", size="3%", pad=0.1)
+        fig.colorbar(axs[-1].collections[0], cax=cax, label=clabel)
 
-    plt.show()
+        plt.tight_layout()
+        plt.show()
+
+def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
+    """Determine appropriate normalization for colormap."""
+    if not difference:
+        return Normalize(vmin=vmin, vmax=vmax)
+    
+    if vmin < 0 < vmax:
+        return TwoSlopeNorm(vcenter=0.0, vmin=vmin, vmax=vmax)
+    elif vmax <= 0:
+        return Normalize(vmin=vmin, vmax=0.0)
+    else:
+        return Normalize(vmin=0.0, vmax=vmax)

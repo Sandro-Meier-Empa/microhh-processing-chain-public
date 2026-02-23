@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 import logging
@@ -109,14 +110,20 @@ class PreProcessing:
             try:
                 result = subprocess.check_output(
                     ['ssh', self.alps_setup.ssh_connect, 'uname -m'],
-                    stderr=subprocess.STDOUT).decode().strip()
-            except subprocess.CalledProcessError:
-                logger.warning(f"Failed to connect to {self.alps_setup.ssh_connect}. Unable to determine remote architecture.")
+                    stderr=subprocess.STDOUT,
+                    text=True,  # Python 3.7+
+                ).strip()
+            except subprocess.CalledProcessError as e:
+                logger.warning(
+                    f"Failed to connect to {self.alps_setup.ssh_connect}. "
+                    f"SSH error:\n{e.output.strip()}"
+                )
                 result = None
         else:
             result = platform.machine()
 
         return result
+
 
     def prepare_simulation(
         self,
@@ -295,10 +302,16 @@ class PreProcessing:
         self._check_grid_order()
         self._check_thermo()
         self._check_forcing()
+        self._check_tdep_forcing()
+        self._check_nudging()
+        self._check_tdep_nudging()
+        self._check_nudgelists()
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
         self._check_source_list()
+        self._check_tdep_source_location()
+        self._check_tdep_source_strength()
         self._check_buffer_height()
         self._check_surface_roughness_height()
         self._check_sample_times()
@@ -434,6 +447,65 @@ class PreProcessing:
                 "Valid options are 'geo', 'dpdx', or 'uflux'."
             )
 
+    def _check_tdep_forcing(self):
+        """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
+
+        swtimedep_ls = self.case.ini_file.get("force", "swtimedep_ls", False)
+        timedeplist_ls = self.case.ini_file.get("force", "timedeplist_ls", [])
+
+        # check if there are tdep ls variables in the initial conditions:
+        initial_cond = io.open_initial_cond(self.case)
+        tdep_ls_vars = [var for var in initial_cond.data_vars if var.endswith("_ls")]
+
+        if bool(swtimedep_ls) != bool(timedeplist_ls) != bool(tdep_ls_vars):
+            raise ValueError(
+                "swtimedep_ls, timedeplist_ls and tdep_ls variables in the initial conditions do not align. "
+                "Either set swtimedep_ls=False, or provide a list of tdep_ls variables in timedeplist_ls."
+            )
+
+    def _check_nudging(self):
+        """Check if switches for nudging, nudging list and initial conditions align"""
+
+        swnudging = self.case.ini_file.get("force", "swnudge", False)
+        nudgelist = self.case.ini_file.get("force", "nudgelist", [])
+
+        # check if there are nudging variables in the initial conditions:
+        initial_cond = io.open_initial_cond(self.case)
+        nudgefac = "nudgefac" in initial_cond.data_vars
+
+        if bool(swnudging) != bool(nudgelist) != bool(nudgefac):
+            raise ValueError(
+                "swnudge, nudgelist, nudging variables and nudgefac in the initial conditions do not align. "
+                "Either set swnudge=False, or provide a list of nudging variables in nudgelist and nudgefac."
+            )
+
+    def _check_tdep_nudging(self):
+        """Check if switches for dtep nudging, tdep nudging list and initial conditions align"""
+
+        swtimedep_nudging = self.case.ini_file.get("force", "swtimedep_nudge", False)
+        timedeplist_nudging = self.case.ini_file.get("force", "timedeplist_nudge", [])
+
+        # check if there are tdep nudging variables in the initial conditions:
+        initial_cond = io.open_initial_cond(self.case)
+        tdep_nudging_vars = [var for var in initial_cond.data_vars if var.endswith("_nudge")]
+
+        if bool(swtimedep_nudging) != bool(timedeplist_nudging) != bool(tdep_nudging_vars):
+            raise ValueError(
+                "swtimedep_nudging, timedeplist_nudging and tdep nudging variables in the initial conditions do not align. "
+                "Either set swtimedep_nudging=False, or provide a list of tdep nudging variables in timedeplist_nudging."
+            )
+
+    def _check_nudgelists(self):
+        """Check if the variables specified in the tdep nudging list are also present in the nudging list."""
+        timedeplist_nudging = self.case.ini_file.get("force", "timedeplist_nudge", [])
+        nudgelist = self.case.ini_file.get("force", "nudgelist", [])
+
+        for var in timedeplist_nudging:
+            if var not in nudgelist:
+                raise ValueError(
+                    f"Variable '{var}' specified in 'timedeplist_nudge' is not present in 'nudgelist'."
+                )
+
     def _check_source_position(self):
         """Check if the source position conflicts with the domain size."""
         if "source" not in self.case.ini_file.groups:
@@ -482,8 +554,8 @@ class PreProcessing:
     
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
-            sigma = self.case.ini_file["source"][f"sigma_{coord}"]
-            if sigma <= 0:
+            sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            if np.any(sigmas <= 0):
                 raise ValueError(f"'sigma_{coord}' cannot be <=0.")
 
     def _check_source_list(self):
@@ -513,6 +585,39 @@ class PreProcessing:
             == len(swvmr)
         ):
             raise ValueError("All source variables must have the same length.")
+        
+    def _check_tdep_source_location(self):
+        """Check if switches for dtep source, tdep source list and initial conditions align"""
+
+        swtimedep_source = self.case.ini_file.get("source", "swtimedep_location", False)
+
+        # check if there are tdep source variables in the initial conditions:
+        initial_cond = io.open_initial_cond(self.case)
+        pattern = re.compile(r"^source_[xyz]0_\d+$")
+        tdep_source_vars = [
+            var for var in initial_cond.data_vars
+            if pattern.match(var)
+        ]
+        if bool(swtimedep_source) != bool(tdep_source_vars):
+            raise ValueError(
+                "swtimedep_location and tdep source variables in the initial conditions do not align. "
+                "Either set swtimedep_location=False, or provide tdep source variables in the initial conditions."
+            )
+        
+    def _check_tdep_source_strength(self):
+        """Check if switches for dtep source, tdep source list and initial conditions align"""
+
+        swtimedep_source = self.case.ini_file.get("source", "swtimedep_strength", False)
+
+        # check if there are tdep source variables in the initial conditions:
+        initial_cond = io.open_initial_cond(self.case)
+        tdep_source_vars = [var for var in initial_cond.data_vars if var.startswith("source_strength_")]
+
+        if bool(swtimedep_source) != bool(tdep_source_vars):
+            raise ValueError(
+                "swtimedep_strength and tdep source variables in the initial conditions do not align. "
+                "Either set swtimedep_strength=False, or provide tdep source variables in the initial conditions."
+            )
 
     def _check_buffer_height(self):
         """Check if the buffer height lies within the domain."""

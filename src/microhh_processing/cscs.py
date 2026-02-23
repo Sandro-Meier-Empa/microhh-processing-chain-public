@@ -454,13 +454,21 @@ def jobs_in_queue(
     cmd = ["ssh", ssh_connect] if ssh_connect else []
     cmd.extend(["squeue", "-u", user, "-o", "%all"])
 
-    squeue = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"Failed to run squeue"
+            f"{' via ssh to ' + ssh_connect if ssh_connect else ''}:\n"
+            f"{e.stderr.strip() or e.stdout.strip()}"
+        ) from e
 
-    # get the output
-    output = squeue.communicate()[0]
-
-    # decode the output
-    output = output.decode("utf-8")
+    output = result.stdout.strip()
 
     # parse data
     data = output.split("\n")

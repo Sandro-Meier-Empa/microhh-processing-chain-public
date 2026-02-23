@@ -184,6 +184,7 @@ class PostProcessing:
                     os.remove(nc_file_path)
                     logger.info(f"Overwriting {nc_file_path}")
                 else:
+                    logger.info(f"{nc_file_path} already exists. Skipping...")
                     vars_to_process.remove(var)
 
         if py_file_path is not None:
@@ -268,12 +269,15 @@ class PostProcessing:
 
         # Determine modes to check for existing files
         cross_modes = ["xy", "xz", "yz"]
+        ini_cross_modes = set(self.case.ini_file["cross"].keys())
+        ini_cross_list = set(np.atleast_1d(self.case.ini_file["cross"]["crosslist"]))
+
         if modes is None:
-            modes_to_check = list(self.case.ini_file["cross"].keys() & set(cross_modes))
+            modes_to_check = list(ini_cross_modes & set(cross_modes))
+            if "xy" not in modes_to_check and any(item.endswith("_path") for item in ini_cross_list):
+                modes_to_check.append("xy")
         else:
             modes_to_check = modes
-
-        #FIXME: modes_to_check is always empty => never reads in existing files
 
         for var in vars:
             var_exists = False
@@ -285,6 +289,7 @@ class PostProcessing:
                         logger.info(f"Overwriting {nc_file_path}")
                     else:
                         var_exists = True
+                        logger.info(f"{nc_file_path} already exists. Skipping...")
                         break
             if var_exists and var in vars_to_process:
                 vars_to_process.remove(var)
