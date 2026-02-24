@@ -1,8 +1,6 @@
 # import cartopy
+import logging
 import matplotlib.figure
-import os
-import scipy.stats
-import sys
 
 from pathlib import Path
 from typing import List, Literal, Sequence, Tuple, Union
@@ -27,6 +25,8 @@ import microhh_processing.wind as wind_proc
 from microhh_processing import cscs, enums, io, spatial, utils
 
 import ddeq
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Visualisation",
@@ -918,6 +918,8 @@ def plot_case_comparison(
     # Load and interpolate stats to common time axis
     case_stats = [io.open_statistics(case) for case in cases]
     ref_time = case_stats[int(np.argmax([s.sizes["time"] for s in case_stats]))].time
+
+    logger.info(f"Interpolating statistics to common time axis with {len(ref_time)} time steps.")
     case_stats = [stats.interp(time=ref_time) for stats in case_stats]
 
     # Prepare cases for comparison

@@ -518,20 +518,16 @@ class PreProcessing:
         """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
         self._check_switch_list_vars_alignment(
             switch_config=("force", "swtimedep_ls", False),
+            initial_cond_var_name="*_ls",
             list_config=("force", "timedeplist_ls", []),
-            var_filter=lambda var: var.endswith("_ls"),
-            error_message=(
-                "swtimedep_ls, timedeplist_ls and tdep_ls variables in the initial conditions do not align. "
-                "Either set swtimedep_ls=False, or provide a list of tdep_ls variables in timedeplist_ls."
-            ),
         )
 
     def _check_nudging(self):
         """Check if switches for nudging, nudging list and initial conditions align"""
         self._check_switch_list_vars_alignment(
             switch_config=("force", "swnudge", False),
-            list_config=("force", "nudgelist", []),
             initial_cond_var_name="nudgefac",
+            list_config=("force", "nudgelist", []),
         )
 
     def _check_tdep_nudging(self):
