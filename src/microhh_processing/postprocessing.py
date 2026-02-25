@@ -140,6 +140,67 @@ class PostProcessing:
         )
         logger.info(f"########## FINISH PROCESSING OF {self.case.name_spec} ##########")
 
+    
+    def process_case_on_alps(
+        self,
+        alps_setup: cscs.AlpsSetup,
+        py_file_path: str,
+        job_name: str,
+        python_path: str = "python",
+        additional_args: dict = {},
+        overwrite: bool = False,
+        start_jobs: bool = True,
+    ):
+        """Submit a bash script to process a case on alps.
+
+        Args:
+            alps_setup (cscs.AlpsSetup):
+                Alps setup which should be used to process the case.
+            py_file_path (str):
+                File to the python script which should be executed to process the case.
+            job_name (str):
+                Name of the job. Determines the name of the resulting slurm.out script
+                and the job name in the queue.
+            python_path (str):
+                Path of the python environment to use. The default is /users/USER/bin/python3
+            additional_args (dict, optional):
+                Addtional arguments for the function called in the python script. Defaults to {}.
+            start_jobs (bool, optional):
+                Specify if the job should be starte. Defaults to True.
+        """
+        job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
+
+        # create command for bash script
+        cmd = f"srun {python_path} {py_file_path} --case-name {self.case.name} --case-suffix {self.case.suffix}"
+
+        if additional_args:
+            additional_args_str = " ".join(
+                [f"{key}={str(value)}" for key, value in additional_args.items()]
+            )
+            cmd = f"{cmd} --additional-args {additional_args_str}"
+
+        # submit bash script to run post processing in parallel on alps
+        job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbash")
+
+        if job_file.exists() and overwrite:
+            os.remove(job_file)
+
+        if not job_file.exists() or overwrite:
+            job_file = alps_setup.create_bash_script(
+                commands=cmd,
+                job_name=job_name_formatted,
+                file_path=job_file,
+                scratch_path=self.case.scratch_path,
+            )
+        else:
+            logger.info(f"Reading existing bash script {job_file}")
+
+        if start_jobs:
+            # Launch the job on alps
+            job_id = cscs.execute_bash_script(job_file, wait=False)
+
+
+
     def create_3d_output(
         self,
         vars: Union[str, list],

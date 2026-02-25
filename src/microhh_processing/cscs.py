@@ -5,7 +5,7 @@ import re
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, List
 from io import StringIO
 
 import pandas as pd
@@ -46,74 +46,82 @@ class AlpsSetup:
         self,
         cluster: Union[Cluster, str],
         processor: Union[Processor, str],
-        mpi: bool,
         account: str,
         mail_type: Union[MailType, str] = MailType.NONE,
         email: Optional[str] = None,
         run_time: str = "00:30:00",
         nodes: int = 1,
-        ntasks_per_core: int = 1,
+        ntasks: Optional[int] = None,
         ntasks_per_node: Optional[int] = None,
-        cpus_per_task: int = 1,
-        gpus_per_task: int = 1,
+        ntasks_per_core: Optional[int] = None,
+        cpus_per_task:  Optional[int] = None,
+        gpus_per_task:  Optional[int] = None,
         partition: Union[Partition, str] = Partition.DEBUG,
+        multithread: bool = False,
         uenv: str = "",
     ):
-        """A class handling everything around the workflow on cscs's supercomputers.
-        Is used to create and submit job scripts.
+        """A class handling everything around the workflow on CSCS's supercomputers.
 
-        cluster (str) ['clariden', 'daint', 'eiger', 'santis', 'todi']:
-            Cluster on which to run jobs.
-        processor (str) ['cpu', 'gpu']:
-            Processor version to be used to run the model.
-        mpi (bool):
-            Indicates if mpi should be enabled.
-        account (str):
-            Account on which the job should be submitted from.
-        mail_type (str):
-            Specify which events should trigger a mail to the user.
-            Options are 'NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'
-        email (str):
-            E-mail adress of the user.
-        run_time (str, optional. Default: "00:30:00"):
-            Specify the job duration. Determines the queuing time.
-            Format: "HH:MM:SS".
-        nodes (int, optional. Default: 1):
-            Number of nodes to use for running MicroHH.
-        ntasks_per_core (int, optional. Default: 1):
-            Number of tasks per core. If > 1, hyperthreading is turned on.
-        ntasks_per_node (int, optional):
-            Number of tasks per node.
-            If not specified, the default for 'cpu' is set to
-            128 and 288 for 'gpu'. If 'mpi = False', it is set to 1.
-        cpus_per_task (int, optional. Default: 1):
-            Number of cpus per task.
-            Specify the number of cpus per task.
-            Defines the number of OpenMP threads per MPI rank.
-            The maximum value depends on the number of tasks per node.
-        gpus_per_task (int, optional. Default: 1):
-            Number of gpus per task.
-            Specify the number of gpus per task.
-        partition (str, optional. Default: 'debug')
-            ['debug', 'normal', 'prepost', 'low']:
-            Queue to be used on alps.
-        uenv (str, optional):
-            User environment to be used for running a job
-            e.g. 'prgenv-gnu'
+        Used to create and submit job scripts.
+
+        Args:
+            cluster (Union[Cluster, str]):
+                Cluster on which to run jobs.
+                Options: 'clariden', 'daint', 'eiger', 'santis', 'todi'.
+            processor (Union[Processor, str]):
+                Processor version to be used to run the model.
+                Options: 'cpu', 'gpu'.
+            account (str):
+                Account on which the job should be submitted from.
+            mail_type (Union[MailType, str], optional):
+                Specify which events should trigger a mail to the user.
+                Options: 'NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'.
+                Defaults to MailType.NONE.
+            email (str, optional):
+                E-mail address of the user. Defaults to None.
+            run_time (str, optional):
+                Specify the job duration. Determines the queuing time.
+                Format: "HH:MM:SS". Defaults to "00:30:00".
+            nodes (int, optional):
+                Number of nodes to use for running MicroHH. Defaults to 1.
+            ntasks (int, optional):
+                Total number of tasks. Defaults to None.
+            ntasks_per_node (int, optional):
+                Number of tasks per node. Defaults to None.
+            ntasks_per_core (int, optional):
+                Number of tasks per core. If > 1, hyperthreading is turned on.
+                Defaults to None.
+            cpus_per_task (int, optional):
+                Number of CPUs per task. Defines the number of OpenMP threads
+                per MPI rank. The maximum value depends on the number of tasks
+                per node. Defaults to None.
+            gpus_per_task (int, optional):
+                Number of GPUs per task. Defaults to None.
+            partition (Union[Partition, str], optional):
+                Queue to be used on Alps.
+                Options: 'debug', 'normal', 'prepost', 'low'.
+                Defaults to Partition.DEBUG.
+            multithread (bool, optional):
+                Enable or disable multithreading. Defaults to False.
+            uenv (str, optional):
+                User environment to be used for running a job,
+                e.g. 'prgenv-gnu'. Defaults to "".
         """
         self._cluster = cluster
         self._processor = processor
-        self.mpi = mpi
         self.account = account
         self.mail_type = mail_type.value if isinstance(mail_type, MailType) else str(mail_type.upper())
         self.email = email
         self.run_time = run_time
         self.nodes = nodes
+        self.ntasks = ntasks
+        self.ntasks_per_node = ntasks_per_node
         self.ntasks_per_core = ntasks_per_core
-        self.ntasks_per_node = ntasks_per_node or self._get_default_ntasks_per_node()
         self.cpus_per_task = cpus_per_task
         self.gpus_per_task = gpus_per_task
         self.partition = partition
+        self.multithread = "multithread" if multithread else "nomultithread"
+        self.constraint = "mc" if self.processor == "cpu" else "gpu"
         self.uenv = uenv
 
         self._check_wall_time_valid()
@@ -148,23 +156,6 @@ class AlpsSetup:
     def partition_key(self) -> str:
         """Get partition value as string for dictionary lookups."""
         return self.partition.value if isinstance(self.partition, Partition) else str(self.partition).lower()
-
-    def _get_default_ntasks_per_node(self) -> int:
-        """Determines the default number of tasks per node
-        if not specified in __init__
-
-        Returns:
-            ntasks_per_node (int):
-                Number of tasks per node to be used depending on the cluster on alps.
-                If 'mpi' is disabled, the tasks per node are set to 1.
-        """
-        if self.mpi:
-            return (
-                self.PROCESSOR_VERSIONS[self.cluster][self.processor]
-                * self.ntasks_per_core
-            )
-        else:
-            return 1
 
     def _check_wall_time_valid(self):
         """Checks if the setup is valid to be run on alps based
@@ -233,63 +224,95 @@ class AlpsSetup:
         except ValueError:
             raise ValueError("Invalid run_time format. Use HH:MM:SS")
 
-    def process_case_on_alps(
+    def _build_sbatch_header(
         self,
-        case,
-        py_file_path: str,
         job_name: str,
-        python_path: str = "python",
-        additional_args: dict = {},
-        overwrite: bool = False,
-        start_jobs: bool = True,
-    ):
-        """Submit a bash script to process a case on alps.
+        scratch_path: Union[str, Path],
+        output_pattern: str = "{job_name}_%j.out",
+        constraint: Optional[str] = None,
+        extra_sbatch: Optional[dict] = None,
+    ) -> str:
+        """Build the SBATCH header block for a SLURM script.
+        - https://docs.cscs.ch/running/slurm/
+        - https://slurm.schedmd.com/sbatch.html
 
         Args:
-            case (init.Case):
-                Case which should be processed.
-            py_file_path (str):
-                File to the python script which should be executed to process the case.
             job_name (str):
-                Name of the job. Determines the name of the resulting slurm.out script
-                and the job name in the queue.
-            python_path (str):
-                Path of the python environment to use. The default is /users/USER/bin/python3
-            additional_args (dict, optional):
-                Addtional arguments for the function called in the python script. Defaults to {}.
-            start_jobs (bool, optional):
-                Specify if the job should be starte. Defaults to True.
+                Name of the SLURM job.
+            scratch_path (Union[str, Path]):
+                Working directory for the SLURM job.
+            output_pattern (str, optional. Default: "{job_name}_%j.out"):
+                Output file pattern. `{job_name}` is replaced with the job name.
+            constraint (str, optional):
+                SLURM constraint. If None, auto-detected from processor type
+                ("mc" for cpu, "gpu" for gpu).
+            extra_sbatch (dict, optional):
+                Additional SBATCH directives as key-value pairs,
+                e.g. {"gpus-per-task": 4}. These override defaults.
+
+        Returns:
+            str: The complete SBATCH header string.
         """
-        job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
+        output_file = output_pattern.format(job_name=job_name)
 
-        # create command for bash script
-        cmd = f"srun {python_path} {py_file_path} --case-name {case.name} --case-suffix {case.suffix}"
+        # required SBATCH directives
+        lines = [
+            "#!/usr/bin/env bash",
+            "",
+            "#SBATCH --exclusive",
+            f"#SBATCH --job-name={job_name}",
+            f"#SBATCH --account={self.account}",
+            f"#SBATCH --time={self.run_time}",
+            f"#SBATCH --nodes={self.nodes}",
+        ]
 
-        if additional_args:
-            additional_args_str = " ".join(
-                [f"{key}={str(value)}" for key, value in additional_args.items()]
-            )
-            cmd = f"{cmd} --additional-args {additional_args_str}"
+        # optional SBATCH directives
+        if self.email is not None:
+            lines.append(f"#SBATCH --mail-type={self.mail_type}")
+            lines.append(f"#SBATCH --mail-user={self.email}")
 
-        # submit bash script to run post processing in parallel on alps
-        job_file = Path(case.scratch_path, f"{job_name_formatted}.sbash")
+        for key, value in [
+            ("ntasks", self.ntasks),
+            ("ntasks-per-core", self.ntasks_per_core),
+            ("ntasks-per-node", self.ntasks_per_node),
+            ("cpus-per-task", self.cpus_per_task),
+            ]:
+            if value is not None:
+                lines.append(f"#SBATCH --{key}={value}")
 
-        if job_file.exists() and overwrite:
-            os.remove(job_file)
+        if self.processor == "gpu" and self.gpus_per_task is not None:
+            lines.append(f"#SBATCH --gpus-per-task={self.gpus_per_task}")
 
-        if not job_file.exists() or overwrite:
-            job_file = self.create_bash_script(
-                commands=cmd,
-                job_name=job_name_formatted,
-                file_path=job_file,
-                scratch_path=case.scratch_path,
+        # required directives for partition and constraint
+        lines.extend([
+            f"#SBATCH --partition={self.partition_key}",
+            f"#SBATCH --constraint={self.constraint}",
+            f"#SBATCH --hint={self.multithread}",
+            f"#SBATCH --output={output_file}",
+            f"#SBATCH --chdir={str(scratch_path)}",
+        ])
+
+        # Apply extra/override SBATCH directives
+        if extra_sbatch:
+            for key, value in extra_sbatch.items():
+                lines.append(f"#SBATCH --{key}={value}")
+
+        if self.uenv:
+            lines.append(f"#SBATCH --uenv={self.uenv}")
+            lines.append("")
+            lines.append(
+                'export LD_LIBRARY_PATH="/user-environment/env/default/lib'
+                ':/user-environment/env/default/lib64:$LD_LIBRARY_PATH"'
             )
         else:
-            logger.info(f"Reading existing bash script {job_file}")
+            lines.append("")
 
-        if start_jobs:
-            # Launch the job on alps
-            job_id = execute_bash_script(job_file, wait=False)
+        lines.extend([
+            "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK",
+            "",
+        ])
+
+        return "\n".join(lines) + "\n"
 
     def create_bash_script(
         self,
@@ -297,62 +320,145 @@ class AlpsSetup:
         job_name: str,
         file_path: Union[str, Path],
         scratch_path: Union[str, Path],
+        output_pattern: str = "{job_name}_%j.out",
+        constraint: Optional[str] = None,
+        extra_sbatch: Optional[dict] = None,
     ) -> Union[str, Path]:
-        """Create bash script to run a simulation.
-        For more info, see 
-        - https://docs.cscs.ch/running/slurm/
-        - https://slurm.schedmd.com/sbatch.html
+        """Create a general-purpose SLURM bash script.
+
+        This is the single entry point for generating any SLURM job script.
+        The caller provides the shell commands to execute; the method
+        handles the SBATCH header and environment setup.
 
         Args:
-            start_jobs (bool, optional. Default: False):
-                Specify if the job should be started.
-            wait (bool, optional. Default: False):
-                Specify if the next job should only be submitted
-                after the previous one has stopped.
+            commands (Union[str, list]):
+                Shell command(s) to include in the script body.
+            job_name (str):
+                Name of the SLURM job.
+            file_path (Union[str, Path]):
+                Path where the bash script will be written.
+            scratch_path (Union[str, Path]):
+                Working directory for the SLURM job.
+            output_pattern (str, optional. Default: "{job_name}_%j.out"):
+                Output file pattern. `{job_name}` is replaced with the job name.
+            constraint (str, optional):
+                SLURM constraint override. If None, auto-detected.
+            extra_sbatch (dict, optional):
+                Additional SBATCH directives as key-value pairs.
+
+        Returns:
+            Union[str, Path]: Path to the created bash script.
         """
-        # make sure commands is a list:
         commands = utils.object_to_list(commands)
 
-        multithread = "multithread" if self.ntasks_per_core > 1 else "nomultithread"
-        constraint = "mc" if self.processor == "cpu" else "gpu"
+        header = self._build_sbatch_header(
+            job_name=job_name,
+            scratch_path=scratch_path,
+            output_pattern=output_pattern,
+            constraint=constraint,
+            extra_sbatch=extra_sbatch,
+        )
 
-        with open(file_path, "w") as bash_script:
-            header = "#!/usr/bin/env bash\n\n"
-
-            header += f"#SBATCH --exclusive\n"
-            header += f"#SBATCH --job-name={job_name} \n"
-            header += f"#SBATCH --account={self.account}\n"
-            header += f"#SBATCH --mail-type={self.mail_type}\n"
-            if self.email is not None:
-                header += f"#SBATCH --mail-user={self.email}\n"
-            header += f"#SBATCH --time={self.run_time}\n"
-            header += f"#SBATCH --nodes={self.nodes}\n"
-            header += f"#SBATCH --ntasks-per-core={self.ntasks_per_core}\n"
-            header += f"#SBATCH --ntasks-per-node={self.ntasks_per_node}\n"
-            header += f"#SBATCH --cpus-per-task={self.cpus_per_task}\n"
-            if self.processor == "gpu":
-                header += f"#SBATCH --gpus-per-task={self.gpus_per_task}\n"
-            header += f"#SBATCH --partition={self.partition} \n"
-            header += f"#SBATCH --constraint={constraint}\n"
-            header += f"#SBATCH --hint={multithread}\n"
-            header += f"#SBATCH --output={job_name}_%j.out\n"
-            header += f"#SBATCH --chdir={str(scratch_path)}\n"
-            if self.uenv:
-                header += f"#SBATCH --uenv={self.uenv}\n\n"
-                header += 'export LD_LIBRARY_PATH="/user-environment/env/default/lib:/user-environment/env/default/lib64:$LD_LIBRARY_PATH"\n'
-            else:
-                header += "\n"
-
-            header += "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK\n"
-            header += "\n"
-
-            # append commands to the file
+        with open(file_path, "w") as f:
+            f.write(header)
             for command in commands:
-                header += f"{command}\n"
-
-            bash_script.write(header)
+                f.write(f"{command}\n")
 
         return file_path
+
+    def create_multi_gpu_bash_script(
+        self,
+        cases: list,
+        job_name: str,
+        file_path: Union[str, Path],
+        scratch_path: Union[str, Path],
+        cpus_per_task_per_case: int = 72,
+        gpus_per_task_per_case: int = 1,
+        jobreport_path: Optional[str] = None,
+    ) -> Union[str, Path]:
+        """Create a bash script that launches multiple model runs simultaneously
+        on a single GPU node, each pinned to its own GPU.
+
+        Args:
+            cases (list):
+                List of case objects, each with a `scratch_path` and `name` attribute.
+            job_name (str):
+                Name of the SLURM job.
+            file_path (Union[str, Path]):
+                Path where the bash script will be written.
+            scratch_path (Union[str, Path]):
+                Working directory for the SLURM job.
+            cpus_per_task_per_case (int, optional. Default: 72):
+                Number of CPUs allocated to each case's srun step.
+            gpus_per_task_per_case (int, optional. Default: 1):
+                Number of GPUs allocated to each case's srun step.
+            jobreport_path (str, optional):
+                If provided, the command is prefixed with this wrapper
+                for the last phase (e.g. "/path/to/jobreport --").
+
+        Returns:
+            Union[str, Path]: Path to the created bash script.
+        """
+        phases = ["init", "run"]
+        n_cases = len(cases)
+        case_name = self._check_case_names(cases)
+        executable = "./microhh"
+
+        # Build the bash array definition
+        commands = []
+        commands.append("# Define the cases to run")
+        commands.append("DIRS=(")
+        for case in cases:
+            commands.append(f'    "{case.scratch_path}"')
+        commands.append(")")
+        commands.append("")
+
+        # For each phase, launch all cases in parallel, then wait
+        last_phase_idx = len(phases) - 1
+        for phase_idx, phase in enumerate(phases):
+            commands.append(f"# Launch '{phase}' phase")
+            commands.append(f"for i in {{0..{n_cases - 1}}}; do")
+
+            srun_cmd = (
+                f"    srun --exclusive"
+                f" --ntasks-per-node=1"
+                f" --cpus-per-task={cpus_per_task_per_case}"
+                f" --gpus-per-task={gpus_per_task_per_case}"
+                f' --chdir=${{DIRS[$i]}}'
+                f' --output=${{DIRS[$i]}}/{phase}_{job_name}_%j.out'
+            )
+
+            if jobreport_path and phase_idx == last_phase_idx:
+                srun_cmd += f" \\\n         {jobreport_path} {executable} {phase} {case_name} &"
+            else:
+                srun_cmd += f" \\\n         {executable} {phase} {case_name} &"
+
+            commands.append(srun_cmd)
+            commands.append("done")
+            commands.append("")
+            commands.append(f"# Wait for all '{phase}' phases to complete")
+            commands.append("wait")
+            commands.append("")
+
+        return self.create_bash_script(
+            commands=commands,
+            job_name=job_name,
+            file_path=file_path,
+            scratch_path=scratch_path,
+            output_pattern="master_%j.out",
+            constraint="gpu",
+        )
+    
+    def _check_case_names(self, cases: list):
+        # Check if all cases have the same base name as this is also how the 
+        # .ini file and initial conditions are called.
+        case_names = np.unique([case.name for case in cases])
+
+        if len(case_names) > 1:
+            raise ValueError("Cases must have the same case name for the"
+            "multi-gpu setup to work.")
+
+        return case_names[0]
 
 
 def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None) -> int:

@@ -655,12 +655,14 @@ def initialise_case(
     return case
 
 
-def read_case(case_directory: Union[str, Path]) -> Case:
+def read_case(case_directory: Union[str, Path], scratch_path: Union[str, Path] = None) -> Case:
     """Read in an existing MicroHH case.
 
     Args:
         case_directory (Union[str, Path]):
             Directory where the case is stored.
+        scratch_path (Union[str, Path]):
+            Optional path to the scratch directory.
     Returns:
         Case: Read MicroHH case.
     """
@@ -677,7 +679,7 @@ def read_case(case_directory: Union[str, Path]) -> Case:
     )
     case.file_directory = case_directory
     case.ini_path = Path(case.file_directory, f"{case.name}.ini")
-
+    case.scratch_path = Path(scratch_path, case.name_spec)
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
 
     if not case.ini_path.exists():
