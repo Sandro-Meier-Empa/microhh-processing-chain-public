@@ -29,6 +29,7 @@ class PreProcessing:
         case: init.Case,
         alps_setup: cscs.AlpsSetup,
         microhh_executable_path: Union[str, Path],
+        jobreport_path: Union[str, Path],
     ):
         """Class used for pre-processing and running MicroHH cases
 
@@ -39,14 +40,17 @@ class PreProcessing:
                 Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
             microhh_executable_path (Union[str, Path]):
                 Path to the MicroHH executable or the directory containing the MicroHH executable.
+            jobreport_path (Union[str, Path]):
+                Path to the GPU job report executable. Only supported on GPU.
         """
         self.case = case
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
+        self.jobreport_path = jobreport_path
 
         self.microhh_executable_path = self._get_microhh_executable_path()
-        self._check_microhh_build_exists()
         self._check_microhh_build_architecture()
+        self._check_jobpreport_gpu()
 
     def _get_microhh_executable_path(self) -> Path:
         microhh_executable_path = Path(self._microhh_executable_path)
@@ -63,16 +67,6 @@ class PreProcessing:
 
         return mhh_files[0]
 
-    def _check_microhh_build_exists(self):
-        """Check if the selected model build exists.
-
-        Raises:
-            ValueError: Raise error if the model build does not exist.
-        """
-        # Check if build exists
-        if self.alps_setup.processor == "gpu" and self.alps_setup.mpi:
-            raise ValueError("MPI is not enabled for GPU accelerated version.")
-        
     def _check_microhh_build_architecture(self):
         """
         Check if the architecture of the selected MicroHH build matches the system architecture.
@@ -125,6 +119,10 @@ class PreProcessing:
 
         return result
 
+    def _check_jobpreport_gpu(self):
+        """Make sure that jobreport is only provided when using GPU partition and raise an error if not."""
+        if self.alps_setup.processor != "gpu" and self.jobreport_path is not None:
+            raise ValueError("GPU jobreport is only supported when using GPU partition.")
 
     def prepare_simulation(
         self,
@@ -259,7 +257,7 @@ class PreProcessing:
     ) -> Path:
         job_file = Path(self.case.scratch_path, "run_microhh.sbash")
 
-        commands = self._get_microhh_run_commands(mode)
+        commands = _get_microhh_run_commands(self.case, mode, self.jobreport_path)
 
         if not job_file.exists() or overwrite:
             job_file = self.alps_setup.create_bash_script(
@@ -272,25 +270,6 @@ class PreProcessing:
             logger.info(f"Reading existing bash script {job_file}")
 
         return job_file
-
-    def _get_microhh_run_commands(
-        self, mode: Union[RunMode, str] = RunMode.RUN
-    ) -> list[str]:
-        mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
-        
-        if mode_val == RunMode.RUN.value:
-            commands = [
-                f"srun {self.case.scratch_path}/microhh init {self.case.name}",
-                f"srun {self.case.scratch_path}/microhh run {self.case.name}",
-            ]
-        elif mode_val == RunMode.RERUN.value:
-            commands = [
-                f"srun {self.case.scratch_path}/microhh run {self.case.name}",
-            ]
-        else:
-            raise ValueError("mode must be either 'run' or 'rerun'")
-
-        return commands
 
     def _check_ini_setup_valid(self):
         """
@@ -329,7 +308,7 @@ class PreProcessing:
     def _adjust_mpi_settings(self):
         """Adjust MPI settings if MPI is disabled."""
         if (
-            not self.alps_setup.mpi
+            self.alps_setup.processor == "gpu"
             and not self.case.ini_file["master"]["npx"] == 1
             and not self.case.ini_file["master"]["npy"] == 1
         ):
@@ -739,8 +718,183 @@ class PreProcessing:
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)
+    
 
+def _get_microhh_run_commands(
+    case_list: List[init.Case],
+    mode: Union[RunMode, str] = RunMode.RUN,
+    cpus_per_task_per_case: int = 72,
+    gpus_per_task_per_case: int = 1,
+    jobreport_path: Optional[str] = None,
+) -> list[str]:
+    """Generate the shell commands to run MicroHH.
+
+    Args:
+        case_list: List of cases to run.
+        mode: Run mode ('run' for init+run, 'rerun' for run only).
+        cpus_per_task_per_case: CPUs per srun step (multi-GPU only).
+        gpus_per_task_per_case: GPUs per srun step (multi-GPU only).
+        jobreport_path: Optional wrapper prefix for the final phase
+            (multi-GPU only).
+
+    Returns:
+        List of shell command strings.
+    """
+    case_list = np.atleast_1d(case_list)
+    mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
+
+    if mode_val == RunMode.RUN.value:
+        phases = ["init", "run"]
+    elif mode_val == RunMode.RERUN.value:
+        phases = ["run"]
+    else:
+        raise ValueError("mode must be either 'run' or 'rerun'")
+
+    if len(case_list) == 1:
+        return _get_single_run_command(
+            phases, 
+            case=case_list[0], 
+            jobreport_path=jobreport_path)
+    
+    elif len(case_list) == 4:
+        return _get_multi_run_commands(
+            phases,
+            case_list=case_list,
+            cpus_per_task_per_case=cpus_per_task_per_case,
+            gpus_per_task_per_case=gpus_per_task_per_case,
+            jobreport_path=jobreport_path,
+        )
+    else:
+        logger.warning(
+            f"Expected either 1 or 4 cases, but got {len(case_list)}. For a "
+            f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
+        )
+    
+def _get_single_run_command(
+        phases: list[str],
+        case: init.Case,
+        jobreport_path: Optional[str] = None
+        ) -> list[str]:
+    """Generate srun commands for a single-case run, e.g. on a CPU node.
+
+    Args:
+        phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
+        case: The case to run.
+        jobreport_path: Optional jobreport wrapper for the run phase.
+
+    Returns:
+        List of shell command strings.
+    """
+    commands = []
+    last_phase_idx = len(phases) - 1
+    for phase_idx, phase in enumerate(phases):
+        if jobreport_path and phase_idx == last_phase_idx:
+            commands.append(f"srun {jobreport_path} -- {case.scratch_path}/microhh {phase} {case.name}")
+        else:
+            commands.append(f"srun {case.scratch_path}/microhh {phase} {case.name}")
+    return commands
+
+def _get_multi_run_commands(
+    phases: list[str],
+    case_list: List[init.Case],
+    cpus_per_task_per_case: int = 72,
+    gpus_per_task_per_case: int = 1,
+    jobreport_path: Optional[str] = None,
+) -> list[str]:
+    """Generate srun commands that launch 4 cases in parallel on a GPU node.
+
+    Args:
+        phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
+        case_list: Cases to run in parallel, one per GPU.
+        cpus_per_task_per_case: CPUs per srun step.
+        gpus_per_task_per_case: GPUs per srun step.
+        jobreport_path: Optional wrapper prefix for the final phase.
+
+    Returns:
+        List of shell command strings.
+    """
+    case_name = _get_common_case_name(case_list)
+    n_cases = len(case_list)
+    executable = "./microhh"
+
+    commands = []
+
+    # Bash array with case directories
+    commands.append("# Define the cases to run")
+    commands.append("DIRS=(")
+    for case in case_list:
+        commands.append(f'    "{case.scratch_path}"')
+    commands.append(")")
+    commands.append("")
+
+    last_phase_idx = len(phases) - 1
+    for phase_idx, phase in enumerate(phases):
+        commands.append(f"# Launch '{phase}' phase")
+        commands.append(f"for i in {{0..{n_cases - 1}}}; do")
+
+        srun_prefix = (
+            f"    srun --exclusive"
+            f" --ntasks-per-node=1"
+            f" --cpus-per-task={cpus_per_task_per_case}"
+            f" --gpus-per-task={gpus_per_task_per_case}"
+            f" --chdir=${{DIRS[$i]}}"
+            f" --output=${{DIRS[$i]}}/{phase}_microhh_%j.out"
+        )
+
+        if jobreport_path and phase_idx == last_phase_idx:
+            srun_cmd = f"{srun_prefix} \\\n         {jobreport_path} -- {executable} {phase} {case_name} &"
+        else:
+            srun_cmd = f"{srun_prefix} \\\n         {executable} {phase} {case_name} &"
+
+        commands.append(srun_cmd)
+        commands.append("done")
+        commands.append("")
+        commands.append(f"# Wait for all '{phase}' phases to complete")
+        commands.append("wait")
+        commands.append("")
+
+    return commands
+
+
+def create_run_4x_script(
+    cases: List[init.Case],
+    alps_setup: cscs.AlpsSetup,
+    scratch_path: str,
+    overwrite: bool = False,
+    jobreport_path: Optional[str] = None,
+):
+    """Run 4 prepared simulations on GPU."""
+    if len(cases) != 4:
+        raise ValueError(f"Expected 4 cases, but got {len(cases)}.")
+    
+    master_job_file = Path(scratch_path, "run_microhh_4x.sbash")
+
+    commands = _get_microhh_run_commands(case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path)
+
+    if not master_job_file.exists() or overwrite:
+        master_job_file = alps_setup.create_bash_script(
+            commands=commands,
+            job_name="run_microhh_4x",
+            file_path=master_job_file,
+            scratch_path=scratch_path,
+        )
+    else:
+        logger.info(f"Reading existing bash script {master_job_file}")
+
+    return master_job_file
+
+def _get_common_case_name(cases: list):
+    # Check if all cases have the same base name as this is also how the 
+    # .ini file and initial conditions are called.
+    case_names = np.unique([case.name for case in cases])
+
+    if len(case_names) > 1:
+        raise ValueError("Cases must have the same case name for the"
+        "multi-gpu setup to work.")
+
+    return case_names[0]
 
 __all__ = [
     "PreProcessing",
+    "create_run_4x_script",
 ]

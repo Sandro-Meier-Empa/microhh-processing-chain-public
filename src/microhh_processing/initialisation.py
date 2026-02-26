@@ -679,7 +679,7 @@ def read_case(case_directory: Union[str, Path], scratch_path: Union[str, Path] =
     )
     case.file_directory = case_directory
     case.ini_path = Path(case.file_directory, f"{case.name}.ini")
-    case.scratch_path = Path(scratch_path, case.name_spec)
+    case.scratch_path = Path(scratch_path, case.name_spec) if scratch_path else None
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
 
     if not case.ini_path.exists():

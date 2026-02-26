@@ -229,7 +229,6 @@ class AlpsSetup:
         job_name: str,
         scratch_path: Union[str, Path],
         output_pattern: str = "{job_name}_%j.out",
-        constraint: Optional[str] = None,
         extra_sbatch: Optional[dict] = None,
     ) -> str:
         """Build the SBATCH header block for a SLURM script.
@@ -243,9 +242,6 @@ class AlpsSetup:
                 Working directory for the SLURM job.
             output_pattern (str, optional. Default: "{job_name}_%j.out"):
                 Output file pattern. `{job_name}` is replaced with the job name.
-            constraint (str, optional):
-                SLURM constraint. If None, auto-detected from processor type
-                ("mc" for cpu, "gpu" for gpu).
             extra_sbatch (dict, optional):
                 Additional SBATCH directives as key-value pairs,
                 e.g. {"gpus-per-task": 4}. These override defaults.
@@ -321,7 +317,6 @@ class AlpsSetup:
         file_path: Union[str, Path],
         scratch_path: Union[str, Path],
         output_pattern: str = "{job_name}_%j.out",
-        constraint: Optional[str] = None,
         extra_sbatch: Optional[dict] = None,
     ) -> Union[str, Path]:
         """Create a general-purpose SLURM bash script.
@@ -341,8 +336,6 @@ class AlpsSetup:
                 Working directory for the SLURM job.
             output_pattern (str, optional. Default: "{job_name}_%j.out"):
                 Output file pattern. `{job_name}` is replaced with the job name.
-            constraint (str, optional):
-                SLURM constraint override. If None, auto-detected.
             extra_sbatch (dict, optional):
                 Additional SBATCH directives as key-value pairs.
 
@@ -355,7 +348,6 @@ class AlpsSetup:
             job_name=job_name,
             scratch_path=scratch_path,
             output_pattern=output_pattern,
-            constraint=constraint,
             extra_sbatch=extra_sbatch,
         )
 
@@ -365,101 +357,6 @@ class AlpsSetup:
                 f.write(f"{command}\n")
 
         return file_path
-
-    def create_multi_gpu_bash_script(
-        self,
-        cases: list,
-        job_name: str,
-        file_path: Union[str, Path],
-        scratch_path: Union[str, Path],
-        cpus_per_task_per_case: int = 72,
-        gpus_per_task_per_case: int = 1,
-        jobreport_path: Optional[str] = None,
-    ) -> Union[str, Path]:
-        """Create a bash script that launches multiple model runs simultaneously
-        on a single GPU node, each pinned to its own GPU.
-
-        Args:
-            cases (list):
-                List of case objects, each with a `scratch_path` and `name` attribute.
-            job_name (str):
-                Name of the SLURM job.
-            file_path (Union[str, Path]):
-                Path where the bash script will be written.
-            scratch_path (Union[str, Path]):
-                Working directory for the SLURM job.
-            cpus_per_task_per_case (int, optional. Default: 72):
-                Number of CPUs allocated to each case's srun step.
-            gpus_per_task_per_case (int, optional. Default: 1):
-                Number of GPUs allocated to each case's srun step.
-            jobreport_path (str, optional):
-                If provided, the command is prefixed with this wrapper
-                for the last phase (e.g. "/path/to/jobreport --").
-
-        Returns:
-            Union[str, Path]: Path to the created bash script.
-        """
-        phases = ["init", "run"]
-        n_cases = len(cases)
-        case_name = self._check_case_names(cases)
-        executable = "./microhh"
-
-        # Build the bash array definition
-        commands = []
-        commands.append("# Define the cases to run")
-        commands.append("DIRS=(")
-        for case in cases:
-            commands.append(f'    "{case.scratch_path}"')
-        commands.append(")")
-        commands.append("")
-
-        # For each phase, launch all cases in parallel, then wait
-        last_phase_idx = len(phases) - 1
-        for phase_idx, phase in enumerate(phases):
-            commands.append(f"# Launch '{phase}' phase")
-            commands.append(f"for i in {{0..{n_cases - 1}}}; do")
-
-            srun_cmd = (
-                f"    srun --exclusive"
-                f" --ntasks-per-node=1"
-                f" --cpus-per-task={cpus_per_task_per_case}"
-                f" --gpus-per-task={gpus_per_task_per_case}"
-                f' --chdir=${{DIRS[$i]}}'
-                f' --output=${{DIRS[$i]}}/{phase}_{job_name}_%j.out'
-            )
-
-            if jobreport_path and phase_idx == last_phase_idx:
-                srun_cmd += f" \\\n         {jobreport_path} {executable} {phase} {case_name} &"
-            else:
-                srun_cmd += f" \\\n         {executable} {phase} {case_name} &"
-
-            commands.append(srun_cmd)
-            commands.append("done")
-            commands.append("")
-            commands.append(f"# Wait for all '{phase}' phases to complete")
-            commands.append("wait")
-            commands.append("")
-
-        return self.create_bash_script(
-            commands=commands,
-            job_name=job_name,
-            file_path=file_path,
-            scratch_path=scratch_path,
-            output_pattern="master_%j.out",
-            constraint="gpu",
-        )
-    
-    def _check_case_names(self, cases: list):
-        # Check if all cases have the same base name as this is also how the 
-        # .ini file and initial conditions are called.
-        case_names = np.unique([case.name for case in cases])
-
-        if len(case_names) > 1:
-            raise ValueError("Cases must have the same case name for the"
-            "multi-gpu setup to work.")
-
-        return case_names[0]
-
 
 def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None) -> int:
     """Run a simulation using sbatch
