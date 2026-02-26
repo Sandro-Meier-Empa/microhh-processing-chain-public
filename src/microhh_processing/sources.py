@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 def get_source_strength(
     case: init.Case, to_unit: str, time_s: int = None
 ) -> np.ndarray:
-    """
-    Get source strengths converted to desired units.
+    """Get source strengths converted to desired units.
+
     Works both for constant and time-dependent source strengths.
 
     Args:
@@ -57,8 +57,7 @@ def get_source_strength(
 
 
 def _get_dynamic_source_strength(case: init.Case, time_s: int = None) -> np.ndarray:
-    """
-    Get time-dependent source strengths from initial conditions.
+    """Get time-dependent source strengths from initial conditions.
 
     Args:
         case: Case object needed to get initial conditions
@@ -145,8 +144,7 @@ def create_strength_profiles(
     time_format: str = "%H:%M:%S",
     spacing: str = "1min",
 ):
-    """
-    Create strength profiles with 1-second ramp up/down for each time interval.
+    """Create strength profiles with 1-second ramp up/down for each time interval.
 
     Args:
         start_times: List of start times in format "HH:MM:SS"
@@ -232,8 +230,8 @@ def briggs_momentum_rise(
     Vs: Union[float, np.ndarray],
     stability: Stability = Stability.NEUTRAL,
 ) -> Union[float, np.ndarray]:
-    """
-    Briggs (1969) momentum-dominated plume rise Δh(x) for neutral conditions.
+    """Briggs (1969) momentum-dominated plume rise Δh(x) for neutral conditions.
+
     Taken from Seinfeld and Pandis (2016), p. 868
 
     Table form used (neutral):
@@ -241,23 +239,16 @@ def briggs_momentum_rise(
         final:      Δh = 3 * d * Vs / u
     with the condition Vs/u >= 4.
 
-    Parameters
-    ----------
-    x : float
-        Downwind distance (m).
-    u : float
-        Wind speed at stack height (m/s).
-    d : float
-        Stack diameter (m).
-    Vs : float
-        Stack exit velocity (m/s).
-    stability : {"neutral"}
-        Atmospheric stability regime. Only "neutral" is supported in this implementation.
+    Args:
+        x: Downwind distance (m).
+        u: Wind speed at stack height (m/s).
+        d: Stack diameter (m).
+        Vs: Stack exit velocity (m/s).
+        stability: Atmospheric stability regime.
+            Only "neutral" is supported in this implementation.
 
-    Returns
-    -------
-    Δh : float
-        Plume rise above source (m).
+    Returns:
+        float: Plume rise above source Δh (m).
     """
     _validate_input(x, u, d, Vs)
     
@@ -295,8 +286,8 @@ def asme_momentum_rise(
     d: Union[float, np.ndarray],
     Vs: Union[float, np.ndarray],
 ) -> Union[float, np.ndarray]:
-    """
-    ASME (1973) momentum-dominated plume rise Δh(x) for neutral conditions.
+    """ASME (1973) momentum-dominated plume rise Δh(x) for neutral conditions.
+
     Taken from Seinfeld and Pandis (2016), p. 868
 
     Conditions for momentum-dominated rise:
@@ -304,21 +295,14 @@ def asme_momentum_rise(
         - Vs > u
         - ΔT < 50 K
 
-    Parameters
-    ----------
-    x : float
-        Downwind distance (m).
-    u : float
-        Wind speed at stack height (m/s).
-    d : float
-        Stack diameter (m).
-    Vs : float
-        Stack exit velocity (m/s).
+    Args:
+        x: Downwind distance (m).
+        u: Wind speed at stack height (m/s).
+        d: Stack diameter (m).
+        Vs: Stack exit velocity (m/s).
 
-    Returns
-    -------
-    Δh : float
-        Plume rise above source (m).
+    Returns:
+        float: Plume rise above source Δh (m).
     """
 
     _validate_input(x, u, d, Vs)
@@ -346,27 +330,17 @@ def _generic_plume_rise_form(
         b: float,
         u: Union[float, np.ndarray],
         a: float) -> Union[float, np.ndarray]:
-    """
-    Generic form for plume rise equations:
-        Δh = E * (x^b) * (u^-a)
+    """Generic form for plume rise equations: Δh = E * (x^b) * (u^-a).
 
-    Parameters
-    ----------
-    E : float
-        Empirical constant.
-    x : float or np.ndarray
-        Downwind distance (m).
-    b : float
-        Exponent for downwind distance.
-    u : float or np.ndarray
-        Wind speed at stack height (m/s).
-    a : float
-        Exponent for wind speed.
+    Args:
+        E: Empirical constant.
+        x: Downwind distance (m).
+        b: Exponent for downwind distance.
+        u: Wind speed at stack height (m/s).
+        a: Exponent for wind speed.
 
-    Returns
-    -------
-    Δh : float or np.ndarray
-        Plume rise above source (m).
+    Returns:
+        float or np.ndarray: Plume rise above source Δh (m).
     """
     return E * (x ** b) * (u ** -a)
 

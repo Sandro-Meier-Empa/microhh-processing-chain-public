@@ -54,15 +54,14 @@ class Visualisation:
         """
         self.case = case
 
-
     def plot_initial_conditions(
             self,
             ncols: int = 4,
             figsize: tuple = (15, 10),
             cmap: str = "viridis"
             ) -> None:
-        """
-        Plot all variables from the initial conditions file, grouped by their dimensions.
+        """Plot all variables from the initial conditions file, grouped by their dimensions.
+
         Args:
             ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
             figsize (tuple, optional): Size of the figure. Defaults to (15, 10).
@@ -95,7 +94,7 @@ class Visualisation:
         for dims, vars_list in dim_groups.items():
             n_vars = len(vars_list)
             nrows = int(np.ceil(n_vars / ncols))
-            
+
             # squeeze=False ensures axs is always a 2D array
             fig, axs = plt.subplots(nrows, ncols, figsize=figsize, sharey=sharey, 
                                     layout="constrained", squeeze=False)
@@ -108,9 +107,8 @@ class Visualisation:
             # Hide empty subplots
             for ax in axs.flat[n_vars:]:
                 ax.axis("off")
-            
+
             plt.show()
-    
 
     def _plot_variable(self, data: xr.DataArray, ax: plt.Axes, cmap: str) -> None:
         dims = data.dims
@@ -121,7 +119,7 @@ class Visualisation:
 
         if len(dims) == 0:
             ax.axhline(data.values, linestyle='--')
-            
+
         elif len(dims) == 1:
             if aux_dim:
                 ax.plot(data.values, data[aux_dim], marker="x")
@@ -144,9 +142,7 @@ class Visualisation:
         plot_format: Literal["line", "shaded"] = "line",
         color_init: str = "k",
     ):
-        """
-        Plot the prognostic variables
-        """
+        """Plot the prognostic variables."""
         no_data = True if data is None else False
         variables = utils.object_to_list(variables)
         time_factor = self._get_time_factor(time_format)
@@ -600,8 +596,7 @@ class VariableViewer:
         vmax: float = None,
         time_format: Literal["s", "min", "h"] = "s",
     ):
-        """
-        Initialise the VariableViewer with a microHH dataset.
+        """Initialise the VariableViewer with a microHH dataset.
 
         Args:
             data (xr.Dataset):
@@ -813,8 +808,7 @@ class VariableViewer:
 def plot_gas_weight(
     data: xr.Dataset, gas: str = "CH4", fig_width: Union[int, float] = 15
 ):
-    """
-    Plot the vertical distribution of a gas as well as the 2D plume that
+    """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
 
@@ -893,24 +887,17 @@ def plot_case_comparison(
     cmap: str = "RdBu_r",
     figsize: Tuple[int, int] = (12, 5),
 ):
-    """
-    Plot a comparison of one or more variables from multiple cases.
+    """Plot a comparison of one or more variables from multiple cases.
 
-    Parameters
-    ----------
-    cases : sequence[init.Case] or init.Case
-        One or more case objects.
-    variables : sequence[str] or str
-        One or more variable names to plot.
-    difference : bool, optional
-        If True, plot differences to the default case. If False, plot
-        absolute values. Default is True.
-    default_case_index : int, optional
-        Index of the default case used when `difference=True`.
-    cmap : str, optional
-        Colormap name passed to `pcolormesh`.
-    figsize : tuple[int, int], optional
-        Figure size passed to `plt.subplots`.
+    Args:
+        cases: One or more case objects.
+        variables: One or more variable names to plot.
+        difference: If True, plot differences to the default case.
+            If False, plot absolute values. Defaults to True.
+        default_case_index: Index of the default case used when
+            ``difference=True``. Defaults to 0.
+        cmap: Colormap name passed to ``pcolormesh``. Defaults to "RdBu_r".
+        figsize: Figure size passed to ``plt.subplots``. Defaults to (12, 5).
     """
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)

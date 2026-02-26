@@ -599,21 +599,16 @@ def extract_job_id(case) -> int | None:
 
 
 def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
-    """
-    Query Slurm accounting (sacct) for a given job ID and return a pandas DataFrame.
+    """Query Slurm accounting (sacct) for a given job ID and return a pandas DataFrame.
 
-    Parameters
-    ----------
-    jobid : int or str
-        The Slurm job ID to query.
-    fields : list of str, optional
-        List of sacct fields to include.
-        Defaults to ['JobID', 'JobName', 'NNodes', 'NCPUS', 'Elapsed', 'State'].
+    Args:
+        jobid: The Slurm job ID to query.
+        fields: List of sacct fields to include.
+            Defaults to ['JobID', 'JobName', 'NNodes', 'NCPUS', 'Elapsed', 'State'].
+        ssh_connect: SSH connection string for remote execution.
 
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing the sacct output.
+    Returns:
+        pd.DataFrame: DataFrame containing the sacct output.
     """
     if fields is None:
         fields = ["JobID", "JobName", "NNodes", "NCPUS", "Elapsed", "State"]

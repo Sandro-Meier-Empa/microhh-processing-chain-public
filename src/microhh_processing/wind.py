@@ -525,29 +525,21 @@ def wind_profile_from_given_wind(
     sensible_heat_flux: Union[int, float],
     threshold: float,
 ) -> xr.Dataset:
-    """_summary_
+    """Compute a wind profile from a given wind speed at a specific height.
 
     Args:
-        grid (Union[ np.ndarray, ls2d.grid.Grid_equidist, ls2d.grid.Grid_linear_stretched,
-        ls2d.grid.Grid_stretched, ls2d.grid.Grid_stretched_manual]):
-            Array of heights above the ground level.
-        wind_speed (Union[int, float]):
-            Target wind speed at 'height', (in m).
-        height (Union[int, float]):
-            Target height at which the wind speed should be 'wind_speed'.
-        surface_roughness (Union[int, float]):
-            Surface roughness length, (in m).
-        thl (Union[int, float, list, np.ndarray]):
-            (Potential) temperature profile, (in K).
-        E (Union[int, float, list, np.ndarray]):
-            Water vapor flux (kg/s).
-        sensible_heat_flux (Union[int, float]):
-            Sensible heat flux (W/m2).
-        threshold (float, optional):
-            Maximum difference between target 'wind_speed' and calculated wind speed.
+        grid: Array of heights above the ground level or LS2D grid object.
+        wind_speed: Target wind speed at 'height' (m/s).
+        height: Target height at which the wind speed should be 'wind_speed' (m).
+        surface_roughness: Surface roughness length (m).
+        thl: (Potential) temperature profile (K).
+        E: Water vapor flux (kg/s).
+        sensible_heat_flux: Sensible heat flux (W/m2).
+        threshold: Maximum difference between target 'wind_speed' and
+            calculated wind speed.
 
     Returns:
-        xr.Dataset: _description_
+        np.ndarray: Wind profile interpolated to the model grid.
     """
 
     if isinstance(grid, np.ndarray):
@@ -615,30 +607,32 @@ def get_wind_profile(
     stability_criterion: Literal["MO", "Ri"] = "Ri",
     kappa: float = 0.4,
 ) -> np.ndarray:
-    """
-    Calculate the wind profile based on the logarithmic wind profile equation.
-    Give either the sensible heat flux H (in W/m2) or the turbulent sensible heat flux (in K m/s).
+    """Calculate the wind profile based on the logarithmic wind profile equation.
+
+    Give either the sensible heat flux H (in W/m2) or the turbulent sensible
+    heat flux (in K m/s).
+
     Source: https://denning.atmos.colostate.edu/ats761/BonanBookFigures/Scans/Turbulent_fluxes_14.pdf
 
     Marked with *:
     From https://www.cambridge.org/core/books/turbulence-in-the-atmosphere/60C43BE9C14A0511C0B03ACD42731068
 
-    Parameters:
-    z (Union[int, float, list, np.ndarray]): Array of heights above the ground level.
-    z0 (Union[int, float]): Roughness length.
-    u_star (Union[int, float]): Friction velocity.
-    T (Union[int, float]): (Potential) temperature (in K).
-    H (Union[int, float]): Sensible heat flux (W/m^2).
-    H_turb (Union[int, float]): Turbulent sensible heat flux (K m/s).
-    E (Union[int, float], optional): Water vapor flux (kg/s). Defaults to 0.
-    displacement_height (Union[int, float], optional): Zero-plane displacement height (m). Defaults to 0.
-    kappa (float, optional): von Kármán constant. Defaults to 0.4.
-    alpha (float, optional): Parameter for stability correction in unstable conditions. Defaults to 1/4.
-    beta (float, optional): Parameter for stability correction in stable conditions. Defaults to 4.7.
-    gamma (float, optional): Parameter for stability correction in unstable conditions. Defaults to 15.0.
+    Args:
+        z: Array of heights above the ground level.
+        z0: Roughness length.
+        u_star: Friction velocity.
+        T: (Potential) temperature (in K).
+        L: Monin-Obukhov length (m). Defaults to None.
+        H: Sensible heat flux (W/m^2). Defaults to None.
+        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        E: Water vapor flux (kg/s). Defaults to 0.
+        displacement_height: Zero-plane displacement height (m). Defaults to 0.
+        stability_criterion: Stability criterion to use ('MO' or 'Ri').
+            Defaults to 'Ri'.
+        kappa: von Kármán constant. Defaults to 0.4.
 
     Returns:
-    np.ndarray: Wind speed at each height in z.
+        np.ndarray: Wind speed at each height in z.
     """
     z = np.array(z)
 
@@ -690,15 +684,14 @@ def get_wind_profile(
 def calculate_virtual_temperature(
     t: Union[int, float, list, np.ndarray], q: Union[int, float, list, np.ndarray]
 ) -> np.ndarray:
-    """
-    Calculate the virtual (potential) temperature T_v.
+    """Calculate the virtual (potential) temperature T_v.
 
-    Parameters:
-    t (Union[int, float, list, np.ndarray]): (Potential) temperature (in K).
-    q (Union[int, float, list, np.ndarray]): Specific humidity (dimensionless, in kg/kg).
+    Args:
+        t: (Potential) temperature (in K).
+        q: Specific humidity (dimensionless, in kg/kg).
 
     Returns:
-    np.ndarray: Virtual temperature (in K).
+        np.ndarray: Virtual temperature (in K).
     """
     t = np.array(t)
     q = np.array(q)
@@ -709,19 +702,20 @@ def calculate_virtual_temperature(
 def calculate_virtual_turbulent_heat_flux(
     H: float, E: float, T: float, rho: float = 1.225, cp: float = 1003.5
 ) -> float:
-    """
-    Calculate the virtual turbulent heat flux from sensible heat flux H.
+    """Calculate the virtual turbulent heat flux from sensible heat flux H.
+
     According to: https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
-    Parameters:
-    H float: Sensible heat flux (W/m^2).
-    E float: Water vapor flux (kg/s).
-    T float: Absolute temperature (K).
-    rho (float, optional): Density of air (kg/m^3). Defaults to 1.225.
-    cp (float, optional): Specific heat capacity of air at constant pressure (J/(kg*K)). Defaults to 1003.5.
+    Args:
+        H: Sensible heat flux (W/m^2).
+        E: Water vapor flux (kg/s).
+        T: Absolute temperature (K).
+        rho: Density of air (kg/m^3). Defaults to 1.225.
+        cp: Specific heat capacity of air at constant pressure (J/(kg*K)).
+            Defaults to 1003.5.
 
     Returns:
-    float: Virtual turbulent heat flux (K m/s).
+        float: Virtual turbulent heat flux (K m/s).
     """
     return (1 / T) * (1 / rho) * ((H / cp) + 0.61 * E)
 
@@ -733,18 +727,17 @@ def calculate_monin_obukhov_length(
     kappa: float = 0.4,
     g: float = 9.81,
 ) -> float:
-    """
-    Calculate the Monin-Obukhov length (L).
+    """Calculate the Monin-Obukhov length (L).
 
-    Parameters:
-    u_star (Union[int, float]): Friction velocity (m/s).
-    T0 (Union[int, float]): Mean temperature (K).
-    H_turb (Union[int, float]): Virtual turbulent heat flux (K m/s).
-    kappa (float, optional): von Kármán constant (dimensionless). Defaults to 0.4.
-    g (float, optional): Acceleration due to gravity (m/s^2). Defaults to 9.81.
+    Args:
+        u_star: Friction velocity (m/s).
+        T0: Mean temperature (K).
+        H_turb: Virtual turbulent heat flux (K m/s).
+        kappa: von Kármán constant (dimensionless). Defaults to 0.4.
+        g: Acceleration due to gravity (m/s^2). Defaults to 9.81.
 
     Returns:
-    float: Monin-Obukhov length (m).
+        float: Monin-Obukhov length (m).
     """
 
     L = -(u_star**3 * T0) / (kappa * g * H_turb)
@@ -752,17 +745,17 @@ def calculate_monin_obukhov_length(
 
 
 def _determine_stability_MO(L: float, threshold: float = 500) -> str:
-    """
-    Determine the stability regime based on the Monin-Obukhov length (L).
+    """Determine the stability regime based on the Monin-Obukhov length (L).
+
     From: https://www.researchgate.net/publication/266043126_Estimating_the_systematic_er-_rors_in_turbulence_sensed_by_wind_lidars
     Or from: https://onlinelibrary.wiley.com/doi/full/10.1002/we.1528
 
-    Parameters:
-    L (float): Monin-Obukhov length (m).
-    threshold (float, optional): Threshold for neutral stability. Defaults to 1e5.
+    Args:
+        L: Monin-Obukhov length (m).
+        threshold: Threshold for neutral stability. Defaults to 500.
 
     Returns:
-    str: Stability regime ("stable", "neutral", or "unstable").
+        str: Stability regime ("stable", "neutral", or "unstable").
     """
     if L > 0 and L < threshold:
         return "stable"
@@ -775,9 +768,19 @@ def _determine_stability_MO(L: float, threshold: float = 500) -> str:
 def _determine_stability_Ri(
     Ri: float, upper_threshold: float = -0.1, lower_threshold: float = 0.05
 ) -> str:
-    """
-    Determine the stability regime based on the Richardson number (Ri).
+    """Determine the stability regime based on the Richardson number (Ri).
+
     From: https://www.researchgate.net/publication/269105054_Dispersion_modeling_of_air_pollutants_in_the_atmosphere_a_review
+
+    Args:
+        Ri: Richardson number.
+        upper_threshold: Upper threshold for stability classification.
+            Defaults to -0.1.
+        lower_threshold: Lower threshold for stability classification.
+            Defaults to 0.05.
+
+    Returns:
+        str: Stability regime ("stable", "neutral", or "unstable").
     """
     Ri = np.asarray(Ri)
 
@@ -796,17 +799,17 @@ def _determine_stability_Ri(
 def _correction_stable(
     z: Union[int, float, np.ndarray], L: float, beta: float = 4.8
 ) -> Union[int, float, np.ndarray]:
-    """
-    Stability correction for stable conditions.
+    """Stability correction for stable conditions.
 
-    Parameters:
-    z (Union[int, float, np.ndarray]): Height above the ground level (m).
-    L (float): Monin-Obukhov length (m).
-    beta (float, optional): Stability correction parameter. Defaults to 4.8.
     * 4.8 in Wyngaard (2010) Turbulence in the Atmosphere.
 
+    Args:
+        z: Height above the ground level (m).
+        L: Monin-Obukhov length (m).
+        beta: Stability correction parameter. Defaults to 4.8.
+
     Returns:
-    Union[int, float, np.ndarray]: Stability correction term.
+        Stability correction term.
     """
     return -beta * z / L
 
@@ -814,17 +817,16 @@ def _correction_stable(
 def _correction_unstable(
     z: Union[int, float, np.ndarray], L: float, alpha: float = 1 / 4, gamma: float = 15
 ) -> Union[int, float, np.ndarray]:
-    """
-    Stability correction for unstable conditions.
+    """Stability correction for unstable conditions.
 
-    Parameters:
-    z (Union[int, float, np.ndarray]): Height above the ground level (m).
-    L (float): Monin-Obukhov length (m).
-    alpha (float, optional): Stability correction parameter. Defaults to 1/4.
-    gamma (float, optional): Stability correction parameter. Defaults to 15.
+    Args:
+        z: Height above the ground level (m).
+        L: Monin-Obukhov length (m).
+        alpha: Stability correction parameter. Defaults to 1/4.
+        gamma: Stability correction parameter. Defaults to 15.
 
     Returns:
-    Union[int, float, np.ndarray]: Stability correction term.
+        Stability correction term.
     """
     # according to Wyngaard (2010) Turbulence in the Atmosphere:
     gamma = 3.6
@@ -852,20 +854,20 @@ def solve_wind_profile(
     H: Union[int, float] = None,
     H_turb: Union[int, float] = None,
 ) -> np.ndarray:
-    """
-    Equation to solve for finding friction velocity (u_star).
+    """Equation to solve for finding friction velocity (u_star).
 
-    Parameters:
-    u_star (Union[int, float]): Initial guess for friction velocity (m/s).
-    z (Union[int, float, list, np.ndarray]): Array of heights above the ground level (m).
-    z0 (Union[int, float]): Roughness length (m).
-    T (Union[int, float, list, np.ndarray]): (Potential) temperature profile (in K).
-    E (Union[int, float, list, np.ndarray]): Water vapor flux (kg/s)
-    H (Union[int, float]): Sensible heat flux (W/m^2).
-    wind_speed (Union[int, float]): Measured wind speed (m/s).
+    Args:
+        u_star: Initial guess for friction velocity (m/s).
+        wind_speed: Measured wind speed (m/s).
+        z: Array of heights above the ground level (m).
+        z0: Roughness length (m).
+        T: (Potential) temperature profile (in K).
+        E: Water vapor flux (kg/s).
+        H: Sensible heat flux (W/m^2). Defaults to None.
+        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
 
     Returns:
-    np.ndarray: Difference between calculated and measured wind speed.
+        np.ndarray: Difference between calculated and measured wind speed.
     """
     return (
         get_wind_profile(z=z, z0=z0, u_star=u_star, T=T, E=E, H=H, H_turb=H_turb)
@@ -883,19 +885,21 @@ def compute_u_star(
     H_turb: Union[int, float] = None,
     u_star_initial: Union[int, float] = None,
 ) -> float:
-    """
-    Compute the friction velocity u* with a correction term for stability numerically.
-    Give either the sensible heat flux H (in W/m2) or the turbulent sensible heat flux (in K m/s).
+    """Compute the friction velocity u* with a correction term for stability numerically.
 
-    Parameters:
-    wind_speed (Union[int, float]): Measured wind speed (m/s).
-    z (Union[int, float]): Height above ground at which the wind speed was measured (m).
-    z0 (Union[int, float]): Roughness length (m).
-    T (Union[int, float]): (Potential) temperature (in K).
-    E (Union[int, float]): Water vapor flux (kg/s).
-    H (Union[int, float]): Sensible heat flux (W/m^2).
-    H_turb (Union[int, float]): Turbulent sensible heat flux (K m/s).
-    u_star_initial (Union[int, float]): Initial guess of u*. If not provided, it is calculated assuming neutrally stable conditions.
+    Give either the sensible heat flux H (in W/m2) or the turbulent sensible
+    heat flux (in K m/s).
+
+    Args:
+        wind_speed: Measured wind speed (m/s).
+        z: Height above ground at which the wind speed was measured (m).
+        z0: Roughness length (m).
+        T: (Potential) temperature (in K).
+        E: Water vapor flux (kg/s).
+        H: Sensible heat flux (W/m^2). Defaults to None.
+        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        u_star_initial: Initial guess of u*. If not provided, it is
+            calculated assuming neutrally stable conditions. Defaults to None.
     """
     if u_star_initial is None:
         u_star_initial = compute_u_star_stable(wind_speed, z, z0, kappa=0.4)
@@ -994,28 +998,21 @@ def ramp(x):
 
 
 def compute_smagorinsky_constant(delta, L, z, kappa=0.4, c0=0.135, alpha=0.135, n=3):
-    """
-    Computes Smagorinsky constant according to Eq. (17) in
+    """Computes Smagorinsky constant according to Eq. (17) in
     https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
-    Parameters:
-        c0 : float or array
-            Base concentration (c₀)
-        alpha : float
-            Model parameter (α)
-        delta : float
-            Characteristic scale (Δ). For simulations: resolution of the model, in m
-        L : float
-            Obukhov length (L)
-        kappa : float
-            von Kármán constant (κ)
-        z : float
-            Height above ground (in m)
-        n : float
-            Model exponent (n)
+    Args:
+        delta: Characteristic scale (Δ). For simulations: resolution of the
+            model, in m.
+        L: Obukhov length (L).
+        z: Height above ground (in m).
+        kappa: von Kármán constant (κ). Defaults to 0.4.
+        c0: Base concentration (c₀). Defaults to 0.135.
+        alpha: Model parameter (α). Defaults to 0.135.
+        n: Model exponent (n). Defaults to 3.
 
     Returns:
-        float or array: computed c_s
+        Computed Smagorinsky constant c_s.
     """
     term1 = (1 + (c0 / alpha) * ramp(delta / L)) ** -1
     term2 = (1 + (c0 * delta / (kappa * z)) ** n) ** (-1 / n)

@@ -68,9 +68,7 @@ class PreProcessing:
         return mhh_files[0]
 
     def _check_microhh_build_architecture(self):
-        """
-        Check if the architecture of the selected MicroHH build matches the system architecture.
-        """
+        """Check if the architecture of the selected MicroHH build matches the system architecture."""
         if not os.path.exists(self.microhh_executable_path):
             logger.warning(f"File {self.microhh_executable_path} not found.")
 
@@ -272,8 +270,9 @@ class PreProcessing:
         return job_file
 
     def _check_ini_setup_valid(self):
-        """
-        Check if the setup specified in the .ini file is valid based on the daint setup and the parameters specified in the .ini file.
+        """Check if the .ini file setup is valid.
+
+        Validates based on the Alps setup and the parameters specified in the .ini file.
         """
         self._check_ini_content()
         self._adjust_mpi_settings()

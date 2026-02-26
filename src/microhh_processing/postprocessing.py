@@ -1212,8 +1212,7 @@ class PostProcessing:
 
     @staticmethod
     def calculate_absolute_temperature(theta, p, p0):
-        """
-        Calculate absolute temperature from potential temperature and pressure.
+        """Calculate absolute temperature from potential temperature and pressure.
 
         FIXME
         """
