@@ -40,7 +40,8 @@ dependencies = [
     "netcdf4",
     "scikit-learn",
     "ipykernel",
-    "cmcrameri"
+    "cmcrameri",
+    "seaborn",
 ]
 
 [tool.setuptools]

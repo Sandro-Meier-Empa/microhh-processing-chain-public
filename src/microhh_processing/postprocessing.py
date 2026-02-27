@@ -398,22 +398,15 @@ class PostProcessing:
         self,
         store_path: Union[str, Path],
         overwrite: bool = False,
-        move_var_files: bool = False,
         vars: Union[str, list] = None,
-        move_processed_files: bool = True,
-    ):
+    ) -> None:
         """Move files used for running MicroHH to store for reproducibility.
 
         Args:
             overwrite (bool, optional):
                 Specify if existing files on 'store' should be overwritten.
-            move_var_files (bool, optional):
-                Specify if the .nc files of the variable files should be moved as well.
-                Defaults to False.
             vars (Union[str, list], optional):
-                Names of the variables to move if 'move_var_files' is True. Defaults to None.
-            move_processed_files (bool, optional):
-                Specify if the processed files (e.g. {gas}_2D.nc) should be moved. Defaults to True.
+                Names of the processed {var}.nc files to move. Defaults to None.
         """
         store_path = Path(store_path) / self.case.name_spec
 
@@ -431,25 +424,22 @@ class PostProcessing:
             "*" + self.case.name + "_input.nc",
             "*" + self.case.name + ".out",
             "*" + self.case.name + ".default.*.nc",
+            "init_microhh_*.out",
             "run_microhh_*.out",
             "run_microhh.sbash",
             "microhh",
+            "jobreport_*",
+            "*_benchmark.json",
         ]
         for pattern in file_patterns:
             self.move_pattern_to_store(
                 pattern, store_path=store_path, overwrite=overwrite
             )
 
-        if move_var_files:
-            vars = np.atleast_1d(vars).tolist()
+        if vars is not None:
+            vars = np.atleast_1d(vars)
             for var in vars:
                 pattern = f"{var}.nc"
-                self.move_pattern_to_store(
-                    pattern, store_path=store_path, overwrite=overwrite
-                )
-
-        if move_processed_files:
-            for pattern in ["*_2D.nc"]:
                 self.move_pattern_to_store(
                     pattern, store_path=store_path, overwrite=overwrite
                 )
@@ -457,22 +447,34 @@ class PostProcessing:
     def move_pattern_to_store(
         self, pattern: str, store_path: Union[str, Path], overwrite: bool = False
     ):
-        """Move files whith a certain pattern to store.
+        """Move files or folders with a certain pattern to store.
 
         Args:
             pattern (str):
-                Pattern of files which should be moved.
+                Pattern of files or folders which should be moved.
             overwrite (bool):
-                Specify if existing files should be overwritten.
+                Specify if existing files or folders should be overwritten.
         """
 
-        for file in self.case.file_directory.glob(pattern):
-            dest_file = Path(store_path, file.name)
-            if not dest_file.exists() or overwrite:
-                shutil.copy(file, store_path)
-                logger.info(f"Successfully copied '{file}' to '{store_path}'.")
+        for item in self.case.file_directory.glob(pattern):
+            dest_item = Path(store_path, item.name)
+
+            if item.is_dir():
+                # Handle directories
+                if not dest_item.exists() or overwrite:
+                    if dest_item.exists() and overwrite:
+                        shutil.rmtree(dest_item)
+                    shutil.copytree(item, dest_item)
+                    logger.info(f"Successfully copied '{item}' to '{store_path}'.")
+                else:
+                    logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
             else:
-                logger.info(f"'{file}' already exists in '{store_path}'. Skipping.")
+                # Handle files
+                if not dest_item.exists() or overwrite:
+                    shutil.copy(item, store_path)
+                    logger.info(f"Successfully copied '{item}' to '{store_path}'.")
+                else:
+                    logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
 
     def zip_grid_files(self, remove_files: bool = False):
         """Zip all binary grid files together.

@@ -37,10 +37,10 @@ def open_microhh_nc(
         )
 
     try:
-        data = xr.open_dataset(file_path, engine="h5netcdf", chunks=chunks)
+        data = xr.open_dataset(file_path, engine="netcdf4", chunks=chunks)
     except ValueError:
         data = xr.open_dataset(
-            file_path, engine="h5netcdf", chunks=chunks, decode_times=False
+            file_path, engine="netcdf4", chunks=chunks, decode_times=False
         )
 
     return data
