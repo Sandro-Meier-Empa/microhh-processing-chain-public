@@ -140,7 +140,6 @@ class PostProcessing:
         )
         logger.info(f"########## FINISH PROCESSING OF {self.case.name_spec} ##########")
 
-    
     def process_case_on_alps(
         self,
         alps_setup: cscs.AlpsSetup,
@@ -198,8 +197,6 @@ class PostProcessing:
         if start_jobs:
             # Launch the job on alps
             job_id = cscs.execute_bash_script(job_file, wait=False)
-
-
 
     def create_3d_output(
         self,
@@ -335,7 +332,9 @@ class PostProcessing:
 
         if modes is None:
             modes_to_check = list(ini_cross_modes & set(cross_modes))
-            if "xy" not in modes_to_check and any(item.endswith("_path") for item in ini_cross_list):
+            if "xy" not in modes_to_check and any(
+                item.endswith("_path") for item in ini_cross_list
+            ):
                 modes_to_check.append("xy")
         else:
             modes_to_check = modes
@@ -491,7 +490,9 @@ class PostProcessing:
 
         pattern = re.compile(r"^.*\.\d{7}$")
         matching_files = [
-            file for file in self.case.file_directory.iterdir() if pattern.match(file.name)
+            file
+            for file in self.case.file_directory.iterdir()
+            if pattern.match(file.name)
         ]
 
         with zipfile.ZipFile(zip_filename, "w") as zip_file:
@@ -1003,8 +1004,16 @@ class PostProcessing:
         data = data.drop_vars(["nrows", "nobs"])
 
         # add x and y coordinates
-        data["x"] = (("nrows", "nobs"), domain.xx + domain.x_offset, {"epsg": microhh_crs.split(":")[-1]})
-        data["y"] = (("nrows", "nobs"), domain.yy + domain.y_offset, {"epsg": microhh_crs.split(":")[-1]})
+        data["x"] = (
+            ("nrows", "nobs"),
+            domain.xx + domain.x_offset,
+            {"epsg": microhh_crs.split(":")[-1]},
+        )
+        data["y"] = (
+            ("nrows", "nobs"),
+            domain.yy + domain.y_offset,
+            {"epsg": microhh_crs.split(":")[-1]},
+        )
 
         return data
 
@@ -1298,10 +1307,10 @@ class PostProcessing:
         strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
 
         time_range = np.arange(
-                0,
-                int(self.case.ini_file["time"]["endtime"] + 1),
-                int(self.case.ini_file["time"]["savetime"]),
-            )
+            0,
+            int(self.case.ini_file["time"]["endtime"] + 1),
+            int(self.case.ini_file["time"]["savetime"]),
+        )
 
         def read_mass_from_binary(scalar, time_range):
             mass_array = []
@@ -1344,7 +1353,7 @@ class PostProcessing:
                 simulated_scalar = read_mass_from_netcdf(scalar, time_range)
             else:
                 raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
-            
+
             mass_dict[f"prescribed_{scalar}_mass"] = strength[i] * time_range
             mass_dict[f"simulated_{scalar}_mass"] = simulated_scalar
 
@@ -1372,6 +1381,4 @@ class PostProcessing:
         return num / den
 
 
-__all__ = [
-    "PostProcessing"
-    ]
+__all__ = ["PostProcessing"]

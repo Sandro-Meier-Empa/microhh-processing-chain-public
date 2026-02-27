@@ -11,8 +11,9 @@ from functools import wraps
 import microhhpy
 
 
-
-def open_microhh_nc(case, variable: str, chunks: Optional[Union[str, dict]] = None) -> xr.Dataset:
+def open_microhh_nc(
+    case, variable: str, chunks: Optional[Union[str, dict]] = None
+) -> xr.Dataset:
     """Open a .nc file related to MicroHH output.
 
     Args:
@@ -38,7 +39,9 @@ def open_microhh_nc(case, variable: str, chunks: Optional[Union[str, dict]] = No
     try:
         data = xr.open_dataset(file_path, engine="h5netcdf", chunks=chunks)
     except ValueError:
-        data = xr.open_dataset(file_path, engine="h5netcdf", chunks=chunks, decode_times=False)
+        data = xr.open_dataset(
+            file_path, engine="h5netcdf", chunks=chunks, decode_times=False
+        )
 
     return data
 
@@ -92,19 +95,20 @@ def open_microhh_out(case) -> list:
 
 @wraps(microhhpy.io.save_case_input)
 def save_case_input(
-        case_name,
-        output_dir,
-        init_profiles,
-        tdep_surface=None,
-        tdep_ls=None,
-        tdep_source=None,
-        tdep_chem=None,
-        tdep_aerosol=None,
-        tdep_radiation=None,
-        radiation=None,
-        soil=None,
-        source=None,
-        trajectories=None):
+    case_name,
+    output_dir,
+    init_profiles,
+    tdep_surface=None,
+    tdep_ls=None,
+    tdep_source=None,
+    tdep_chem=None,
+    tdep_aerosol=None,
+    tdep_radiation=None,
+    radiation=None,
+    soil=None,
+    source=None,
+    trajectories=None,
+):
 
     microhhpy.io.save_case_input(
         case_name=case_name,

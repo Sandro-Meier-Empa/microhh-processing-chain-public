@@ -15,6 +15,7 @@ __all__ = [
 
 
 class Domain:
+
     def __init__(
         self,
         xsize: int,
@@ -24,19 +25,19 @@ class Domain:
         lon: float,
         lat: float,
         anchor: Union[
-                Literal[
-                    "center",
-                    "lower left",
-                    "lower right",
-                    "upper left",
-                    "upper right",
-                    "lower center",
-                    "upper center",
-                    "center left",
-                    "center right"
-                ],
-                tuple[float, float]
-            ] = "lower left",
+            Literal[
+                "center",
+                "lower left",
+                "lower right",
+                "upper left",
+                "upper right",
+                "lower center",
+                "upper center",
+                "center left",
+                "center right",
+            ],
+            tuple[float, float],
+        ] = "lower left",
         epsg_code: str = None,
     ):
         """Initialize the Domain object.
@@ -59,7 +60,9 @@ class Domain:
         self.y = np.linspace(self.dy / 2, ysize - self.dy / 2, jtot)
         self.yh = np.linspace(0, ysize, jtot + 1)
 
-        self.xx, self.yy = np.meshgrid(self.x, self.y, indexing="xy")  # Meshgrid for centers
+        self.xx, self.yy = np.meshgrid(
+            self.x, self.y, indexing="xy"
+        )  # Meshgrid for centers
 
         # Handle Offsets
         self.ref_lon, self.ref_lat = lon, lat
@@ -79,24 +82,24 @@ class Domain:
         )
 
     def _get_offsets(
-            self,
-            ref_x: int,
-            ref_y: int,
-            anchor: Union[
-                Literal[
-                    "center",
-                    "lower left",
-                    "lower right",
-                    "upper left",
-                    "upper right",
-                    "lower center",
-                    "upper center",
-                    "center left",
-                    "center right"
-                ],
-                tuple[float, float]
-            ]
-            ) -> tuple[float, float]:
+        self,
+        ref_x: int,
+        ref_y: int,
+        anchor: Union[
+            Literal[
+                "center",
+                "lower left",
+                "lower right",
+                "upper left",
+                "upper right",
+                "lower center",
+                "upper center",
+                "center left",
+                "center right",
+            ],
+            tuple[float, float],
+        ],
+    ) -> tuple[float, float]:
         if isinstance(anchor, tuple):
             x_rel, y_rel = anchor
             return ref_x - x_rel, ref_y - y_rel
@@ -129,7 +132,9 @@ class Domain:
             # indexing='ij' is often safer for matrix-based CFD data
             x, y = np.meshgrid(x, y, indexing="xy")
 
-        return self.transformer.transform(x + self.x_offset, y + self.y_offset, direction="INVERSE")
+        return self.transformer.transform(
+            x + self.x_offset, y + self.y_offset, direction="INVERSE"
+        )
 
     def to_xy(self, lon, lat):
         lon = np.array(lon)
@@ -138,9 +143,17 @@ class Domain:
         tx, ty = self.transformer.transform(lon, lat)
         return tx - self.x_offset, ty - self.y_offset
 
-    def plot(self, lon: Union[float, np.ndarray] = None, lat: Union[float, np.ndarray] = None, figsize: Tuple[int, int]= (10, 8)) -> None:
+    def plot(
+        self,
+        lon: Union[float, np.ndarray] = None,
+        lat: Union[float, np.ndarray] = None,
+        figsize: Tuple[int, int] = (10, 8),
+    ) -> None:
 
-        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": ccrs.PlateCarree()},)
+        fig, ax = plt.subplots(
+            figsize=figsize,
+            subplot_kw={"projection": ccrs.PlateCarree()},
+        )
 
         # Plot the reference point
         ax.plot(self.ref_lon, self.ref_lat, "ko", markersize=5, label="Reference Point")
@@ -158,7 +171,7 @@ class Domain:
         ax.set_xlabel("Longitude [°]")
         ax.set_ylabel("Latitude [°]")
         ax.legend(loc="upper right")
-        
+
         gl = ax.gridlines(
             crs=ccrs.PlateCarree(),
             draw_labels=True,

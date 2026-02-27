@@ -1,5 +1,5 @@
--e ~/ddeq
--e ~/LS2D
--e ~/microhh/microhh_py
--e ~/microhhpy
--e ~/ucat
+-e /users/smeier/ddeq
+-e /users/smeier/LS2D
+-e /users/smeier/microhh/microhh_py
+-e /users/smeier/microhhpy
+-e /users/smeier/u-cat

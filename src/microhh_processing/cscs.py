@@ -54,8 +54,8 @@ class AlpsSetup:
         ntasks: Optional[int] = None,
         ntasks_per_node: Optional[int] = None,
         ntasks_per_core: Optional[int] = None,
-        cpus_per_task:  Optional[int] = None,
-        gpus_per_task:  Optional[int] = None,
+        cpus_per_task: Optional[int] = None,
+        gpus_per_task: Optional[int] = None,
         partition: Union[Partition, str] = Partition.DEBUG,
         multithread: bool = False,
         uenv: str = "",
@@ -110,7 +110,11 @@ class AlpsSetup:
         self._cluster = cluster
         self._processor = processor
         self.account = account
-        self.mail_type = mail_type.value if isinstance(mail_type, MailType) else str(mail_type.upper())
+        self.mail_type = (
+            mail_type.value
+            if isinstance(mail_type, MailType)
+            else str(mail_type.upper())
+        )
         self.email = email
         self.run_time = run_time
         self.nodes = nodes
@@ -134,28 +138,40 @@ class AlpsSetup:
 
     @property
     def cluster(self) -> str:
-        cluster_val = self._cluster.value if isinstance(self._cluster, Cluster) else str(self._cluster).lower()
+        cluster_val = (
+            self._cluster.value
+            if isinstance(self._cluster, Cluster)
+            else str(self._cluster).lower()
+        )
         if cluster_val in ["santis", "eiger"]:
             return cluster_val
         elif cluster_val in self.PROCESSOR_VERSIONS.keys():
-            raise NotImplementedError(f"Cluster '{cluster_val}' is not yet implemented.")
+            raise NotImplementedError(
+                f"Cluster '{cluster_val}' is not yet implemented."
+            )
         else:
             raise ValueError(f"{self._cluster} is invalid.")
 
     @property
     def processor(self) -> str:
-        processor_val = self._processor.value if isinstance(self._processor, Processor) else str(self._processor).lower()
+        processor_val = (
+            self._processor.value
+            if isinstance(self._processor, Processor)
+            else str(self._processor).lower()
+        )
         if processor_val in self.PROCESSOR_VERSIONS[self.cluster]:
             return processor_val
         else:
-            raise ValueError(
-                f"{processor_val} is not available on {self.cluster}."
-            )
+            raise ValueError(f"{processor_val} is not available on {self.cluster}.")
 
     @property
     def partition_key(self) -> str:
         """Get partition value as string for dictionary lookups."""
-        return self.partition.value if isinstance(self.partition, Partition) else str(self.partition).lower()
+        return (
+            self.partition.value
+            if isinstance(self.partition, Partition)
+            else str(self.partition).lower()
+        )
 
     def _check_wall_time_valid(self):
         """Checks if the setup is valid to be run on alps based
@@ -175,25 +191,27 @@ class AlpsSetup:
             and run_time_delta.total_seconds() > conditions["time_limit"]
         ):
             raise ValueError("Invalid time limit for the selected partition.")
-        
+
     def _check_node_number_valid(self):
         conditions = self.PARTITION_CONDITIONS.get(self.partition_key, {})
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
-        
+
     def _check_processor_valid(self):
         if self.processor not in self.PROCESSOR_VERSIONS[self.cluster]:
-            raise ValueError(
-                f"{self.processor} is not available on {self.cluster}."
-            )
+            raise ValueError(f"{self.processor} is not available on {self.cluster}.")
 
     def _check_mail_setup_valid(self):
-        mail_val = self.mail_type.value if isinstance(self.mail_type, MailType) else self.mail_type
+        mail_val = (
+            self.mail_type.value
+            if isinstance(self.mail_type, MailType)
+            else self.mail_type
+        )
         if mail_val != "NONE" and self.email is None:
             raise ValueError(
                 "Please provide an email address to receive notifications."
             )
-        
+
     def _set_ssh_connect(self):
         # get name of the current machine
         current_cluster = os.environ["CLUSTER_NAME"]
@@ -272,7 +290,7 @@ class AlpsSetup:
             ("ntasks-per-core", self.ntasks_per_core),
             ("ntasks-per-node", self.ntasks_per_node),
             ("cpus-per-task", self.cpus_per_task),
-            ]:
+        ]:
             if value is not None:
                 lines.append(f"#SBATCH --{key}={value}")
 
@@ -280,13 +298,15 @@ class AlpsSetup:
             lines.append(f"#SBATCH --gpus-per-task={self.gpus_per_task}")
 
         # required directives for partition and constraint
-        lines.extend([
-            f"#SBATCH --partition={self.partition_key}",
-            f"#SBATCH --constraint={self.constraint}",
-            f"#SBATCH --hint={self.multithread}",
-            f"#SBATCH --output={output_file}",
-            f"#SBATCH --chdir={str(scratch_path)}",
-        ])
+        lines.extend(
+            [
+                f"#SBATCH --partition={self.partition_key}",
+                f"#SBATCH --constraint={self.constraint}",
+                f"#SBATCH --hint={self.multithread}",
+                f"#SBATCH --output={output_file}",
+                f"#SBATCH --chdir={str(scratch_path)}",
+            ]
+        )
 
         # Apply extra/override SBATCH directives
         if extra_sbatch:
@@ -303,10 +323,12 @@ class AlpsSetup:
         else:
             lines.append("")
 
-        lines.extend([
-            "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK",
-            "",
-        ])
+        lines.extend(
+            [
+                "export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK",
+                "",
+            ]
+        )
 
         return "\n".join(lines) + "\n"
 
@@ -358,7 +380,10 @@ class AlpsSetup:
 
         return file_path
 
-def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None) -> int:
+
+def execute_bash_script(
+    job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None
+) -> int:
     """Run a simulation using sbatch
 
     Args:
@@ -369,7 +394,7 @@ def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_conne
             after the previous one has stopped.
         ssh_connect (str):
             If specified, the command will be executed on a remote server via ssh.
-            The string should be in the format "user@hostname" or 
+            The string should be in the format "user@hostname" or
             "hostname" if the remote machine is configured for passwordless ssh access.
 
     """
@@ -379,7 +404,7 @@ def execute_bash_script(job_file: Union[str, Path], wait: bool = True, ssh_conne
 
     if wait:
         cmd.append("--wait")
-        
+
     cmd.append(str(job_file))
 
     result = subprocess.run(
@@ -616,13 +641,15 @@ def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
     # Build sacct command
     cmd = ["ssh", ssh_connect] if ssh_connect else []
 
-    cmd.extend([
-        "sacct",
-        "-j",
-        str(jobid),
-        "-P",  # pipe-delimited
-        f"--format={','.join(fields)}",
-    ])
+    cmd.extend(
+        [
+            "sacct",
+            "-j",
+            str(jobid),
+            "-P",  # pipe-delimited
+            f"--format={','.join(fields)}",
+        ]
+    )
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -642,7 +669,10 @@ def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
 
     return df
 
-def calculate_expected_runtime(benchmark, simulation_time: pd.Timedelta) -> pd.Timedelta:
+
+def calculate_expected_runtime(
+    benchmark, simulation_time: pd.Timedelta
+) -> pd.Timedelta:
     """Calculate the expected runtime based on a benchmark and a given time to be simulated."""
     simulation_time_s = simulation_time.total_seconds()
     simulated_time_s = float(benchmark["simulated_time_s"])
@@ -661,5 +691,5 @@ __all__ = [
     "print_simulation_progress",
     "get_simulation_progress",
     "extract_job_id",
-    "get_sacct_info"
-    ]
+    "get_sacct_info",
+]

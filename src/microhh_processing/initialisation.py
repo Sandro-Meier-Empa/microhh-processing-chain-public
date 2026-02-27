@@ -21,6 +21,7 @@ from microhh_processing import cscs, io, utils
 
 logger = logging.getLogger(__name__)
 
+
 class Case:
 
     def __init__(
@@ -128,10 +129,15 @@ class Case:
         init_from: Optional[Union[str, Path]] = None,
     ):
         # Normalize method to string for comparison
-        method_val = method.value if isinstance(method, InitMethod) else str(method).lower()
+        method_val = (
+            method.value if isinstance(method, InitMethod) else str(method).lower()
+        )
         self.method = method_val
 
-        if self.method in [InitMethod.DEFAULT.value, InitMethod.RERUN.value] and init_from is None:
+        if (
+            self.method in [InitMethod.DEFAULT.value, InitMethod.RERUN.value]
+            and init_from is None
+        ):
             raise ValueError(
                 "When using 'default' or 'rerun' method, please provide "
                 "the path of the directory containing `.ini` and initial condition files."
@@ -150,7 +156,9 @@ class Case:
             logger.info(f"Creating {self.scratch_path}")
             os.makedirs(self.scratch_path)
         elif overwrite:
-            with utils.confirm_action(f"Are you sure you want to overwrite {self.scratch_path}?") as confirmed:
+            with utils.confirm_action(
+                f"Are you sure you want to overwrite {self.scratch_path}?"
+            ) as confirmed:
                 if confirmed:
                     shutil.rmtree(self.scratch_path)
                     logger.info(f"Overwriting {self.scratch_path}")
@@ -234,10 +242,7 @@ class Case:
         matched_files = list(case_path.rglob(pattern))
 
         if exclude_pattern:
-            matched_files = [
-                p for p in matched_files
-                if exclude_pattern not in p.name
-            ]
+            matched_files = [p for p in matched_files if exclude_pattern not in p.name]
 
         if len(matched_files) != 1:
             raise FileNotFoundError(
@@ -254,7 +259,7 @@ class Case:
             case_path=case_path,
             pattern=f"*.ini",
             new_filename=f"{self.name}.ini",
-            exclude_pattern="_base.ini"
+            exclude_pattern="_base.ini",
         )
 
     def _copy_initial(self, case_path: Union[str, Path]):
@@ -272,7 +277,9 @@ class Case:
             f"{self.name}_input.nc",
             "microhh",
         ]
-        with utils.confirm_action(f"Are you sure you want to remove all files in {self.scratch_path}?") as confirmed:
+        with utils.confirm_action(
+            f"Are you sure you want to remove all files in {self.scratch_path}?"
+        ) as confirmed:
             if not confirmed:
                 return
 
@@ -329,14 +336,16 @@ class Case:
 
     def open_mhh_in_vscode(self, filetype: Union[FileType, str]):
         """Open the specified file in VS Code.
-        
+
         Args:
             filetype: File type to open. Can be FileType enum or string
                 ('ini', 'out', 'sbash', 'sbash_out').
         """
         # Normalize filetype to string
-        filetype_val = filetype.value if isinstance(filetype, FileType) else str(filetype).lower()
-        
+        filetype_val = (
+            filetype.value if isinstance(filetype, FileType) else str(filetype).lower()
+        )
+
         if filetype_val == FileType.INI.value:
             filename = f"{self.name}.ini"
         elif filetype_val == FileType.OUT.value:
@@ -418,7 +427,7 @@ class Case:
                 json.dump(benchmark, f, indent=4)
 
         return benchmark
-    
+
     def load_benchmark(self) -> dict:
         """Load benchmark information from a .json file in the case directory.
 
@@ -430,17 +439,23 @@ class Case:
         json_file_path = self.file_directory / f"{self.name}_benchmark.json"
 
         if not json_file_path.exists():
-            raise FileNotFoundError(f"Benchmark file '{json_file_path}' does not exist.")
+            raise FileNotFoundError(
+                f"Benchmark file '{json_file_path}' does not exist."
+            )
 
         with open(json_file_path, "r") as f:
             benchmark = json.load(f)
 
         # add some newly calculated fields
         if "simulated_time" not in benchmark:
-            benchmark["simulated_time"] = pd.to_timedelta(benchmark["simulated_time_s"], unit="s")
+            benchmark["simulated_time"] = pd.to_timedelta(
+                benchmark["simulated_time_s"], unit="s"
+            )
 
         if "elapsed_time_s" not in benchmark:
-            benchmark["elapsed_time_s"] = pd.to_timedelta(benchmark["elapsed_time"]).total_seconds()
+            benchmark["elapsed_time_s"] = pd.to_timedelta(
+                benchmark["elapsed_time"]
+            ).total_seconds()
 
         return benchmark
 
@@ -494,16 +509,18 @@ class Case:
 
     def clean(self) -> None:
         """Clean this MicroHH case by removing all files except the
-            - .ini file,
-            - _input.nc file and
-            - microhh executable.
+        - .ini file,
+        - _input.nc file and
+        - microhh executable.
         """
         files_to_keep = [
             f"{self.name}.ini",
             f"{self.name}_input.nc",
             "microhh",
         ]
-        with utils.confirm_action(f"Are you sure you want to clean the case at {self.file_directory}?") as confirmed:
+        with utils.confirm_action(
+            f"Are you sure you want to clean the case at {self.file_directory}?"
+        ) as confirmed:
             if confirmed:
                 for item in self.file_directory.iterdir():
                     if item.name not in files_to_keep:
@@ -516,9 +533,13 @@ class Case:
     def delete(self) -> None:
         """Delete this MicroHH case by removing its directory."""
         if not self.file_directory.exists():
-            raise FileNotFoundError(f"Case directory '{self.file_directory}' does not exist.")
+            raise FileNotFoundError(
+                f"Case directory '{self.file_directory}' does not exist."
+            )
 
-        with utils.confirm_action(f"Are you sure you want to delete the case at {self.file_directory}?") as confirmed:
+        with utils.confirm_action(
+            f"Are you sure you want to delete the case at {self.file_directory}?"
+        ) as confirmed:
             if confirmed:
                 shutil.rmtree(self.file_directory)
                 logger.info(f"Deleted case at {self.file_directory}.")
@@ -655,7 +676,9 @@ def initialise_case(
     return case
 
 
-def read_case(case_directory: Union[str, Path], scratch_path: Union[str, Path] = None) -> Case:
+def read_case(
+    case_directory: Union[str, Path], scratch_path: Union[str, Path] = None
+) -> Case:
     """Read in an existing MicroHH case.
 
     Args:

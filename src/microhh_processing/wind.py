@@ -20,6 +20,7 @@ from microhh_processing.constants import EARTH_ROTATION_RATE
 
 logger = logging.getLogger(__name__)
 
+
 class WindProcessing:
     def __init__(self, case: init.Case):
         """Class used for post-processing MicroHH cases and handling the output.
@@ -224,9 +225,7 @@ class WindProcessing:
 
         return wind_data
 
-    def _get_wind_vars(
-        self, method: Union[WindIntegrationMethod, str]
-    ) -> list:
+    def _get_wind_vars(self, method: Union[WindIntegrationMethod, str]) -> list:
         """Get list of prognostic variables used for the given wind integration method.
 
         Args:
@@ -239,9 +238,17 @@ class WindProcessing:
         Returns:
             list: List of prognostic variables used for the given wind integration method.
         """
-        method_val = method.value if isinstance(method, WindIntegrationMethod) else str(method).lower()
-        
-        if method_val in [WindIntegrationMethod.MEAN.value, WindIntegrationMethod.MEDIAN.value, WindIntegrationMethod.HEIGHT.value]:
+        method_val = (
+            method.value
+            if isinstance(method, WindIntegrationMethod)
+            else str(method).lower()
+        )
+
+        if method_val in [
+            WindIntegrationMethod.MEAN.value,
+            WindIntegrationMethod.MEDIAN.value,
+            WindIntegrationMethod.HEIGHT.value,
+        ]:
             return ["u", "v"]
         elif method_val == WindIntegrationMethod.CONCENTRATION_WEIGHTED.value:
             return ["u", "v", "ch4"]
@@ -1023,12 +1030,13 @@ def compute_smagorinsky_constant(delta, L, z, kappa=0.4, c0=0.135, alpha=0.135, 
 # Physics functions
 # ============================================================================
 
+
 def calculate_coriolis_force(lat: float) -> float:
     """Calculate the Coriolis force at a given latitude.
-    
+
     Args:
         lat: Latitude in degrees.
-        
+
     Returns:
         Coriolis parameter f_c (s^-1).
     """
@@ -1040,14 +1048,14 @@ def calculate_richardson_number(
     threshold: Optional[float] = 1e-10,
 ) -> xr.Dataset:
     """Calculate the Richardson flux number.
-    
-    The Richardson number is the ratio of buoyant production to shear 
+
+    The Richardson number is the ratio of buoyant production to shear
     production of turbulence kinetic energy.
-    
+
     Args:
         stats: Dataset containing u_w, u_grad, v_w, v_grad, and b_w variables.
         threshold: Threshold for denominator to avoid division by near-zero.
-        
+
     Returns:
         Dataset with Richardson number added as 'Ri' variable.
     """

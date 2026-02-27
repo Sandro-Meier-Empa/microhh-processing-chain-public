@@ -55,11 +55,8 @@ class Visualisation:
         self.case = case
 
     def plot_initial_conditions(
-            self,
-            ncols: int = 4,
-            figsize: tuple = (15, 10),
-            cmap: str = "viridis"
-            ) -> None:
+        self, ncols: int = 4, figsize: tuple = (15, 10), cmap: str = "viridis"
+    ) -> None:
         """Plot all variables from the initial conditions file, grouped by their dimensions.
 
         Args:
@@ -81,7 +78,7 @@ class Visualisation:
         for node in data_tree.subtree:
             group = node.path.strip("/")
             group_ds = node.dataset
-            sharey = (group != "timedep")
+            sharey = group != "timedep"
             self._plot_group_variables(group_ds, ncols, figsize, cmap, sharey=sharey)
 
     def _plot_group_variables(self, ds, ncols, figsize, cmap, sharey=True) -> None:
@@ -96,8 +93,14 @@ class Visualisation:
             nrows = int(np.ceil(n_vars / ncols))
 
             # squeeze=False ensures axs is always a 2D array
-            fig, axs = plt.subplots(nrows, ncols, figsize=figsize, sharey=sharey, 
-                                    layout="constrained", squeeze=False)
+            fig, axs = plt.subplots(
+                nrows,
+                ncols,
+                figsize=figsize,
+                sharey=sharey,
+                layout="constrained",
+                squeeze=False,
+            )
 
             for i, var_name in enumerate(vars_list):
                 ax = axs.flat[i]
@@ -118,7 +121,7 @@ class Visualisation:
         time_dim = next((d for d in dims if "time_" in d), None)
 
         if len(dims) == 0:
-            ax.axhline(data.values, linestyle='--')
+            ax.axhline(data.values, linestyle="--")
 
         elif len(dims) == 1:
             if aux_dim:
@@ -130,7 +133,9 @@ class Visualisation:
                 data.plot(ax=ax)
 
         elif len(dims) == 2:
-            data.T.plot(ax=ax, cmap=cmap, cbar_kwargs={'orientation': 'horizontal', 'pad': 0.1})
+            data.T.plot(
+                ax=ax, cmap=cmap, cbar_kwargs={"orientation": "horizontal", "pad": 0.1}
+            )
 
     def plot_prognostic_variables(
         self,
@@ -906,14 +911,17 @@ def plot_case_comparison(
     case_stats = [io.open_statistics(case) for case in cases]
     ref_time = case_stats[int(np.argmax([s.sizes["time"] for s in case_stats]))].time
 
-    logger.info(f"Interpolating statistics to common time axis with {len(ref_time)} time steps.")
+    logger.info(
+        f"Interpolating statistics to common time axis with {len(ref_time)} time steps."
+    )
     case_stats = [stats.interp(time=ref_time) for stats in case_stats]
 
     # Prepare cases for comparison
     if difference:
         default_stats = case_stats[default_case_index]
         comp_cases_stats = [
-            (case, stats) for i, (case, stats) in enumerate(zip(cases, case_stats))
+            (case, stats)
+            for i, (case, stats) in enumerate(zip(cases, case_stats))
             if i != default_case_index
         ]
     else:
@@ -949,12 +957,22 @@ def plot_case_comparison(
         # Plot data
         for ax, val, (case, stats) in zip(axs, vals, comp_cases_stats):
             x_coord, y_coord = stats[dims[0]], stats[dims[1]]
-            ax.pcolormesh(x_coord.values, y_coord.values, val.T, 
-                         shading="auto", cmap=cmap, norm=norm)
-            ax.set_xlabel(f"{x_coord.attrs.get('long_name', '')} [{x_coord.attrs.get('units', '-')}]")
+            ax.pcolormesh(
+                x_coord.values,
+                y_coord.values,
+                val.T,
+                shading="auto",
+                cmap=cmap,
+                norm=norm,
+            )
+            ax.set_xlabel(
+                f"{x_coord.attrs.get('long_name', '')} [{x_coord.attrs.get('units', '-')}]"
+            )
             ax.set_title(case.suffix)
 
-        axs[0].set_ylabel(f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]")
+        axs[0].set_ylabel(
+            f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
+        )
 
         # Add colorbar
         divider = make_axes_locatable(axs[-1])
@@ -964,11 +982,12 @@ def plot_case_comparison(
         plt.tight_layout()
         plt.show()
 
+
 def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
     """Determine appropriate normalization for colormap."""
     if not difference:
         return Normalize(vmin=vmin, vmax=vmax)
-    
+
     if vmin < 0 < vmax:
         return TwoSlopeNorm(vcenter=0.0, vmin=vmin, vmax=vmax)
     elif vmax <= 0:

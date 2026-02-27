@@ -7,6 +7,7 @@ from typing import Dict
 
 class PrintColor(str, Enum):
     """ANSI color codes for terminal output."""
+
     CYAN = "\033[96m"
     VIOLET = "\033[95m"
     BLUE = "\033[94m"
@@ -21,11 +22,12 @@ class PrintColor(str, Enum):
 @dataclass(frozen=True)
 class GasProperties:
     """Properties of a gas species.
-    
+
     Attributes:
         name: Human-readable name of the gas
         molar_mass: Molar mass in g/mol
     """
+
     name: str
     molar_mass: float  # g/mol
 
@@ -54,7 +56,7 @@ EARTH_ROTATION_RATE = 7.2921159e-5  # rad/s - Earth's angular velocity
 
 __all__ = [
     "PrintColor",
-    "GasProperties", 
+    "GasProperties",
     "GAS_PROPERTIES",
     "GAS_MOLAR_MASS",
     "EARTH_ROTATION_RATE",

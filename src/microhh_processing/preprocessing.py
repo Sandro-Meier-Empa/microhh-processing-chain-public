@@ -57,7 +57,7 @@ class PreProcessing:
 
         if microhh_executable_path.is_file():
             return microhh_executable_path
-        
+
         mhh_files = list(microhh_executable_path.glob("microhh"))
 
         if len(mhh_files) != 1:
@@ -75,12 +75,14 @@ class PreProcessing:
         arch = self._get_architecture()
 
         if arch is None:
-            logger.warning("Unable to determine system architecture. Skipping architecture check.")
+            logger.warning(
+                "Unable to determine system architecture. Skipping architecture check."
+            )
             return
 
         result = subprocess.check_output(
-            ['file', self.microhh_executable_path],
-            stderr=subprocess.STDOUT).decode()
+            ["file", self.microhh_executable_path], stderr=subprocess.STDOUT
+        ).decode()
         result_lower = result.lower()
 
         if "aarch64" in result_lower:
@@ -102,7 +104,7 @@ class PreProcessing:
         if self.alps_setup.ssh_connect:
             try:
                 result = subprocess.check_output(
-                    ['ssh', self.alps_setup.ssh_connect, 'uname -m'],
+                    ["ssh", self.alps_setup.ssh_connect, "uname -m"],
                     stderr=subprocess.STDOUT,
                     text=True,  # Python 3.7+
                 ).strip()
@@ -120,7 +122,9 @@ class PreProcessing:
     def _check_jobpreport_gpu(self):
         """Make sure that jobreport is only provided when using GPU partition and raise an error if not."""
         if self.alps_setup.processor != "gpu" and self.jobreport_path is not None:
-            raise ValueError("GPU jobreport is only supported when using GPU partition.")
+            raise ValueError(
+                "GPU jobreport is only supported when using GPU partition."
+            )
 
     def prepare_simulation(
         self,
@@ -165,7 +169,7 @@ class PreProcessing:
                 raise FileNotFoundError(
                     f"Required file '{filename}' not found in '{self.case.scratch_path}'."
                 )
-    
+
     def prepare_restart_simulation(
         self,
         restart_case: init.Case,
@@ -174,7 +178,7 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ):
-        
+
         # Check if .ini file has been updated for restart
         self._check_restart_ini_updated(restart_time)
 
@@ -217,7 +221,7 @@ class PreProcessing:
 
     def start_simulation(self, wait: bool = False):
         """Start the MicroHH simulation by executing the bash script on CSCS Alps.
-        
+
         Args:
             wait (bool, optional. Default: False):
                 Specify if the next job should only be submitted
@@ -228,7 +232,9 @@ class PreProcessing:
 
         # check if any other job is running in the debug queue
         if not running_jobs.empty:
-            jobs_in_debug_queue = not running_jobs[running_jobs["PARTITION"] == "debug"].empty
+            jobs_in_debug_queue = not running_jobs[
+                running_jobs["PARTITION"] == "debug"
+            ].empty
 
         if self.alps_setup.partition == "debug" and jobs_in_debug_queue:
             logger.warning(
@@ -239,7 +245,9 @@ class PreProcessing:
             self.case.job_id = None
             return
 
-        self.case.job_id = cscs.execute_bash_script(self.job_file, wait, ssh_connect=self.alps_setup.ssh_connect)
+        self.case.job_id = cscs.execute_bash_script(
+            self.job_file, wait, ssh_connect=self.alps_setup.ssh_connect
+        )
 
     def cancel_simulation(self):
         # check if self has attribute "job_id"
@@ -312,7 +320,9 @@ class PreProcessing:
             and not self.case.ini_file["master"]["npy"] == 1
         ):
             for dim in ["x", "y"]:
-                self.case.ini_file.set_value(group="master", variable=f"np{dim}", value=1)
+                self.case.ini_file.set_value(
+                    group="master", variable=f"np{dim}", value=1
+                )
             self.case.ini_file.save(self.case.ini_path, allow_overwrite=True)
             logger.info("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
@@ -323,7 +333,10 @@ class PreProcessing:
             self.case.ini_file["grid"]["jtot"],
             self.case.ini_file["grid"]["ktot"],
         )
-        npx, npy = self.case.ini_file["master"]["npx"], self.case.ini_file["master"]["npy"]
+        npx, npy = (
+            self.case.ini_file["master"]["npx"],
+            self.case.ini_file["master"]["npy"],
+        )
 
         if itot % npx != 0:
             raise ValueError(f"itot ({itot}) is not divisible by npx ({npx})")
@@ -338,7 +351,9 @@ class PreProcessing:
 
     def _check_nodes_match(self):
         """Check if the number of nodes matches the expected value."""
-        expected_cores = self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
+        expected_cores = (
+            self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
+        )
         requested_cores = self.alps_setup.ntasks_per_node * self.alps_setup.nodes
         if expected_cores != requested_cores:
             raise ValueError(
@@ -365,7 +380,11 @@ class PreProcessing:
         initial_cond = io.open_initial_cond(self.case)
 
         # Determine if relevant variables exist in initial conditions
-        matching_vars = [v for v in initial_cond.data_vars if fnmatch.fnmatch(v, initial_cond_var_name)]
+        matching_vars = [
+            v
+            for v in initial_cond.data_vars
+            if fnmatch.fnmatch(v, initial_cond_var_name)
+        ]
         has_vars = len(matching_vars) > 0
 
         # Check alignment
@@ -373,10 +392,14 @@ class PreProcessing:
             list_group, list_key, list_default = list_config
             list_value = self.case.ini_file.get(list_group, list_key, list_default)
             if bool(switch_value) != bool(list_value) != has_vars:
-                raise ValueError(f"Switch '{switch_key}' in group '{switch_group}', list '{list_key}' in group '{list_group}', and initial condition variables do not align.")
+                raise ValueError(
+                    f"Switch '{switch_key}' in group '{switch_group}', list '{list_key}' in group '{list_group}', and initial condition variables do not align."
+                )
         else:
             if bool(switch_value) != has_vars:
-                raise ValueError(f"Switch '{switch_key}' in group '{switch_group}' and initial condition variables do not align.")
+                raise ValueError(
+                    f"Switch '{switch_key}' in group '{switch_group}' and initial condition variables do not align."
+                )
 
     def _check_tdep_bc(self):
         """Check if switches for dtep boundary conditions, timedeplist and initial conditions align"""
@@ -385,7 +408,6 @@ class PreProcessing:
             initial_cond_var_name="*_sbot",
             list_config=("boundary", "timedeplist", []),
         )
-
 
     def _check_grid_order(self):
         """Check that the grid order matches the orders of the advection schemes."""
@@ -477,12 +499,12 @@ class PreProcessing:
                 f"Invalid value for 'swlspres': {force}. "
                 "Valid options are 'geo', 'dpdx', or 'uflux'."
             )
-        
+
     def _check_tdep_geo(self):
         """Check if switches for dtep geostrophic forcing and initial conditions align"""
         self._check_switch_list_vars_alignment(
             switch_config=("force", "swtimedep_geo", False),
-            initial_cond_var_name="?_geo"
+            initial_cond_var_name="?_geo",
         )
 
     def _check_dtep_wls(self):
@@ -491,7 +513,7 @@ class PreProcessing:
             switch_config=("force", "swtimedep_wls", False),
             initial_cond_var_name="w_ls",
         )
-        
+
     def _check_tdep_ls_forcing(self):
         """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
         self._check_switch_list_vars_alignment(
@@ -554,7 +576,7 @@ class PreProcessing:
         """Check if source height is greater than vertical resolution"""
         if "source" not in self.case.ini_file.groups:
             return
-        
+
         source_heights = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
         lowest_grid_level = self._get_lowest_grid_level()
 
@@ -572,7 +594,7 @@ class PreProcessing:
 
         if "source" not in self.case.ini_file.groups:
             return
-    
+
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
             sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
@@ -606,14 +628,14 @@ class PreProcessing:
             == len(swvmr)
         ):
             raise ValueError("All source variables must have the same length.")
-        
+
     def _check_tdep_source_location(self):
         """Check if switches for dtep source, tdep source list and initial conditions align"""
         self._check_switch_list_vars_alignment(
             switch_config=("source", "swtimedep_location", False),
             initial_cond_var_name="source_?0_*",
         )
-        
+
     def _check_tdep_source_strength(self):
         """Check if switches for dtep source, tdep source list and initial conditions align"""
         self._check_switch_list_vars_alignment(
@@ -625,7 +647,7 @@ class PreProcessing:
         """Check if the buffer height lies within the domain."""
         if "buffer" not in self.case.ini_file.groups:
             return
-    
+
         zstart = self.case.ini_file.get("buffer", "zstart", 0)
         zsize = self.case.ini_file.get("grid", "zsize")
         if zstart > zsize:
@@ -642,7 +664,7 @@ class PreProcessing:
 
         if "boundary" not in self.case.ini_file.groups:
             return
-        
+
         for roughness_type in ["z0m", "z0h"]:
             if roughness_type in self.case.ini_file["boundary"]:
                 surface_roughness = self.case.ini_file["boundary"][roughness_type]
@@ -710,14 +732,13 @@ class PreProcessing:
         for file in restart_files:
             shutil.copy(file, self.case.scratch_path)
 
-
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
         iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0)
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)
-    
+
 
 def _get_microhh_run_commands(
     case_list: List[init.Case],
@@ -751,10 +772,9 @@ def _get_microhh_run_commands(
 
     if len(case_list) == 1:
         return _get_single_run_command(
-            phases, 
-            case=case_list[0], 
-            jobreport_path=jobreport_path)
-    
+            phases, case=case_list[0], jobreport_path=jobreport_path
+        )
+
     elif len(case_list) == 4:
         return _get_multi_run_commands(
             phases,
@@ -768,12 +788,11 @@ def _get_microhh_run_commands(
             f"Expected either 1 or 4 cases, but got {len(case_list)}. For a "
             f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
         )
-    
+
+
 def _get_single_run_command(
-        phases: list[str],
-        case: init.Case,
-        jobreport_path: Optional[str] = None
-        ) -> list[str]:
+    phases: list[str], case: init.Case, jobreport_path: Optional[str] = None
+) -> list[str]:
     """Generate srun commands for a single-case run, e.g. on a CPU node.
 
     Args:
@@ -788,10 +807,13 @@ def _get_single_run_command(
     last_phase_idx = len(phases) - 1
     for phase_idx, phase in enumerate(phases):
         if jobreport_path and phase_idx == last_phase_idx:
-            commands.append(f"srun {jobreport_path} -- {case.scratch_path}/microhh {phase} {case.name}")
+            commands.append(
+                f"srun {jobreport_path} -- {case.scratch_path}/microhh {phase} {case.name}"
+            )
         else:
             commands.append(f"srun {case.scratch_path}/microhh {phase} {case.name}")
     return commands
+
 
 def _get_multi_run_commands(
     phases: list[str],
@@ -865,10 +887,12 @@ def create_run_4x_script(
     """Run 4 prepared simulations on GPU."""
     if len(cases) != 4:
         raise ValueError(f"Expected 4 cases, but got {len(cases)}.")
-    
+
     master_job_file = Path(scratch_path, "run_microhh_4x.sbash")
 
-    commands = _get_microhh_run_commands(case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path)
+    commands = _get_microhh_run_commands(
+        case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path
+    )
 
     if not master_job_file.exists() or overwrite:
         master_job_file = alps_setup.create_bash_script(
@@ -882,16 +906,19 @@ def create_run_4x_script(
 
     return master_job_file
 
+
 def _get_common_case_name(cases: list):
-    # Check if all cases have the same base name as this is also how the 
+    # Check if all cases have the same base name as this is also how the
     # .ini file and initial conditions are called.
     case_names = np.unique([case.name for case in cases])
 
     if len(case_names) > 1:
-        raise ValueError("Cases must have the same case name for the"
-        "multi-gpu setup to work.")
+        raise ValueError(
+            "Cases must have the same case name for the" "multi-gpu setup to work."
+        )
 
     return case_names[0]
+
 
 __all__ = [
     "PreProcessing",

@@ -21,7 +21,7 @@ def open_in_vscode(file_path: Union[str, Path]) -> None:
 
 def object_to_list(var: Any) -> List:
     """Convert various input types to a list.
-    
+
     Handles strings (comma-separated), xarray DataArrays, numpy arrays,
     and single values.
 
@@ -36,7 +36,7 @@ def object_to_list(var: Any) -> List:
     """
     if var is None:
         raise ValueError("Input should not be 'None'")
-    
+
     match var:
         case str():
             return _parse_string_to_list(var)
@@ -60,7 +60,7 @@ def _parse_string_to_list(var: str) -> List:
         List with items converted to int/float where possible.
     """
     items = [s.strip() for s in var.split(",")]
-    
+
     converted_items = []
     for item in items:
         try:
@@ -70,17 +70,15 @@ def _parse_string_to_list(var: str) -> List:
                 converted_items.append(float(item))
             except ValueError:
                 converted_items.append(item)
-    
+
     return converted_items
 
 
 def to_comma_separated_list(
-    lst: Union[List, np.ndarray],
-    n: int = 1,
-    ndecimals: int = None
+    lst: Union[List, np.ndarray], n: int = 1, ndecimals: int = None
 ) -> str:
     """Convert a Python iterable to a comma-separated string.
-    
+
     Handles float precision artifacts (e.g. 209.20000000000002 -> 209.2)
     while preserving small numbers (e.g. 0.00000123).
 
@@ -93,6 +91,7 @@ def to_comma_separated_list(
     Returns:
         Comma-separated string representation.
     """
+
     def clean_fmt(x):
         if isinstance(x, (float, np.floating)):
             if ndecimals is not None:
@@ -108,10 +107,10 @@ def to_comma_separated_list(
 @contextmanager
 def confirm_action(prompt: str):
     """Context manager for user confirmation prompts.
-    
+
     Args:
         prompt: Message to display to the user.
-        
+
     Yields:
         True if user confirmed, False otherwise.
     """

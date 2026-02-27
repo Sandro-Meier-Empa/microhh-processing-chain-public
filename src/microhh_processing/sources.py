@@ -179,7 +179,9 @@ def create_strength_profiles(
 
     results = []
 
-    for start_time, end_time, strength in zip(start_times, end_times, strengths_converted):
+    for start_time, end_time, strength in zip(
+        start_times, end_times, strengths_converted
+    ):
         # Parse start/end times (and compare as times, not strings)
         start_t = pd.to_datetime(start_time, format=time_format).time()
         end_t = pd.to_datetime(end_time, format=time_format).time()
@@ -209,16 +211,20 @@ def create_strength_profiles(
 
     return ds
 
+
 def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
     # Allow "HH:MM:SS" strings by anchoring to a fixed UTC date.
     if isinstance(ref, str):
         t = pd.to_datetime(ref, format="%H:%M:%S").time()
-        return pd.Timestamp.combine(pd.Timestamp("1970-01-01").date(), t).tz_localize("UTC")
+        return pd.Timestamp.combine(pd.Timestamp("1970-01-01").date(), t).tz_localize(
+            "UTC"
+        )
 
     if isinstance(ref, pd.Timestamp):
         return ref.tz_convert("UTC")
 
     raise TypeError(f"{name} must be a pd.Timestamp or a string 'HH:MM:SS'")
+
 
 # Note: Stability enum is imported from enums.py
 
@@ -251,7 +257,7 @@ def briggs_momentum_rise(
         float: Plume rise above source Δh (m).
     """
     _validate_input(x, u, d, Vs)
-    
+
     if not isinstance(stability, Stability):
         stability = Stability(stability)
 
@@ -272,13 +278,16 @@ def briggs_momentum_rise(
         return 0.0
 
     # Compute near-field and final rise
-    dh_near = _generic_plume_rise_form(E=1.44 * (d * Vs) ** (2.0 / 3.0), x=x, b=1.0 / 3.0, u=u, a=2.0 / 3.0)
+    dh_near = _generic_plume_rise_form(
+        E=1.44 * (d * Vs) ** (2.0 / 3.0), x=x, b=1.0 / 3.0, u=u, a=2.0 / 3.0
+    )
     dh_final = _generic_plume_rise_form(E=3.0 * d * Vs, x=x, b=0, u=u, a=1.0)
-    
+
     # return the element wise minimum of near-field and final rise
     dh = np.minimum(dh_near, dh_final)
 
     return np.where(valid_mask, dh, np.nan)
+
 
 def asme_momentum_rise(
     x: Union[float, np.ndarray],
@@ -319,17 +328,18 @@ def asme_momentum_rise(
         valid_mask = np.ones_like(Vs, dtype=bool)
 
     # Compute final rise
-    dh_final = _generic_plume_rise_form(E=(d * Vs)**1.4, x=x, b=0, u=u, a=1.4)
+    dh_final = _generic_plume_rise_form(E=(d * Vs) ** 1.4, x=x, b=0, u=u, a=1.4)
 
     return np.where(valid_mask, dh_final, np.nan)
 
 
 def _generic_plume_rise_form(
-        E: float,
-        x: Union[float, np.ndarray],
-        b: float,
-        u: Union[float, np.ndarray],
-        a: float) -> Union[float, np.ndarray]:
+    E: float,
+    x: Union[float, np.ndarray],
+    b: float,
+    u: Union[float, np.ndarray],
+    a: float,
+) -> Union[float, np.ndarray]:
     """Generic form for plume rise equations: Δh = E * (x^b) * (u^-a).
 
     Args:
@@ -342,13 +352,15 @@ def _generic_plume_rise_form(
     Returns:
         float or np.ndarray: Plume rise above source Δh (m).
     """
-    return E * (x ** b) * (u ** -a)
+    return E * (x**b) * (u**-a)
+
 
 def _validate_input(
-    x: Union[float, np.ndarray], 
-    u: Union[float, np.ndarray], 
-    d: Union[float, np.ndarray], 
-    Vs: Union[float, np.ndarray]) -> None:
+    x: Union[float, np.ndarray],
+    u: Union[float, np.ndarray],
+    d: Union[float, np.ndarray],
+    Vs: Union[float, np.ndarray],
+) -> None:
     if np.array(x).any() < 0:
         raise ValueError("x must be >= 0 (m).")
     if np.array(u).any() <= 0:
