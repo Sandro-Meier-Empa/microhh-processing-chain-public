@@ -1383,4 +1383,59 @@ class PostProcessing:
         return num / den
 
 
-__all__ = ["PostProcessing"]
+def format_data_for_cdo(data_coord, out_path: Union[str, Path]) -> xr.Dataset:
+    """Format the data for use with the CDO library
+
+    Args:
+        data_coord (xr.Dataset): Dataset with coordinates to format for CDO compatibility.
+        out_path (Union[str, Path]): Path where the formatted dataset should be saved.
+
+    Returns:
+        xr.Dataset: Formatted dataset.
+    """
+    # Ensure out_path is a Path object
+    out_path = Path(out_path)
+
+    ds = data_coord.copy(deep=True)
+
+    # Clean up dimensions and old vars
+    ds = ds.drop_vars(["x", "y"], errors="ignore")
+    if "vertices" not in ds.dims and "corners" in ds.dims:
+        ds = ds.rename({"corners": "vertices"})
+
+    # Define metadata
+    targets = {
+        "lon": {
+            "units": "degrees_east",
+            "standard_name": "longitude",
+            "bounds": "lonc",
+        },
+        "lat": {
+            "units": "degrees_north",
+            "standard_name": "latitude",
+            "bounds": "latc",
+        },
+        "lonc": {"units": "degrees_east"},
+        "latc": {"units": "degrees_north"},
+    }
+
+    # reset attributes for the main variables and bounds, to ensure CDO compatibility
+    for var_name, new_attrs in targets.items():
+        if var_name in ds.variables:
+            ds[var_name].encoding = {}
+
+            # Wipe and replace attributes
+            ds[var_name].attrs = new_attrs
+
+    # Remove automatically added 'coordinates' attributes that caused CDO warnings
+    for bnd in ["lonc", "latc"]:
+        if bnd in ds.variables:
+            ds[bnd].encoding["coordinates"] = None
+            ds[bnd].attrs.pop("coordinates", None)
+
+    ds.to_netcdf(out_path)
+
+    return ds
+
+
+__all__ = ["PostProcessing", "format_data_for_cdo"]
