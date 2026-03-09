@@ -30,18 +30,14 @@ class Case:
         suffix: str,
     ):
         """Define a case for MicroHH.
-        Can be used for...
-            ...initialising the model (module 'Initialisation')
-            ...pre-processing (module 'PreProcessing')
-            ...post-processing (module 'PostProcessing')
-            ...visualisation (module 'Visualisation')
+
+        Can be used for initialising the model, pre-processing,
+        post-processing, and visualisation.
 
         Args:
-            name (str):
-                Name of the case. Must be set up in microhh/cases
-            suffix (str):
-                Suffix for the specific model run.
-                Is combined as {name}.{suffix}.
+            name: Name of the case. Must be set up in ``microhh/cases``.
+            suffix: Suffix for the specific model run.
+                Combined as ``{name}.{suffix}``.
         """
         self.name = name
         self.suffix = suffix
@@ -98,20 +94,23 @@ class Case:
         method: Union[InitMethod, str] = InitMethod.INTERACTIVE,
         init_from: Optional[Union[str, Path]] = None,
         overwrite: bool = False,
-    ):
+    ) -> None:
         """Initialise a case by creating or reading in a directory.
 
         Args:
-            method (str, default: 'interactive'):
-                Method of how the case should be set up.
-                Options are...
-                    ...'default': use python script to create .ini file and
-                    initial conditions.
-                    ...'interactive': create .ini file and initial conditions object
-                    oriented.
-                    ...'rerun': use .ini file and initial condition from an existing case.
-            overwrite (bool, default: False):
-                Specify if existing case should be overwritten.
+            scratch_path: Path of target folder on *scratch*.
+            method: Method of how the case should be set up.
+                Accepted values are:
+
+                - ``'default'``: Create ``.ini`` file and initial conditions
+                  by running a Python script.
+                - ``'interactive'``: Create ``.ini`` file and initial
+                  conditions interactively.
+                - ``'rerun'``: Rerun an existing case from *store* or
+                  *scratch*.
+            init_from: Path to the case used as a template.
+                Required when *method* is ``'default'`` or ``'rerun'``.
+            overwrite: Whether to overwrite an existing case directory.
         """
         self.scratch_path = Path(scratch_path, self.name_spec)
         self.file_directory = self.scratch_path
@@ -127,7 +126,19 @@ class Case:
         self,
         method: Union[InitMethod, str],
         init_from: Optional[Union[str, Path]] = None,
-    ):
+    ) -> None:
+        """Validate and normalise the initialisation method.
+
+        Args:
+            method: Initialisation method (``'default'``,
+                ``'interactive'``, or ``'rerun'``).
+            init_from: Path to the source case directory. Required for
+                ``'default'`` and ``'rerun'`` methods.
+
+        Raises:
+            ValueError: If *method* is ``'default'`` or ``'rerun'`` and
+                *init_from* is not provided.
+        """
         # Normalize method to string for comparison
         method_val = (
             method.value if isinstance(method, InitMethod) else str(method).lower()
@@ -143,12 +154,15 @@ class Case:
                 "the path of the directory containing `.ini` and initial condition files."
             )
 
-    def _handle_scratch_dir(self, overwrite: bool = False):
-        """Create the case by creating a directory on 'scratch'.
+    def _handle_scratch_dir(self, overwrite: bool = False) -> None:
+        """Create the case directory on *scratch*.
+
+        If the directory already exists and *overwrite* is ``True``, the
+        user is prompted for confirmation before the existing directory
+        is removed and re-created.
 
         Args:
-            overwrite (bool, optional. Default: False):
-                Specify if an existing folder and content should be overwritten.
+            overwrite: Whether to overwrite an existing directory.
         """
 
         # set up directory on scratch
@@ -164,12 +178,21 @@ class Case:
                     logger.info(f"Overwriting {self.scratch_path}")
                     os.makedirs(self.scratch_path)
 
-    def _handle_running_method(self, init_from: Union[str, Path]):
-        """Check if the running method is correct.
-        Accepted values are
-            'default': Create .ini file and initial conditions by running a python script.
-            'interactive': Create .ini file and initial conditions object oriented.
-            'rerun': Rerun a case which is on store or scratch.
+    def _handle_running_method(self, init_from: Union[str, Path]) -> None:
+        """Execute the initialisation logic for the selected method.
+
+        Depending on ``self.method``, this will:
+
+        - ``'default'``: Validate the source case, create initial
+          conditions, and copy ``.ini`` and input files.
+        - ``'interactive'``: Create an empty ``.ini`` file.
+        - ``'rerun'``: Copy ``.ini`` and input files from an existing case.
+
+        Args:
+            init_from: Path to the source case directory.
+
+        Raises:
+            ValueError: If ``self.method`` is not a recognised value.
         """
         if self.method == InitMethod.DEFAULT.value:
             case_path = Path(init_from)
@@ -189,11 +212,12 @@ class Case:
             )
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def _get_job_id(self) -> int:
-        """Look for the job ID in the run_microhh*.out file.
+    def _get_job_id(self) -> Optional[int]:
+        """Look for the job ID in the ``run_microhh*.out`` file.
 
         Returns:
-            int: Job ID of the running simulation.
+            The SLURM job ID extracted from the output filename,
+            or ``None`` if no output file is found.
         """
         out_files = list(Path(self.file_directory).glob("run_microhh*.out"))
 
@@ -206,19 +230,31 @@ class Case:
 
         return job_id
 
-    def _check_case_setup(self, case_path: Union[str, Path]):
-        """Check if the case is set up.
+    def _check_case_setup(self, case_path: Union[str, Path]) -> None:
+        """Verify that the case directory exists and contains required files.
+
+        Args:
+            case_path: Path to the case directory to validate.
 
         Raises:
-            FileNotFoundError: If the case does not exist or required files are missing.
+            FileNotFoundError: If the case directory does not exist or
+                required files are missing.
         """
         if not case_path.exists():
             raise FileNotFoundError(f"Case '{self.name}' does not exist.")
 
         self._check_required_files(case_path)
 
-    def _check_required_files(self, case_path: Union[str, Path]):
-        """Check for the existence of {name}_input.py and {name}*.ini files"""
+    def _check_required_files(self, case_path: Union[str, Path]) -> None:
+        """Check for the existence of ``{name}_input.py`` and ``{name}*.ini`` files.
+
+        Args:
+            case_path: Path to the case directory.
+
+        Raises:
+            FileNotFoundError: If ``{name}_input.py`` or a matching
+                ``.ini`` file is missing.
+        """
         case_path = Path(case_path)
 
         input_py_path = case_path / f"{self.name}_input.py"
@@ -235,9 +271,20 @@ class Case:
         case_path: Union[str, Path],
         pattern: str,
         new_filename: str,
-        exclude_pattern: str | None = None,
-    ):
-        """Generic helper to copy a single file matching a pattern from case_path to scratch."""
+        exclude_pattern: Optional[str] = None,
+    ) -> None:
+        """Copy a single file matching *pattern* from *case_path* to scratch.
+
+        Args:
+            case_path: Source directory to search for the file.
+            pattern: Glob pattern used to locate the file.
+            new_filename: Name for the copied file in the scratch directory.
+            exclude_pattern: Substring to exclude from matched filenames.
+
+        Raises:
+            FileNotFoundError: If zero or more than one file matches
+                the pattern.
+        """
         case_path = Path(case_path)
         matched_files = list(case_path.rglob(pattern))
 
@@ -253,8 +300,12 @@ class Case:
         dst = self.scratch_path / new_filename
         shutil.copy(str(src), str(dst))
 
-    def _copy_ini(self, case_path: Union[str, Path]):
-        """Provide .ini file based on the default method when initialising a case."""
+    def _copy_ini(self, case_path: Union[str, Path]) -> None:
+        """Copy the ``.ini`` file from *case_path* to the scratch directory.
+
+        Args:
+            case_path: Source directory containing the ``.ini`` file.
+        """
         self._copy_single_file(
             case_path=case_path,
             pattern=f"*.ini",
@@ -262,16 +313,24 @@ class Case:
             exclude_pattern="_base.ini",
         )
 
-    def _copy_initial(self, case_path: Union[str, Path]):
-        """Provide initial conditions file based on the default method when initialising a case."""
+    def _copy_initial(self, case_path: Union[str, Path]) -> None:
+        """Copy the initial conditions (``*_input.nc``) file from *case_path* to scratch.
+
+        Args:
+            case_path: Source directory containing the input file.
+        """
         self._copy_single_file(
             case_path=case_path,
             pattern="*_input.nc",
             new_filename=f"{self.name}_input.nc",
         )
 
-    def _remove_existing_files(self):
-        """Remove all existing files except microhh, .ini and _input.nc files"""
+    def _remove_existing_files(self) -> None:
+        """Remove all files in the scratch directory except core case files.
+
+        The ``.ini``, ``_input.nc``, and ``microhh`` executable files are
+        preserved. The user is prompted for confirmation before deletion.
+        """
         files_to_keep = [
             f"{self.name}.ini",
             f"{self.name}_input.nc",
@@ -288,10 +347,14 @@ class Case:
                     if item.is_file():
                         item.unlink()
 
-    def _create_initial(self, case_path: Union[str, Path]):
-        """Create the initial conditions for a case.
-        Uses the python script located in 'microhh/cases/{name}/'
-        to create the initial conditions.
+    def _create_initial(self, case_path: Union[str, Path]) -> None:
+        """Create the initial conditions by running the case's input script.
+
+        Executes ``{name}_input.py`` located in *case_path* to generate
+        the initial condition files.
+
+        Args:
+            case_path: Directory containing the ``{name}_input.py`` script.
         """
         py_script_path = Path(case_path, f"{self.name}_input.py")
 
@@ -300,29 +363,31 @@ class Case:
         else:
             logger.info(f"{py_script_path} not found.")
 
-    def overwrite_ini(self, settings: dict = {}, overwrite: bool = True):
-        """Write the .ini file of a case.
-        If the .ini file already exists, it will be overwritten.
+    def overwrite_ini(self, settings: dict = {}, overwrite: bool = True) -> None:
+        """Overwrite the ``.ini`` file of the case with the given settings.
+
+        Clears all existing groups before applying *settings*.
 
         Args:
-            overwrite (bool, optional. Default: True):
-                Specify if the .ini file should be overwritten.
+            settings: Nested dictionary of ``{group: {variable: value}}``
+                pairs to write.
+            overwrite: Whether to allow overwriting the existing file.
         """
         self.ini_file.groups = {}
 
         self.modify_ini(settings=settings, overwrite=overwrite)
 
-    def modify_ini(self, settings: dict, overwrite: bool = True):
-        """Modify the .ini file of a case.
-        Values populated with None will be removed from the .ini file.
-        Values which are not specified will remain unchanged.
+    def modify_ini(self, settings: dict, overwrite: bool = True) -> None:
+        """Modify the ``.ini`` file of the case in-place.
+
+        Values set to ``None`` are removed. Variables not present in
+        *settings* remain unchanged.
 
         Args:
-            settings (dict):
-                Dictionary containing the groups, variables and values
-                which should be changed in the .ini file.
-            overwrite (bool, optional. Default: True):
-                Specify if the .ini file should be overwritten.
+            settings: Nested dictionary of ``{group: {variable: value}}``
+                pairs to update. Use ``None`` as a value to remove a
+                variable.
+            overwrite: Whether to allow overwriting the existing file.
         """
         for group, variables in settings.items():
             for variable, value in variables.items():
@@ -334,12 +399,18 @@ class Case:
         self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
         self.ini_file = mht.Read_namelist(self.ini_path)
 
-    def open_mhh_in_vscode(self, filetype: Union[FileType, str]):
+    def open_mhh_in_vscode(self, filetype: Union[FileType, str]) -> None:
         """Open the specified file in VS Code.
 
         Args:
-            filetype: File type to open. Can be FileType enum or string
-                ('ini', 'out', 'sbash', 'sbash_out').
+            filetype: File type to open. Can be a :class:`FileType` enum
+                member or one of ``'ini'``, ``'out'``, ``'sbash'``,
+                ``'sbash_out'``.
+
+        Raises:
+            FileNotFoundError: If no matching file is found (for
+                ``'sbash_out'``).
+            ValueError: If *filetype* is not a recognised value.
         """
         # Normalize filetype to string
         filetype_val = (
@@ -370,18 +441,20 @@ class Case:
         else:
             logger.info(f"{file_path} does not exist.")
 
-    def calculate_benchmark(self, save: bool = False, ssh_connect: str = None) -> dict:
-        """Get benchmark information from the .out file of the case.
+    def calculate_benchmark(
+        self, save: bool = False, ssh_connect: Optional[str] = None
+    ) -> dict:
+        """Calculate benchmark information from the ``.out`` file of the case.
 
         Args:
-            save (bool, optional. Default: False):
-                Specify if the benchmark information should be saved
-                as a .json file in the case directory.
-            ssh_connect (str, optional. Default: None):
-                Specify the SSH connection string if the job is running on a remote cluster.
+            save: If ``True``, persist the benchmark as a JSON file in
+                the case directory.
+            ssh_connect: SSH connection string for retrieving SLURM
+                accounting data from a remote cluster.
 
         Returns:
-            dict: A dictionary containing the benchmark information.
+            Dictionary containing grid resolution, simulated/elapsed
+            time, and resource usage metrics.
         """
         benchmark = {}
 
@@ -429,12 +502,13 @@ class Case:
         return benchmark
 
     def load_benchmark(self) -> dict:
-        """Load benchmark information from a .json file in the case directory.
+        """Load benchmark information from a JSON file in the case directory.
 
         Returns:
-            dict: A dictionary containing the benchmark information.
+            Dictionary containing the benchmark information.
+
         Raises:
-            FileNotFoundError: If the benchmark .json file does not exist.
+            FileNotFoundError: If the benchmark JSON file does not exist.
         """
         json_file_path = self.file_directory / f"{self.name}_benchmark.json"
 
@@ -460,10 +534,13 @@ class Case:
         return benchmark
 
     def _get_simulated_time(self) -> float:
-        """Get the total simulated time from the .out file of the case.
+        """Get the total simulated time from the ``.out`` file of the case.
 
         Returns:
-            float: Total simulated time in seconds.
+            Total simulated time in seconds.
+
+        Raises:
+            FileNotFoundError: If the ``.out`` file does not exist.
         """
         out_file_path = self.file_directory / f"{self.name}.out"
 
@@ -475,16 +552,20 @@ class Case:
 
         return float(last_time_value)
 
-    def rename(self, new_name: str = None, new_suffix: str = None) -> "Case":
-        """Rename this MicroHH case by renaming its directory and .ini file.
+    def rename(
+        self, new_name: Optional[str] = None, new_suffix: Optional[str] = None
+    ) -> None:
+        """Rename this MicroHH case by renaming its directory and ``.ini`` file.
 
         Args:
-            new_name (str, optional): New name for the case. If not provided, the existing name will be kept.
-            new_suffix (str, optional): New suffix for the case.
-                If not provided, the existing suffix will be kept.
+            new_name: New name for the case. Keeps the existing name
+                if not provided.
+            new_suffix: New suffix for the case. Keeps the existing
+                suffix if not provided.
 
-        Returns:
-            Case: Self (renamed MicroHH case).
+        Raises:
+            ValueError: If neither *new_name* nor *new_suffix* is provided.
+            FileExistsError: If the target directory already exists.
         """
         if new_name is None and new_suffix is None:
             raise ValueError("Please provide a new name or a new suffix for the case.")
@@ -508,10 +589,15 @@ class Case:
         self.ini_path = Path(new_file_directory, f"{new_name}.ini")
 
     def clean(self) -> None:
-        """Clean this MicroHH case by removing all files except the
-        - .ini file,
-        - _input.nc file and
-        - microhh executable.
+        """Clean this MicroHH case by removing all files and directories.
+
+        The following files are preserved:
+
+        - ``{name}.ini``
+        - ``{name}_input.nc``
+        - ``microhh`` executable
+
+        The user is prompted for confirmation before deletion.
         """
         files_to_keep = [
             f"{self.name}.ini",
@@ -531,7 +617,13 @@ class Case:
                 logger.info(f"Cleaned case at {self.file_directory}.")
 
     def delete(self) -> None:
-        """Delete this MicroHH case by removing its directory."""
+        """Delete this MicroHH case by removing its directory.
+
+        The user is prompted for confirmation before deletion.
+
+        Raises:
+            FileNotFoundError: If the case directory does not exist.
+        """
         if not self.file_directory.exists():
             raise FileNotFoundError(
                 f"Case directory '{self.file_directory}' does not exist."
@@ -546,18 +638,15 @@ class Case:
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
-    """Compare the .ini file of this case with another case in a Git-diff style.
+    """Compare two ``.ini`` files in a Git-diff style.
 
-    Ignores reordering of groups or variables.
-    Colors: Red for deletions/modifications (self), Green for additions/modifications (other).
+    Group and variable ordering is ignored. Differences are printed with
+    ANSI colours: red for deletions/modifications in *case_path1*, green
+    for additions/modifications in *case_path2*.
 
     Args:
-        case_path1 (Union[str, Path]):
-            Path to the first case directory.
-        case_path2 (Union[str, Path]):
-            Path to the second case directory.
-    Returns:
-        None: Prints the differences to the console.
+        case_path1: Path to the first case directory (or file).
+        case_path2: Path to the second case directory (or file).
     """
     # ANSI Colors
     RED = "\033[91m"
@@ -645,23 +734,21 @@ def initialise_case(
     overwrite: bool = False,
 ) -> Case:
     """Initialise a MicroHH case.
+
     Args:
-        name (str):
-            Name of the case
-        suffix (str):
-            Suffix for the specific model run.
-            Is combined as {name}.{suffix}.
-        scratch_path (Union[str, Path]):
-            Path of personal folder on 'scratch'.
-        method (Union[InitMethod, str], optional. Default: InitMethod.INTERACTIVE):
-            Method of how the case should be set up.
-        init_from (Union[str, Path], optional. Default: None):
-            Path to the case which should be used as a template for the new case.
-            Required when method is "default" or "rerun".
-        overwrite (bool, optional. Default: False):
-            Specify if existing case should be overwritten.
+        name: Name of the case.
+            For the 'default' method, the case must be set up in ``microhh/cases``
+            with an ``{name}_input.py`` file and a matching ``{name}*.ini`` file.
+        suffix: Suffix for the specific model run.
+            Combined as ``{name}.{suffix}``.
+        scratch_path: Path of personal folder on *scratch*.
+        method: Method of how the case should be set up.
+        init_from: Path to the case used as a template for the new case.
+            Required when *method* is ``'default'`` or ``'rerun'``.
+        overwrite: Whether to overwrite an existing case directory.
+
     Returns:
-        Case: Initialised MicroHH case.
+        The initialised MicroHH case.
     """
     case = Case(
         name=name,
@@ -677,17 +764,20 @@ def initialise_case(
 
 
 def read_case(
-    case_directory: Union[str, Path], scratch_path: Union[str, Path] = None
+    case_directory: Union[str, Path], scratch_path: Optional[Union[str, Path]] = None
 ) -> Case:
-    """Read in an existing MicroHH case.
+    """Read an existing MicroHH case from disk.
 
     Args:
-        case_directory (Union[str, Path]):
-            Directory where the case is stored.
-        scratch_path (Union[str, Path]):
-            Optional path to the scratch directory.
+        case_directory: Directory where the case is stored.
+        scratch_path: Optional path to the scratch directory.
+
     Returns:
-        Case: Read MicroHH case.
+        The loaded MicroHH case.
+
+    Raises:
+        FileNotFoundError: If the ``.ini`` file does not exist in
+            *case_directory*.
     """
     case_directory = Path(case_directory)
     case_name = Path(case_directory).name
@@ -724,25 +814,29 @@ def interpolate_to_model_profile(
         ls2d.grid.Grid_stretched_manual,
     ],
     variable_value: Union[float, int] = 0.0,
-    variable_profile: Union[list, np.ndarray] = None,
-    input_profile: Union[list, np.ndarray] = None,
+    variable_profile: Optional[Union[list, np.ndarray]] = None,
+    input_profile: Optional[Union[list, np.ndarray]] = None,
 ) -> np.ndarray:
-    """Interpolate a given vertical profile to the height levels of
-    the MicroHH model. Can also be used to create a constant profile
+    """Interpolate a vertical profile to the MicroHH model height levels.
+
+    Can also be used to create a constant profile by specifying only
+    *variable_value*.
 
     Args:
-        grid: MicroHH grid created using the LS2D module.
-        variable_value (Union[float, int], optional. Default: 0.0):
-            Constant value of the variable.
-            Used if no variable profile is provided.
-        variable_profile (Union[list, np.ndarray], optional. Default: None):
-            Vertical profile of the variable.
-        input_profile (Union[list, np.ndarray], optional. Default: None):
-            Height levels of the provided variable profile.
+        grid: MicroHH grid object (from LS2D) or a height-level array.
+        variable_value: Constant value used when *variable_profile* is
+            not provided.
+        variable_profile: Vertical profile of the variable to
+            interpolate.
+        input_profile: Height levels corresponding to
+            *variable_profile*.
 
     Returns:
-        np.array: Values interpolated to the height levels of
-        the MicroHH model.
+        Values interpolated (or filled) to the model height levels.
+
+    Raises:
+        ValueError: If neither *variable_value* nor *variable_profile*
+            is provided, or if *grid* is not a recognised type.
     """
     # check if variable value or variable profile is provided
     if variable_value is None and variable_profile is None:
