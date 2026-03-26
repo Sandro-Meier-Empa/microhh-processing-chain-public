@@ -753,7 +753,7 @@ class PostProcessing:
         return None
 
     def add_gaussian_noise(
-        self, data: xr.Dataset, var: str, std: float, noise_units: str
+        self, data: xr.Dataset, var_name: str, gas: str, std: float, noise_units: str
     ) -> xr.Dataset:
         """
         Add Gaussian noise to a specified variable in the dataset.
@@ -761,11 +761,13 @@ class PostProcessing:
         Args:
             data (xr.Dataset):
                 The dataset containing the variable to which noise will be added.
-            var (str):
+            var_name (str):
                 The name of the variable to which Gaussian noise will be added.
+            gas (str):
+                The gas for which noise is being added.
             std (float):
                 The standard deviation of the Gaussian noise distribution.
-            unit (str):
+            noise_units (str):
                 Unit of the noise added.
 
         Returns:
@@ -776,28 +778,31 @@ class PostProcessing:
         data_copy = data.copy(deep=True)
 
         # convert noise to same unit as data
-        data_units = data[var].attrs.get("units", None)
+        data_units = data_copy[var_name].attrs.get("units", None)
 
         if data_units is None:
             raise ValueError(
-                f"Units for variable '{var}' are not defined in the dataset."
+                f"Units for variable '{var_name}' are not defined in the dataset."
             )
 
         std_conv = ucat.convert_columns(
-            std, from_unit=noise_units, to_unit=data_units, molar_mass=var
+            std, from_unit=noise_units, to_unit=data_units, molar_mass=gas
         )
 
         # assume no bias (center = 0) but noise (= std_conv)
-        noise = np.random.normal(0, std_conv, data_copy[var].size)
-        noise = noise.reshape(data_copy[var].shape)
+        noise = np.random.normal(0, std_conv, data_copy[var_name].size)
+        noise = noise.reshape(data_copy[var_name].shape)
 
-        data_copy[var] = data[var] + noise
-        data_copy[var].attrs.update(data[var].attrs)
-        data_copy[var].attrs["noise_level"] = std_conv
+        data_copy[var_name] = data_copy[var_name] + noise
+        data_copy[var_name].attrs.update(data_copy[var_name].attrs)
+        data_copy[var_name].attrs["noise_level"] = std_conv
 
         # add std_conv for variable based on artificial noise
-        data_copy[f"{var}_std"] = (data[var].dims, np.full_like(data[var], std_conv))
-        data_copy[f"{var}_std"].attrs["units"] = data_units
+        data_copy[f"{var_name}_precision"] = (
+            data_copy[var_name].dims,
+            np.full_like(data_copy[var_name], std_conv),
+        )
+        data_copy[f"{var_name}_precision"].attrs["units"] = data_units
 
         return data_copy
 
