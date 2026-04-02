@@ -59,6 +59,7 @@ class AlpsSetup:
         partition: Union[Partition, str] = Partition.DEBUG,
         multithread: bool = False,
         uenv: str = "",
+        view: str = "default",
     ):
         """A class handling everything around the workflow on CSCS's supercomputers.
 
@@ -105,7 +106,10 @@ class AlpsSetup:
                 Enable or disable multithreading. Defaults to False.
             uenv (str, optional):
                 User environment to be used for running a job,
-                e.g. 'prgenv-gnu'. Defaults to "".
+                e.g. 'prgenv-gnu' or 'prgenv-gnu/24.11:v2'. Defaults to "".
+            view (str, optional):
+                User environment view to be used for running a job,
+                e.g. 'default'. Defaults to 'default'.
         """
         self._cluster = cluster
         self._processor = processor
@@ -127,11 +131,13 @@ class AlpsSetup:
         self.multithread = "multithread" if multithread else "nomultithread"
         self.constraint = "mc" if self.processor == "cpu" else "gpu"
         self.uenv = uenv
+        self.view = view
 
         self._check_wall_time_valid()
         self._check_node_number_valid()
         self._check_processor_valid()
         self._check_mail_setup_valid()
+        self._check_uenv_setup_valid()
 
         # check if the user wants to remotely submit jobs via ssh
         self._set_ssh_connect()
@@ -211,6 +217,13 @@ class AlpsSetup:
             raise ValueError(
                 "Please provide an email address to receive notifications."
             )
+
+    def _check_uenv_setup_valid(self):
+        if self.uenv:
+            if "--view=" in self.uenv:
+                raise ValueError(
+                    "Please provide the view as a separate argument, not in uenv."
+                )
 
     def _set_ssh_connect(self):
         # get name of the current machine
@@ -315,11 +328,8 @@ class AlpsSetup:
 
         if self.uenv:
             lines.append(f"#SBATCH --uenv={self.uenv}")
+            lines.append(f"#SBATCH --view={self.view}")
             lines.append("")
-            lines.append(
-                'export LD_LIBRARY_PATH="/user-environment/env/default/lib'
-                ':/user-environment/env/default/lib64:$LD_LIBRARY_PATH"'
-            )
         else:
             lines.append("")
 
