@@ -24,12 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class PreProcessing:
+
     def __init__(
         self,
         case: init.Case,
         alps_setup: cscs.AlpsSetup,
         microhh_executable_path: Union[str, Path],
-        jobreport_path: Union[str, Path],
+        jobreport_path: Optional[Union[str, Path]] = None,
     ):
         """Class used for pre-processing and running MicroHH cases
 
@@ -40,7 +41,7 @@ class PreProcessing:
                 Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
             microhh_executable_path (Union[str, Path]):
                 Path to the MicroHH executable or the directory containing the MicroHH executable.
-            jobreport_path (Union[str, Path]):
+            jobreport_path (Optional[Union[str, Path]]):
                 Path to the GPU job report executable. Only supported on GPU.
         """
         self.case = case
@@ -149,7 +150,7 @@ class PreProcessing:
         self._check_required_files()
 
         # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite, mode="run")
+        self.job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
 
         if start_jobs:
             # Launch the job on alps
@@ -193,7 +194,7 @@ class PreProcessing:
         self.copy_restart_files(origin=restart_case.file_directory, timestr=restart_str)
 
         # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite, mode="rerun")
+        self.job_file = self.create_run_script(overwrite, mode=RunMode.RERUN)
 
         if start_jobs:
             # Launch the job on alps
