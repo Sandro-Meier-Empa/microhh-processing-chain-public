@@ -4,8 +4,6 @@ import pyproj
 import re
 import scipy
 import shutil
-import subprocess
-import sys
 import zipfile
 import logging
 
@@ -116,7 +114,6 @@ class PostProcessing:
 
         self.create_3d_output(
             vars=vars,
-            py_file_path=py_file_path,
             overwrite=overwrite,
             precision=precision,
             start_time=start_time,
@@ -201,11 +198,12 @@ class PostProcessing:
     def create_3d_output(
         self,
         vars: Union[str, list],
-        overwrite: bool = False,
         precision: Union[Precision, str] = Precision.SINGLE,
         start_time=None,
         end_time=None,
-        py_file_path: Optional[Union[str, Path]] = None,
+        sample_time=None,
+        nprocs: Optional[int] = None,
+        overwrite: bool = False,
     ):
         """Create 3D netCDF files for the variables specified
 
@@ -213,78 +211,49 @@ class PostProcessing:
             vars (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
-            py_file_path (Union[str, Path]):
-                Path to the directory withing /microhh containing the 3d_to_nc.py file.
-            overwrite (bool, option. Default: False):
-                Specify if existing files on 'scratch' and
-                'store' should be overwritten.
             precision (str, optional. Default: "double"):
                 Precision used for the created .nc file.
             start_time (int, optional. Default: None):
                 Start time in s of the data to process.
             end_time (int, optional. Default: None):
                 End time in s of the data to process.
+            sample_time (int, optional. Default: None):
+                Sample time in s of the output .nc file.
+            nprocs (int, optional. Default: None):
+                Number of worker processes for parallel processing.
+            overwrite (bool, optional. Default: False):
+                Specify if existing .nc files should be overwritten.
         """
         vars = np.atleast_1d(vars).tolist()
-        vars_to_process = vars.copy()
 
-        if start_time is None:
-            start_time = self.case.ini_file["time"]["starttime"]
-        if end_time is None:
-            end_time = self.case.ini_file["time"]["endtime"]
-        sample_time = self.case.ini_file["time"]["savetime"]
-
-        for var in vars:
-            nc_file_path = Path(self.case.file_directory, f"{var}.nc")
-
-            if nc_file_path.exists():
-                if overwrite:
-                    os.remove(nc_file_path)
-                    logger.info(f"Overwriting {nc_file_path}")
-                else:
-                    logger.info(f"{nc_file_path} already exists. Skipping...")
-                    vars_to_process.remove(var)
-
-        if py_file_path is not None:
-            # run as python script
-            if vars_to_process:
-                post_command = (
-                    f"{sys.executable} 3d_to_nc.py -d {self.case.file_directory} "
-                    f"-f {self.case.name}.ini -v {' '.join(vars_to_process)} "
-                    f"-p {precision} -t0 {start_time} -t1 {end_time} "
-                    f"-tstep {sample_time}"
-                )
-                subprocess.run(
-                    post_command,
-                    shell=True,
-                    cwd=py_file_path,
-                )
-        else:
-            # run as module
-            if vars_to_process:
-                convert_3d_to_nc.run(
-                    directory=self.case.file_directory,
-                    filename=f"{self.case.name}.ini",
-                    vars=vars_to_process,
-                    precision=precision,
-                    starttime=start_time,
-                    endtime=end_time,
-                    sampletime=sample_time,
-                )
+        if vars:
+            convert_3d_to_nc.run_conversion(
+                filename=f"{self.case.name}.ini",
+                directory=self.case.file_directory,
+                variables=vars,
+                precision=(
+                    precision.value if isinstance(precision, Precision) else precision
+                ),
+                starttime=start_time,
+                endtime=end_time,
+                sampletime=sample_time,
+                nprocs=1 if nprocs is None else nprocs,
+                overwrite=overwrite,
+            )
 
     def create_2d_output(
         self,
         vars: Union[str, list],
         modes: Optional[list] = None,
         indexes: Optional[list] = None,
-        overwrite: bool = False,
-        precision: Union[Precision, str] = Precision.SINGLE,
         start_time=None,
         end_time=None,
         sample_time=None,
-        nocompression: bool = False,
+        precision: Union[Precision, str] = Precision.SINGLE,
         nprocs: Optional[int] = None,
-        py_file_path: Optional[Union[str, Path]] = None,
+        compression: bool = True,
+        order: Optional[int] = None,
+        overwrite: bool = False,
     ):
         """Create cross-section netCDF files for the variables specified.
 
@@ -297,102 +266,42 @@ class PostProcessing:
                 If not provided, modes are determined from the .ini file.
             indexes (list, optional):
                 Indices of the cross-sections to process. Defaults to None.
-            overwrite (bool, optional. Default: False):
-                Specify if existing files should be overwritten.
-            precision (str, optional. Default: "single"):
-                Precision used for the created .nc file.
             start_time (int, optional. Default: None):
                 Start time in s of the data to process.
             end_time (int, optional. Default: None):
                 End time in s of the data to process.
             sample_time (int, optional. Default: None):
                 Sample time in s of the cross-section output.
-            nocompression (bool, optional. Default: False):
-                Disable compression in the netCDF file.
+            precision (str, optional. Default: "single"):
+                Precision used for the created .nc file.
             nprocs (int, optional. Default: None):
                 Number of worker processes for parallel processing.
-            py_file_path (Union[str, Path], optional):
-                Path to the directory containing the cross_to_nc.py file.
-                If None, runs as module.
+            compression (bool, optional. Default: False):
+                Enable compression in the netCDF file.
+            order (int, optional. Default: None):
+                Spatial order used to read the MicroHH grid. If None, uses .ini default.
+            overwrite (bool, optional. Default: False):
+                Specify if existing files should be overwritten.
         """
         vars = np.atleast_1d(vars).tolist()
-        vars_to_process = vars.copy()
-
-        if start_time is None:
-            start_time = self.case.ini_file["time"]["starttime"]
-        if end_time is None:
-            end_time = self.case.ini_file["time"]["endtime"]
-        if sample_time is None:
-            sample_time = self.case.ini_file["cross"]["sampletime"]
-
-        # Determine modes to check for existing files
-        cross_modes = ["xy", "xz", "yz"]
-        ini_cross_modes = set(self.case.ini_file["cross"].keys())
-        ini_cross_list = set(np.atleast_1d(self.case.ini_file["cross"]["crosslist"]))
-
-        if modes is None:
-            modes_to_check = list(ini_cross_modes & set(cross_modes))
-            if "xy" not in modes_to_check and any(
-                item.endswith("_path") for item in ini_cross_list
-            ):
-                modes_to_check.append("xy")
-        else:
-            modes_to_check = modes
-
-        for var in vars:
-            var_exists = False
-            for mode in modes_to_check:
-                nc_file_path = Path(self.case.file_directory, f"{var}.{mode}.nc")
-                if nc_file_path.exists():
-                    if overwrite:
-                        os.remove(nc_file_path)
-                        logger.info(f"Overwriting {nc_file_path}")
-                    else:
-                        var_exists = True
-                        logger.info(f"{nc_file_path} already exists. Skipping...")
-                        break
-            if var_exists and var in vars_to_process:
-                vars_to_process.remove(var)
-
-        if py_file_path is not None:
-            # run as python script
-            if vars_to_process:
-                post_command = (
-                    f"{sys.executable} cross_to_nc.py -d {self.case.file_directory} "
-                    f"-f {self.case.name}.ini -v {' '.join(vars_to_process)} "
-                    f"-p {precision} -t0 {start_time} -t1 {end_time} "
-                    f"-tstep {sample_time}"
-                )
-                if modes is not None:
-                    post_command += f" -m {' '.join(modes)}"
-                if indexes is not None:
-                    post_command += f" -x {' '.join(map(str, indexes))}"
-                if nocompression:
-                    post_command += " -c"
-                if nprocs is not None:
-                    post_command += f" -n {nprocs}"
-
-                subprocess.run(
-                    post_command,
-                    shell=True,
-                    cwd=py_file_path,
-                )
-        else:
-            # run as module
-            if vars_to_process:
-                cross_to_nc.run(
-                    directory=self.case.file_directory,
-                    filename=f"{self.case.name}.ini",
-                    vars=vars_to_process,
-                    modes=modes,
-                    indexes=indexes,
-                    precision=precision,
-                    starttime=start_time,
-                    endtime=end_time,
-                    sampletime=sample_time,
-                    nocompression=nocompression,
-                    nprocs=nprocs,
-                )
+        if vars:
+            cross_to_nc.run_conversion(
+                filename=f"{self.case.name}.ini",
+                directory=self.case.file_directory,
+                modes=modes,
+                variables=vars,
+                indexes=indexes,
+                starttime=start_time,
+                endtime=end_time,
+                sampletime=sample_time,
+                precision=(
+                    precision.value if isinstance(precision, Precision) else precision
+                ),
+                nprocs=1 if nprocs is None else nprocs,
+                compression=compression,
+                order=order,
+                overwrite=overwrite,
+            )
 
     def move_to_store(
         self,
@@ -1407,6 +1316,17 @@ def format_data_for_cdo(data_coord, out_path: Union[str, Path]) -> xr.Dataset:
     ds = ds.drop_vars(["x", "y"], errors="ignore")
     if "vertices" not in ds.dims and "corners" in ds.dims:
         ds = ds.rename({"corners": "vertices"})
+
+    data_vars = [v for v in ds.data_vars if v not in ["lonc", "latc", "time"]]
+
+    # Force these variables to associate with lat/lon
+    for var in data_vars:
+        ds[var].encoding = {}
+        ds[var].attrs["coordinates"] = "lat lon"
+
+    if "time" in ds.coords:
+        ds["time"].encoding["units"] = "seconds since 1970-01-01 00:00:00"
+        ds["time"].encoding["calendar"] = "proleptic_gregorian"
 
     # Define metadata
     targets = {
