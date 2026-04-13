@@ -4,49 +4,49 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microhh_processing"
-version = "0.1.0"
+version = "1.0.0"
 description = "Processing chain for MicroHH simulations"
 readme = "README.md"
 authors = [
     { name = "Sandro Meier", email = "sandro.meier@empa.ch" }
 ]
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
+keywords = ["microhh", "large-eddy simulation", "atmospheric modelling", "post-processing"]
 
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
     "Operating System :: OS Independent"
 ]
 
 dependencies = [
-    "ipywidgets",
-    "lxml",
-    "pyproj",
-    "spectral",
-    "astropy",
-    "pandas",
     "numpy",
+    "pandas",
     "xarray",
+    "scipy",
+    "dask",
+    "pyproj",
+    "netCDF4",
     "matplotlib",
     "cartopy",
+    "ipympl",
+    "ipykernel",
+    "ipywidgets",
+    "IPython",
     "seaborn",
     "tqdm",
-    "timezonefinder",
-    "scipy",
-    "cdsapi",
-    "dill",
-    "dask",
-    "ipympl",
-    "netcdf4",
-    "scikit-learn",
-    "ipykernel",
-    "cmcrameri",
-    "seaborn",
 ]
+
+[project.urls]
+Homepage = "https://gitlab.empa.ch/abt503/atmospheric-modelling/microhh-processing-chain"
+Repository = "https://gitlab.empa.ch/abt503/atmospheric-modelling/microhh-processing-chain.git"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
