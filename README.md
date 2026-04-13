@@ -16,5 +16,9 @@ This repository also relies on several local companion packages such as
 - [`microhh_py`](https://github.com/Sandro-Meier-Empa/microhh) (fork to make python scripts available as a package)
 - [`microhhpy`](https://github.com/microhh/microhhpy)
 
-For local development, install those separately in the same environment.
+For local development, install those separately in the same environment. The packages can then be installed in editable mode from the requirements file:
+
+```bash
+pip install -r requirements.txt
+```
 
