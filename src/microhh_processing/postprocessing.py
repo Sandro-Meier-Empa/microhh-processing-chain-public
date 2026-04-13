@@ -661,92 +661,6 @@ class PostProcessing:
 
         return None
 
-    def add_gaussian_noise(
-        self, data: xr.Dataset, var_name: str, gas: str, std: float, noise_units: str
-    ) -> xr.Dataset:
-        """
-        Add Gaussian noise to a specified variable in the dataset.
-
-        Args:
-            data (xr.Dataset):
-                The dataset containing the variable to which noise will be added.
-            var_name (str):
-                The name of the variable to which Gaussian noise will be added.
-            gas (str):
-                The gas for which noise is being added.
-            std (float):
-                The standard deviation of the Gaussian noise distribution.
-            noise_units (str):
-                Unit of the noise added.
-
-        Returns:
-            xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
-        """
-
-        # Create a deep copy of the dataset to avoid modifying the original in-place
-        data_copy = data.copy(deep=True)
-
-        # convert noise to same unit as data
-        data_units = data_copy[var_name].attrs.get("units", None)
-
-        if data_units is None:
-            raise ValueError(
-                f"Units for variable '{var_name}' are not defined in the dataset."
-            )
-
-        std_conv = ucat.convert_columns(
-            std, from_unit=noise_units, to_unit=data_units, molar_mass=gas
-        )
-
-        # assume no bias (center = 0) but noise (= std_conv)
-        noise = np.random.normal(0, std_conv, data_copy[var_name].size)
-        noise = noise.reshape(data_copy[var_name].shape)
-
-        data_copy[var_name] = data_copy[var_name] + noise
-        data_copy[var_name].attrs.update(data_copy[var_name].attrs)
-        data_copy[var_name].attrs["noise_level"] = std_conv
-
-        # add std_conv for variable based on artificial noise
-        data_copy[f"{var_name}_precision"] = (
-            data_copy[var_name].dims,
-            np.full_like(data_copy[var_name], std_conv),
-        )
-        data_copy[f"{var_name}_precision"].attrs["units"] = data_units
-
-        return data_copy
-
-    def degrade_resolution(
-        self, data: xr.Dataset, zonal_res: int, meridional_res: int
-    ) -> xr.Dataset:
-        """Degrade resolution of 3D or 2D MicroHH output by aggregating pixels.
-
-        Args:
-            data (xr.Dataset): 3D or 2D data
-            zonal_res (int):
-                Number of pixels in zonal direction which should be aggregated.
-            meridional_res (int):
-                Number of pixels in meridional direction which should be aggregated.
-
-        Returns:
-            xr.Dataset: Data with coarser resolution.
-        """
-        spatial_dims = {
-            ("x", "y"): ("x", "y"),
-            ("lon", "lat"): ("lon", "lat"),
-            ("nrows", "nobs"): ("nrows", "nobs"),
-            ("longitude", "latitude"): ("longitude", "latitude"),
-        }
-
-        for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
-            if all(dim in data.dims for dim in dims):
-                degraded_data = data.coarsen(
-                    {zonal_dim: zonal_res, meridional_dim: meridional_res},
-                    boundary="trim",
-                ).mean()
-                return degraded_data
-
-        raise ValueError(f"Unknown spatial dimensions: {data.dims}")
-
     def create_sources_dataset(
         self,
         lat: Union[list, np.ndarray],
@@ -1297,6 +1211,94 @@ class PostProcessing:
         return num / den
 
 
+def add_gaussian_noise(
+    data: xr.Dataset, var_name: str, gas: str, std: float, noise_units: str
+) -> xr.Dataset:
+    """
+    Add Gaussian noise to a specified variable in the dataset.
+
+    Args:
+        data (xr.Dataset):
+            The dataset containing the variable to which noise will be added.
+        var_name (str):
+            The name of the variable to which Gaussian noise will be added.
+        gas (str):
+            The gas for which noise is being added.
+        std (float):
+            The standard deviation of the Gaussian noise distribution.
+        noise_units (str):
+            Unit of the noise added.
+
+    Returns:
+        xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
+    """
+
+    # Create a deep copy of the dataset to avoid modifying the original in-place
+    data_copy = data.copy(deep=True)
+
+    # convert noise to same unit as data
+    data_units = data_copy[var_name].attrs.get("units", None)
+
+    if data_units is None:
+        raise ValueError(
+            f"Units for variable '{var_name}' are not defined in the dataset."
+        )
+
+    std_conv = ucat.convert_columns(
+        std, from_unit=noise_units, to_unit=data_units, molar_mass=gas
+    )
+
+    # assume no bias (center = 0) but noise (= std_conv)
+    noise = np.random.normal(0, std_conv, data_copy[var_name].size)
+    noise = noise.reshape(data_copy[var_name].shape)
+
+    data_copy[var_name] = data_copy[var_name] + noise
+    data_copy[var_name].attrs.update(data_copy[var_name].attrs)
+    data_copy[var_name].attrs["noise_level"] = std_conv
+
+    # add std_conv for variable based on artificial noise
+    data_copy[f"{var_name}_precision"] = (
+        data_copy[var_name].dims,
+        np.full_like(data_copy[var_name], std_conv),
+    )
+    data_copy[f"{var_name}_precision"].attrs["units"] = data_units
+
+    return data_copy
+
+
+def degrade_resolution(
+    data: xr.Dataset, zonal_res: int, meridional_res: int
+) -> xr.Dataset:
+    """Degrade resolution of 3D or 2D MicroHH output by aggregating pixels.
+
+    Args:
+        data (xr.Dataset): 3D or 2D data
+        zonal_res (int):
+            Number of pixels in zonal direction which should be aggregated.
+        meridional_res (int):
+            Number of pixels in meridional direction which should be aggregated.
+
+    Returns:
+        xr.Dataset: Data with coarser resolution.
+    """
+    spatial_dims = {
+        ("x", "y"): ("x", "y"),
+        ("lon", "lat"): ("lon", "lat"),
+        ("nrows", "nobs"): ("nrows", "nobs"),
+        ("longitude", "latitude"): ("longitude", "latitude"),
+    }
+
+    for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
+        if all(dim in data.dims for dim in dims):
+            degraded_data = data.coarsen(
+                {zonal_dim: zonal_res, meridional_dim: meridional_res},
+                boundary="trim",
+            ).mean()
+            return degraded_data
+
+    raise ValueError(f"Unknown spatial dimensions: {data.dims}")
+
+
 def format_data_for_cdo(data_coord, out_path: Union[str, Path]) -> xr.Dataset:
     """Format the data for use with the CDO library
 
@@ -1363,4 +1365,9 @@ def format_data_for_cdo(data_coord, out_path: Union[str, Path]) -> xr.Dataset:
     return ds
 
 
-__all__ = ["PostProcessing", "format_data_for_cdo"]
+__all__ = [
+    "PostProcessing",
+    "format_data_for_cdo",
+    "add_gaussian_noise",
+    "degrade_resolution",
+]
