@@ -1,5 +1,6 @@
 # import cartopy
 import logging
+import re
 import matplotlib.figure
 
 from pathlib import Path
@@ -483,17 +484,14 @@ class Visualisation:
         for var in variables:
             fig, axs = plt.subplots(1, 1, figsize=(12, 6))
 
-            if "z" in stats[var].dims:
-                ydim = "z"
-            elif "zh" in stats[var].dims:
-                ydim = "zh"
-            else:
-                ydim = None
+            dims = stats[var].dims
+            ydim = next((d for d in dims if re.fullmatch(r"zh|z", d)), None)
+            kwargs = {"cmap": cmap} if stats[var].ndim == 2 else {}
 
             if ydim is not None:
-                stats[var].plot(ax=axs, y=ydim, cmap=cmap)
+                stats[var].plot(ax=axs, y=ydim, **kwargs)
             else:
-                stats[var].plot(ax=axs, cmap=cmap)
+                stats[var].plot(ax=axs, **kwargs)
 
             plt.tight_layout()
             plt.show()
