@@ -604,7 +604,9 @@ class PostProcessing:
 
         # Merge all datasets into one
         logger.info("Combining datasets...")
-        combined_dataset = xr.merge(datasets, combine_attrs="no_conflicts")
+        combined_dataset = xr.merge(
+            datasets, combine_attrs="no_conflicts", join="outer"
+        )
 
         return combined_dataset
 
