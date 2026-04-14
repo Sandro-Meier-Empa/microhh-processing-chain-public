@@ -5,11 +5,10 @@ import re
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional, List
+from typing import TYPE_CHECKING, Any, Union, Tuple, Optional
 from io import StringIO
 
 import pandas as pd
-import numpy as np
 
 from microhh_processing.enums import Cluster, Processor, Partition, MailType
 from microhh_processing.constants import PrintColor
@@ -17,9 +16,11 @@ from microhh_processing import utils
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from microhh_processing.initialisation import Case
+
 
 class AlpsSetup:
-
     # define number of cores used on Alps
     PROCESSOR_VERSIONS = {
         # no gpu feature, cpu = cores per socket (64) * sockets (2)
@@ -60,7 +61,7 @@ class AlpsSetup:
         multithread: bool = False,
         uenv: str = "",
         view: str = "default",
-    ):
+    ) -> None:
         """A class handling everything around the workflow on CSCS's supercomputers.
 
         Used to create and submit job scripts.
@@ -179,7 +180,7 @@ class AlpsSetup:
             else str(self.partition).lower()
         )
 
-    def _check_wall_time_valid(self):
+    def _check_wall_time_valid(self) -> None:
         """Checks if the setup is valid to be run on alps based
         on the selected queue, wall time and number of nodes.
 
@@ -198,16 +199,16 @@ class AlpsSetup:
         ):
             raise ValueError("Invalid time limit for the selected partition.")
 
-    def _check_node_number_valid(self):
+    def _check_node_number_valid(self) -> None:
         conditions = self.PARTITION_CONDITIONS.get(self.partition_key, {})
         if conditions.get("max_nodes") and self.nodes > conditions["max_nodes"]:
             raise ValueError("Invalid number of nodes for the selected partition.")
 
-    def _check_processor_valid(self):
+    def _check_processor_valid(self) -> None:
         if self.processor not in self.PROCESSOR_VERSIONS[self.cluster]:
             raise ValueError(f"{self.processor} is not available on {self.cluster}.")
 
-    def _check_mail_setup_valid(self):
+    def _check_mail_setup_valid(self) -> None:
         mail_val = (
             self.mail_type.value
             if isinstance(self.mail_type, MailType)
@@ -218,14 +219,14 @@ class AlpsSetup:
                 "Please provide an email address to receive notifications."
             )
 
-    def _check_uenv_setup_valid(self):
+    def _check_uenv_setup_valid(self) -> None:
         if self.uenv:
             if "--view=" in self.uenv:
                 raise ValueError(
                     "Please provide the view as a separate argument, not in uenv."
                 )
 
-    def _set_ssh_connect(self):
+    def _set_ssh_connect(self) -> None:
         # get name of the current machine
         current_cluster = os.environ["CLUSTER_NAME"]
         if current_cluster != self.cluster:
@@ -407,6 +408,9 @@ def execute_bash_script(
             The string should be in the format "user@hostname" or
             "hostname" if the remote machine is configured for passwordless ssh access.
 
+    Returns:
+        int: The job ID of the submitted job.
+
     """
     job_file = Path(job_file)
 
@@ -440,7 +444,7 @@ def _get_job_id(result: subprocess.CompletedProcess[str]) -> int:
 
 
 def jobs_in_queue(
-    omit: list = [
+    omit: list[str] = [
         "TRES_PER_NODE",
         "MIN_CPUS",
         "MIN_TMP_DISK",
@@ -473,7 +477,7 @@ def jobs_in_queue(
         "SCHEDNODES",
     ],
     add_progress: bool = False,
-    ssh_connect: str = None,
+    ssh_connect: Optional[str] = None,
 ) -> pd.DataFrame:
     """Get information about jobs in the queue.
 
@@ -554,7 +558,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
             current_timestep, max_timestep = get_simulation_progress(case)
             progress_percentage = current_timestep / max_timestep * 100
             progress_percentages.append(int(progress_percentage))
-        except:
+        except Exception:
             progress_percentages.append("NA")
 
     df["PROGRESS (%)"] = progress_percentages
@@ -562,7 +566,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def print_simulation_progress(case):
+def print_simulation_progress(case: "Case") -> None:
     """Print the progress of a simulation based on the saved binary output
     files of MicroHH"""
 
@@ -583,7 +587,7 @@ def print_simulation_progress(case):
     )
 
 
-def get_simulation_progress(case) -> Tuple[int, int]:
+def get_simulation_progress(case: "Case") -> Tuple[int, int]:
     """Get current simulation progress of a MicroHH simulation based on the
     binary grid files generated when running the model.
 
@@ -597,7 +601,7 @@ def get_simulation_progress(case) -> Tuple[int, int]:
     """
     current_timestep = 0
 
-    def process_file(file):
+    def process_file(file: Path) -> int:
         if file.is_file() and file.name.startswith("time."):
             try:
                 return int(file.name[5:])
@@ -620,7 +624,7 @@ def get_simulation_progress(case) -> Tuple[int, int]:
     return current_timestep, max_timestep
 
 
-def extract_job_id(case) -> int | None:
+def extract_job_id(case: "Case") -> int | None:
     """
     Extracts the number represented by '*' in a pattern like 'run_microhh_*.out'.
     Returns the number as an integer, or None if not found.
@@ -633,7 +637,11 @@ def extract_job_id(case) -> int | None:
     return None
 
 
-def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
+def get_sacct_info(
+    jobid: int,
+    fields: Optional[list[str]] = None,
+    ssh_connect: Optional[str] = None,
+) -> pd.DataFrame:
     """Query Slurm accounting (sacct) for a given job ID and return a pandas DataFrame.
 
     Args:
@@ -681,7 +689,7 @@ def get_sacct_info(jobid, fields=None, ssh_connect=None) -> pd.DataFrame:
 
 
 def calculate_expected_runtime(
-    benchmark, simulation_time: pd.Timedelta
+    benchmark: dict[str, Any], simulation_time: pd.Timedelta
 ) -> pd.Timedelta:
     """Calculate the expected runtime based on a benchmark and a given time to be simulated."""
     simulation_time_s = simulation_time.total_seconds()

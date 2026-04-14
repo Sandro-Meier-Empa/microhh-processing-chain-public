@@ -1,8 +1,7 @@
 import os
 import scipy
-import sys
 import logging
-from typing import Union, Tuple, Optional, Literal
+from typing import Union, Optional, Literal
 from pathlib import Path
 
 from scipy.optimize import fsolve
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class WindProcessing:
-    def __init__(self, case: init.Case):
+    def __init__(self, case: init.Case) -> None:
         """Class used for post-processing MicroHH cases and handling the output.
 
         Args:
@@ -262,9 +261,9 @@ class WindProcessing:
             method (str):
                 Method to vertically integrate wind speeds. Available options are
                 "mean", "median", "height", "concentration_weighted"
-            gas (str, optional):
+            gas (str):
                 Gas to use if method = 'concentration_weighted' wind speeds.
-            height (Union[int, float], optional):
+            height (Union[int, float]):
                 Height at which the wind speed should be used if method = 'height'.
         """
 
@@ -422,9 +421,9 @@ class WindProcessing:
                 data[f"{gas}_weight"] * data[wind_component]
             ).sum(dim="z")
             data[f"{wind_component}_weighted"].attrs["units"] = "m/s"
-            data[f"{wind_component}_weighted"].attrs[
-                "description"
-            ] = f"{gas} concentration weighted wind speed"
+            data[f"{wind_component}_weighted"].attrs["description"] = (
+                f"{gas} concentration weighted wind speed"
+            )
 
         data.attrs["METHOD"] = f"{gas} concentration weighted wind"
 
@@ -489,26 +488,29 @@ class WindProcessing:
         # create weight profile
         data[f"{gas}_weight"] = data[gas] / data[gas].sum(dim="z")
         data[f"{gas}_weight"].attrs["units"] = "-"
-        data[f"{gas}_weight"].attrs[
-            "long_name"
-        ] = f"normalised {gas} concentration profile"
+        data[f"{gas}_weight"].attrs["long_name"] = (
+            f"normalised {gas} concentration profile"
+        )
         data[f"{gas}_weight"].attrs["threshold"] = f"{threshold} {threshold_unit}"
 
         return data
 
-    def _circular_mean(self, a, axes):
+    def _circular_mean(
+        self, a: Union[xr.DataArray, np.ndarray], axes: list[int]
+    ) -> np.ndarray:
         """Calculate circular mean, e.g. of wind direction"""
         return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
 
-    def _circular_std(self, a, axes):
+    def _circular_std(
+        self, a: Union[xr.DataArray, np.ndarray], axes: list[int]
+    ) -> np.ndarray:
         """Calculate circular standard deviation, e.g. of wind direction"""
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
 
 class EffectiveWind:
-
     # TODO
-    def _init__():
+    def _init__() -> None:
         return None
 
 
@@ -996,15 +998,20 @@ def compute_effective_wind_speed(
     return results
 
 
-import numpy as np
-
-
-def ramp(x):
+def ramp(x: Union[int, float, np.ndarray]) -> Union[int, float, np.ndarray]:
     """Ramp function R(x): returns x if x > 0 else 0."""
     return np.maximum(x, 0)
 
 
-def compute_smagorinsky_constant(delta, L, z, kappa=0.4, c0=0.135, alpha=0.135, n=3):
+def compute_smagorinsky_constant(
+    delta: Union[int, float, np.ndarray],
+    L: Union[int, float, np.ndarray],
+    z: Union[int, float, np.ndarray],
+    kappa: float = 0.4,
+    c0: float = 0.135,
+    alpha: float = 0.135,
+    n: int = 3,
+) -> Union[int, float, np.ndarray]:
     """Computes Smagorinsky constant according to Eq. (17) in
     https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
@@ -1074,9 +1081,15 @@ def calculate_richardson_number(
 
 __all__ = [
     "WindProcessing",
-    "ekman_spiral",
     "get_wind_profile",
-    "get_wind_profile_standard",
+    "calculate_virtual_temperature",
+    "calculate_virtual_turbulent_heat_flux",
+    "calculate_monin_obukhov_length",
+    "solve_wind_profile",
+    "compute_u_star",
+    "compute_u_star_stable",
+    "compute_effective_wind_speed",
+    "compute_smagorinsky_constant",
     "calculate_coriolis_force",
     "calculate_richardson_number",
 ]

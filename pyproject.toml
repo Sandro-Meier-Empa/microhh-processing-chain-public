@@ -10,7 +10,7 @@ readme = "README.md"
 authors = [
     { name = "Sandro Meier", email = "sandro.meier@empa.ch" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = ["microhh", "large-eddy simulation", "atmospheric modelling", "post-processing"]
 

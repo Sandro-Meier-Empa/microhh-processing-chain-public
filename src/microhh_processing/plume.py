@@ -9,7 +9,9 @@ __all__ = [
 ]
 
 
-def calculate_plume_centerline(grid_y, concentration_2d):
+def calculate_plume_centerline(
+    grid_y: np.ndarray, concentration_2d: np.ndarray
+) -> np.ndarray:
     """Calculates the crosswind centerline position y_m for a given x-slice.
 
     Equation (2) in Raznevic et al., 2022, adapted for 2D.
@@ -24,7 +26,11 @@ def calculate_plume_centerline(grid_y, concentration_2d):
     )
 
 
-def calculate_absolute_dispersion(grid_y, concentration_2d, y_mean_centerline):
+def calculate_absolute_dispersion(
+    grid_y: np.ndarray,
+    concentration_2d: np.ndarray,
+    y_mean_centerline: np.ndarray,
+) -> np.ndarray:
     """Calculates absolute plume dispersion (sigma_ya^2).
 
     Equation (4) in Raznevic et al., 2022, adapted for 2D.
@@ -39,7 +45,7 @@ def calculate_absolute_dispersion(grid_y, concentration_2d, y_mean_centerline):
     )
 
 
-def calculate_meandering_dispersion(y_mean_centerline):
+def calculate_meandering_dispersion(y_mean_centerline: np.ndarray) -> float:
     """Calculates meandering plume dispersion (sigma_ym^2).
 
     Equation (5) in Raznevic et al., 2022.

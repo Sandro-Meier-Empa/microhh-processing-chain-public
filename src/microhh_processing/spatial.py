@@ -15,7 +15,6 @@ __all__ = [
 
 
 class Domain:
-
     def __init__(
         self,
         xsize: int,
@@ -39,7 +38,7 @@ class Domain:
             tuple[float, float],
         ] = "lower left",
         epsg_code: str = None,
-    ):
+    ) -> None:
         """Initialize the Domain object.
         Adapted from https://github.com/microhh/microhhpy
         """
@@ -124,7 +123,12 @@ class Domain:
         else:
             raise ValueError("Invalid anchor!")
 
-    def to_lonlat(self, x, y, meshgrid=False):
+    def to_lonlat(
+        self,
+        x: Union[float, list[float], np.ndarray],
+        y: Union[float, list[float], np.ndarray],
+        meshgrid: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
         x = np.array(x)
         y = np.array(y)
 
@@ -136,7 +140,11 @@ class Domain:
             x + self.x_offset, y + self.y_offset, direction="INVERSE"
         )
 
-    def to_xy(self, lon, lat):
+    def to_xy(
+        self,
+        lon: Union[float, list[float], np.ndarray],
+        lat: Union[float, list[float], np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray]:
         lon = np.array(lon)
         lat = np.array(lat)
 
@@ -185,7 +193,7 @@ class Domain:
         return fig
 
 
-def get_epsg_from_pyproj(lat, lon):
+def get_epsg_from_pyproj(lat: float, lon: float) -> str:
     # Query for UTM CRS info based on a single point (AOI)
     utm_crs_list = query_utm_crs_info(
         datum_name="WGS 84",

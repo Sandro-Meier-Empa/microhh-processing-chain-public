@@ -1,5 +1,4 @@
-from typing import List, Union, Optional
-from collections.abc import Iterable
+from typing import List, Union
 
 import logging
 
@@ -143,7 +142,7 @@ def create_strength_profiles(
     gas_mass: Union[float, str],
     time_format: str = "%H:%M:%S",
     spacing: str = "1min",
-):
+) -> xr.Dataset:
     """Create strength profiles with 1-second ramp up/down for each time interval.
 
     Args:
@@ -268,7 +267,7 @@ def briggs_momentum_rise(
 
     if np.any(Vs / u < 4):
         logger.warning(
-            f"Briggs momentum rise is only valid for Vs/u >= 4. Invalid value will be masked as Nan."
+            "Briggs momentum rise is only valid for Vs/u >= 4. Invalid value will be masked as Nan."
         )
         valid_mask = np.where(Vs / u >= 4, True, False)
     else:
@@ -321,7 +320,7 @@ def asme_momentum_rise(
 
     if np.any(Vs < 10) or np.any(Vs <= u):
         logger.warning(
-            f"ASME momentum rise is only valid for Vs >= 10 m/s and Vs > u. Invalid value will be masked as Nan."
+            "ASME momentum rise is only valid for Vs >= 10 m/s and Vs > u. Invalid value will be masked as Nan."
         )
         valid_mask = np.where((Vs >= 10) & (Vs > u), True, False)
     else:

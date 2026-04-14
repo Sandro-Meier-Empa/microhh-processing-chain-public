@@ -1,6 +1,4 @@
 import os
-import dask
-import pyproj
 import re
 import scipy
 import shutil
@@ -23,7 +21,6 @@ import microhh_py.cross_to_nc as cross_to_nc
 import microhh_processing.cscs as cscs
 import microhh_processing.initialisation as init
 import microhh_processing.io as io
-from microhh_processing import utils
 import microhh_processing.sources as src
 import microhh_processing.spatial as spatial
 import microhh_processing.wind as wind_proc
@@ -34,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class PostProcessing:
-    def __init__(self, case: init.Case):
+    def __init__(self, case: init.Case) -> None:
         """Class used for post-processing MicroHH cases and handling the output.
 
         Args:
@@ -46,18 +43,18 @@ class PostProcessing:
     def run_postprocessing(
         self,
         py_file_path: Union[str, Path],
-        gas: Union[str, list] = None,
-        prognostic_vars=["u", "v", "th"],
+        gases: Union[str, list] = None,
+        prognostic_vars: list[str] = ["u", "v", "th"],
         precision: Union[Precision, str] = Precision.DOUBLE,
-        start_time=None,
-        end_time=None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
         method: Union[WindIntegrationMethod, str] = WindIntegrationMethod.HEIGHT,
         height: Optional[Union[int, float]] = None,
         profile_gas: Optional[str] = None,
         overwrite: bool = False,
         save: bool = True,
-        chunks: Optional[Union[str, dict]] = None,
-    ):
+        chunks: Optional[Union[str, dict[str, int]]] = None,
+    ) -> None:
         """Run all post-processing steps to...
             ... create netCDF files from grid output files
             ... convert gas mixing ratios to concentrations
@@ -65,7 +62,7 @@ class PostProcessing:
             ... vertically integrate wind data
 
         Args:
-            gas (Union[str, list]):
+            gases (Union[str, list]):
                 Gas or list of gases to process to concentrations and vertically integrate.
                 If not given it will process all gases specified in the .ini file.
             prognostic_vars (list, optional):
@@ -100,7 +97,7 @@ class PostProcessing:
         if gases is None:
             gases = self.case.ini_file["fields"]["slist"]
         else:
-            gases = np.atleast_1d(gas).tolist()
+            gases = np.atleast_1d(gases).tolist()
 
         vars = prognostic_vars + gases
 
@@ -127,7 +124,7 @@ class PostProcessing:
             )
 
         wind_processing = wind_proc.WindProcessing(self.case)
-        wind_2D = wind_processing.create_2D_wind(
+        wind_processing.create_2D_wind(
             method=method,
             gas=profile_gas,
             height=height,
@@ -143,10 +140,10 @@ class PostProcessing:
         py_file_path: str,
         job_name: str,
         python_path: str = "python",
-        additional_args: dict = {},
+        additional_args: dict[str, object] = {},
         overwrite: bool = False,
         start_jobs: bool = True,
-    ):
+    ) -> None:
         """Submit a bash script to process a case on alps.
 
         Args:
@@ -193,18 +190,18 @@ class PostProcessing:
 
         if start_jobs:
             # Launch the job on alps
-            job_id = cscs.execute_bash_script(job_file, wait=False)
+            cscs.execute_bash_script(job_file, wait=False)
 
     def create_3d_output(
         self,
         vars: Union[str, list],
         precision: Union[Precision, str] = Precision.SINGLE,
-        start_time=None,
-        end_time=None,
-        sample_time=None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        sample_time: Optional[int] = None,
         nprocs: Optional[int] = None,
         overwrite: bool = False,
-    ):
+    ) -> None:
         """Create 3D netCDF files for the variables specified
 
         Args:
@@ -246,15 +243,15 @@ class PostProcessing:
         vars: Union[str, list],
         modes: Optional[list] = None,
         indexes: Optional[list] = None,
-        start_time=None,
-        end_time=None,
-        sample_time=None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        sample_time: Optional[int] = None,
         precision: Union[Precision, str] = Precision.SINGLE,
         nprocs: Optional[int] = None,
         compression: bool = True,
         order: Optional[int] = None,
         overwrite: bool = False,
-    ):
+    ) -> None:
         """Create cross-section netCDF files for the variables specified.
 
         Args:
@@ -355,7 +352,7 @@ class PostProcessing:
 
     def move_pattern_to_store(
         self, pattern: str, store_path: Union[str, Path], overwrite: bool = False
-    ):
+    ) -> None:
         """Move files or folders with a certain pattern to store.
 
         Args:
@@ -385,7 +382,7 @@ class PostProcessing:
                 else:
                     logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
 
-    def zip_grid_files(self, remove_files: bool = False):
+    def zip_grid_files(self, remove_files: bool = False) -> None:
         """Zip all binary grid files together.
 
         Args:
@@ -416,7 +413,7 @@ class PostProcessing:
             for file in matching_files:
                 file.unlink()
 
-    def unzip_grid_files(self, remove_zip_file: bool = False):
+    def unzip_grid_files(self, remove_zip_file: bool = False) -> None:
         """Unzip the binay grid files to scratch"""
         zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
 
@@ -694,7 +691,9 @@ class PostProcessing:
         nr_sources = len(source_list)
 
         source_names = (
-            source_names or source_labels or [f"source{i+1}" for i in range(nr_sources)]
+            source_names
+            or source_labels
+            or [f"source{i + 1}" for i in range(nr_sources)]
         )
         source_labels = source_labels or source_names
 
@@ -751,9 +750,9 @@ class PostProcessing:
 
         for dim in ["x", "y", "z"]:
             sources[f"source_{dim}0"].attrs["units"] = "m"
-            sources[f"source_{dim}0"].attrs[
-                "description"
-            ] = f"{dim} position in MicroHH grid"
+            sources[f"source_{dim}0"].attrs["description"] = (
+                f"{dim} position in MicroHH grid"
+            )
 
         return sources
 
@@ -874,7 +873,7 @@ class PostProcessing:
         self,
         data: xr.Dataset,
         start_date: Union[str, pd.Timestamp] = None,
-        format="%Y-%m-%d %H:%M:%S",
+        format: str = "%Y-%m-%d %H:%M:%S",
     ) -> xr.Dataset:
         """Convert time into a timestamp to make the
         dataset digestible by `ddeq`.
@@ -962,12 +961,12 @@ class PostProcessing:
 
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
-            logger.info(f"Adding 'phydro' to the dataset.")
+            logger.info("Adding 'phydro' to the dataset.")
             data = self.add_statistics_variable(data, "phydro")
 
         # convert potential temperature to absolute temperature
         if "ta" not in data.data_vars:
-            logger.info(f"Calculating absolute temperature.")
+            logger.info("Calculating absolute temperature.")
             data = self.add_absolute_temperature(data)
 
         from_unit = data[gas].attrs.get("units", None)
@@ -1052,7 +1051,11 @@ class PostProcessing:
         return data
 
     @staticmethod
-    def calculate_absolute_temperature(theta, p, p0):
+    def calculate_absolute_temperature(
+        theta: Union[xr.DataArray, np.ndarray, int, float],
+        p: Union[xr.DataArray, np.ndarray, int, float],
+        p0: Union[xr.DataArray, np.ndarray, int, float],
+    ) -> Union[xr.DataArray, np.ndarray, int, float]:
         """Calculate absolute temperature from potential temperature and pressure.
 
         FIXME
@@ -1096,9 +1099,9 @@ class PostProcessing:
             data[f"{wind_component}_std"].attrs["units"] = data[wind_component].attrs[
                 "units"
             ]
-            data[f"{wind_component}_std"].attrs[
-                "description"
-            ] = f"deviation of {wind_component} wind speed from mean"
+            data[f"{wind_component}_std"].attrs["description"] = (
+                f"deviation of {wind_component} wind speed from mean"
+            )
 
         # compute TKE
         data["TKE"] = 0.5 * (
@@ -1144,7 +1147,7 @@ class PostProcessing:
             int(self.case.ini_file["time"]["savetime"]),
         )
 
-        def read_mass_from_binary(scalar, time_range):
+        def read_mass_from_binary(scalar: str, time_range: np.ndarray) -> list[float]:
             mass_array = []
             dtype = get_dtype()
             for time in time_range:
@@ -1156,7 +1159,7 @@ class PostProcessing:
                 mass_array.append(float(mass))
             return mass_array
 
-        def read_mass_from_netcdf(scalar, time_range):
+        def read_mass_from_netcdf(scalar: str, time_range: np.ndarray) -> list[float]:
             ds = io.open_microhh_nc(self.case, variable=scalar)
             # Assume variable name matches scalar, dimensions (time, z, y, x)
             arr = ds[scalar].values
@@ -1168,7 +1171,7 @@ class PostProcessing:
             ds.close()
             return mass_array
 
-        def get_dtype():
+        def get_dtype() -> Union[type[np.float64], type[np.float32]]:
             grid = mht.Read_grid(itot, jtot, ktot)
 
             if grid.prec == "d":
@@ -1198,7 +1201,7 @@ class PostProcessing:
         dim: str,
         ydim_name: str = "y",
         zdim_name: str = "z",
-    ):
+    ) -> xr.DataArray:
         """Calculate the centerline position of the plume in the dataset.
         According to Raznjevic et al. (2022)"""
 
@@ -1301,7 +1304,9 @@ def degrade_resolution(
     raise ValueError(f"Unknown spatial dimensions: {data.dims}")
 
 
-def format_data_for_cdo(data_coord, out_path: Union[str, Path]) -> xr.Dataset:
+def format_data_for_cdo(
+    data_coord: xr.Dataset, out_path: Union[str, Path]
+) -> xr.Dataset:
     """Format the data for use with the CDO library
 
     Args:

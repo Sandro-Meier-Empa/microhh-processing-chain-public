@@ -1,18 +1,20 @@
-import subprocess
-
 import xarray as xr
-import numpy as np
 import netCDF4 as nc4
 
 from pathlib import Path
-from typing import Union, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 from functools import wraps
 
 import microhhpy
 
+if TYPE_CHECKING:
+    from microhh_processing.initialisation import Case
+
 
 def open_microhh_nc(
-    case, variable: str, chunks: Optional[Union[str, dict]] = None
+    case: "Case",
+    variable: str,
+    chunks: Optional[Union[str, dict[str, int]]] = None,
 ) -> xr.Dataset:
     """Open a .nc file related to MicroHH output.
 
@@ -46,7 +48,7 @@ def open_microhh_nc(
     return data
 
 
-def open_initial_cond(case) -> xr.Dataset:
+def open_initial_cond(case: "Case") -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
     of a model run (<name>_input.nc).
 
@@ -73,7 +75,7 @@ def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
     return merged_dataset
 
 
-def open_statistics(case) -> xr.Dataset:
+def open_statistics(case: "Case") -> xr.Dataset:
     """Read the netCDF file containing the statistics of a model run
     (<name>_statistics.nc).
 
@@ -86,7 +88,7 @@ def open_statistics(case) -> xr.Dataset:
 
 
 @wraps(microhhpy.io.read_case_out)
-def open_microhh_out(case) -> list:
+def open_microhh_out(case: "Case") -> list[Any]:
     path = case.file_directory / f"{case.name}.out"
     out = microhhpy.io.read_case_out(path)
 
@@ -95,20 +97,20 @@ def open_microhh_out(case) -> list:
 
 @wraps(microhhpy.io.save_case_input)
 def save_case_input(
-    case_name,
-    output_dir,
-    init_profiles,
-    tdep_surface=None,
-    tdep_ls=None,
-    tdep_source=None,
-    tdep_chem=None,
-    tdep_aerosol=None,
-    tdep_radiation=None,
-    radiation=None,
-    soil=None,
-    source=None,
-    trajectories=None,
-):
+    case_name: str,
+    output_dir: Union[str, Path],
+    init_profiles: Optional[dict[str, Any]],
+    tdep_surface: Optional[dict[str, Any]] = None,
+    tdep_ls: Optional[dict[str, Any]] = None,
+    tdep_source: Optional[dict[str, Any]] = None,
+    tdep_chem: Optional[dict[str, Any]] = None,
+    tdep_aerosol: Optional[dict[str, Any]] = None,
+    tdep_radiation: Optional[dict[str, Any]] = None,
+    radiation: Optional[dict[str, Any]] = None,
+    soil: Optional[dict[str, Any]] = None,
+    source: Optional[dict[str, Any]] = None,
+    trajectories: Optional[dict[str, Any]] = None,
+) -> None:
 
     microhhpy.io.save_case_input(
         case_name=case_name,

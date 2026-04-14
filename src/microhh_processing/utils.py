@@ -2,6 +2,7 @@
 
 import subprocess
 from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Union, List, Any
 
@@ -92,7 +93,7 @@ def to_comma_separated_list(
         Comma-separated string representation.
     """
 
-    def clean_fmt(x):
+    def clean_fmt(x: Any) -> str:
         if isinstance(x, (float, np.floating)):
             if ndecimals is not None:
                 return f"{x:.{ndecimals}f}"
@@ -105,7 +106,7 @@ def to_comma_separated_list(
 
 
 @contextmanager
-def confirm_action(prompt: str):
+def confirm_action(prompt: str) -> Iterator[bool]:
     """Context manager for user confirmation prompts.
 
     Args:

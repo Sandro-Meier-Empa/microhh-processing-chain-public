@@ -3,32 +3,29 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import logging
 
 from pathlib import Path
 from typing import Union, Optional
 
 import pandas as pd
-import xarray as xr
 import numpy as np
 
 import microhh_py.microhh_tools as mht
 import ls2d
 
 from microhh_processing.enums import InitMethod, FileType
-from microhh_processing import cscs, io, utils
+from microhh_processing import cscs, utils
 
 logger = logging.getLogger(__name__)
 
 
 class Case:
-
     def __init__(
         self,
         name: str,
         suffix: str,
-    ):
+    ) -> None:
         """Define a case for MicroHH.
 
         Can be used for initialising the model, pre-processing,
@@ -60,7 +57,7 @@ class Case:
             return "UNKNOWN"
 
     # add method when printing case
-    def __repr__(self):
+    def __repr__(self) -> str:
         # format ini file content as string
         # read ini file and format content
         ini_content = ""
@@ -84,7 +81,7 @@ class Case:
             case_str += f"  run_state='{self.run_state}',\n"
 
         if ini_content:
-            case_str += f"  ini_file=\n" f"{ini_content}\n" f")"
+            case_str += f"  ini_file=\n{ini_content}\n)"
 
         return case_str
 
@@ -308,7 +305,7 @@ class Case:
         """
         self._copy_single_file(
             case_path=case_path,
-            pattern=f"*.ini",
+            pattern="*.ini",
             new_filename=f"{self.name}.ini",
             exclude_pattern="_base.ini",
         )

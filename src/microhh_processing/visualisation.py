@@ -4,7 +4,7 @@ import re
 import matplotlib.figure
 
 from pathlib import Path
-from typing import List, Literal, Sequence, Tuple, Union
+from typing import Any, List, Literal, Sequence, Tuple, Union
 from matplotlib.lines import Line2D
 from matplotlib import cm
 from matplotlib.colors import Normalize, TwoSlopeNorm
@@ -18,12 +18,9 @@ import numpy as np
 import ipywidgets as widgets
 
 import microhh_processing.initialisation as init
-import microhh_processing.postprocessing as post
-import microhh_processing.preprocessing as pre
 import microhh_processing.sources as src
-import microhh_processing.visualisation as vis
 import microhh_processing.wind as wind_proc
-from microhh_processing import cscs, enums, io, spatial, utils
+from microhh_processing import io, utils
 
 import ddeq
 
@@ -38,14 +35,13 @@ __all__ = [
 
 
 class Visualisation:
-
     wind_dims = {
         "u": ["xh", "y", "z"],
         "v": ["x", "yh", "z"],
         "w": ["x", "y", "zh"],
     }
 
-    def __init__(self, case: init.Case):
+    def __init__(self, case: init.Case) -> None:
         """Visualise the model output
 
         Args:
@@ -82,7 +78,14 @@ class Visualisation:
             sharey = group != "timedep"
             self._plot_group_variables(group_ds, ncols, figsize, cmap, sharey=sharey)
 
-    def _plot_group_variables(self, ds, ncols, figsize, cmap, sharey=True) -> None:
+    def _plot_group_variables(
+        self,
+        ds: xr.Dataset,
+        ncols: int,
+        figsize: tuple[int, int],
+        cmap: str,
+        sharey: bool = True,
+    ) -> None:
 
         # Group variables by their dimension signature
         dim_groups = {}
@@ -147,7 +150,7 @@ class Visualisation:
         time_format: str = "h",
         plot_format: Literal["line", "shaded"] = "line",
         color_init: str = "k",
-    ):
+    ) -> matplotlib.figure.Figure:
         """Plot the prognostic variables."""
         no_data = True if data is None else False
         variables = utils.object_to_list(variables)
@@ -253,7 +256,7 @@ class Visualisation:
         y_dim: str,
         z_dim: str,
         color: Union[str, tuple],
-    ):
+    ) -> None:
         # define step size for plot
         x_step = int(data[x_dim].size / n_lines)
         y_step = int(data[y_dim].size / n_lines)
@@ -275,7 +278,7 @@ class Visualisation:
         z_dim: str,
         color: Union[str, tuple],
         alpha: float = 0.3,
-    ):
+    ) -> None:
         # integrate over x and y dimensions: Mean and std
         integrated = data[variable].mean(dim=[x_dim, y_dim])
         integrated_std = data[variable].std(dim=[x_dim, y_dim])
@@ -380,10 +383,10 @@ class Visualisation:
                 right_bottom.ymax - right_bottom.ymin,
             ]
         )
-        cb = fig.colorbar(
+        fig.colorbar(
             im,
             cax=cbar_ax,
-            label=f"{variable} " f"[{data[{variable}].attrs.get('units', '-')}]",
+            label=f"{variable} [{data[{variable}].attrs.get('units', '-')}]",
             ticklocation="left",
         )
 
@@ -419,28 +422,26 @@ class Visualisation:
 
         # Information about time
         if pd.api.types.is_numeric_dtype(data["time"]):
-            text.append(f"Timestep: {timestep}, " f"Time: {int(data['time'].values)} s")
+            text.append(f"Timestep: {timestep}, Time: {int(data['time'].values)} s")
         elif pd.api.types.is_datetime64_any_dtype(data["time"]):
             formatted_time = data["time"].dt.strftime("%H:%M:%S %d.%m.%Y").values[0]
-            text.append(f"Timestep: {timestep}, " f"Time: {formatted_time}")
+            text.append(f"Timestep: {timestep}, Time: {formatted_time}")
         else:
             text.append("Time: Unsupported data type")
 
         # Information about resolution
 
-        text.append(f"\nGrid resolution")
+        text.append("\nGrid resolution")
         text.append(f"x: {data[xdim].diff(xdim).mean().values:.1f} m")
         text.append(f"y: {data[ydim].diff(ydim).mean().values:.1f} m")
         text.append(f"z: {data[zdim].diff(zdim).mean().values:.1f} m")
 
         # Information about wind
         try:
-            text.append(f"\nMean wind")
+            text.append("\nMean wind")
             for wind_component in ["u", "v"]:
-                text.append(
-                    f"{wind_component}: " f"{data[wind_component].mean():.1f} m/s"
-                )
-        except:
+                text.append(f"{wind_component}: {data[wind_component].mean():.1f} m/s")
+        except Exception:
             text.append("Wind data not found.")
 
         # Information about sources
@@ -449,12 +450,12 @@ class Visualisation:
             source_height = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
             if len(source_strength) > 1:
                 # Multiple sources
-                text.append(f"\nSources")
+                text.append("\nSources")
                 formatted_strength = ", ".join(f"{x:.2f}" for x in source_strength)
                 formatted_height = ", ".join(f"{x:.2f}" for x in source_height)
             else:
                 # Single source
-                text.append(f"\nSource")
+                text.append("\nSource")
                 formatted_strength = f"{source_strength[0]:.2f}"
                 formatted_height = f"{source_height[0]:.0f}"
 
@@ -496,7 +497,12 @@ class Visualisation:
             plt.tight_layout()
             plt.show()
 
-    def compare_nudge(self, cmap="RdBu_r", figsize=(15, 6), percent=False):
+    def compare_nudge(
+        self,
+        cmap: str = "RdBu_r",
+        figsize: tuple[int, int] = (15, 6),
+        percent: bool = False,
+    ) -> None:
 
         stats = io.open_statistics(self.case)
         initial_cond = io.open_initial_cond(self.case)
@@ -555,7 +561,7 @@ class Visualisation:
         plt.tight_layout()
         plt.show()
 
-    def compare_wind_profiles(self, timestep: int):
+    def compare_wind_profiles(self, timestep: int) -> matplotlib.figure.Figure:
 
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
@@ -598,7 +604,7 @@ class VariableViewer:
         vmin: float = None,
         vmax: float = None,
         time_format: Literal["s", "min", "h"] = "s",
-    ):
+    ) -> None:
         """Initialise the VariableViewer with a microHH dataset.
 
         Args:
@@ -631,26 +637,26 @@ class VariableViewer:
         self._wrap_widgets()
         self._connect_events()
 
-    def _check_data_vars(self):
+    def _check_data_vars(self) -> None:
         """Check if variable is in data."""
         if self.variable not in self.data.data_vars:
             raise ValueError(f"Variable '{self.variable}' not found in dataset.")
 
-    def _check_data_shape(self):
+    def _check_data_shape(self) -> None:
         """Check the shape of the data."""
         if self.data[self.variable].ndim > 3:
             raise ValueError(
                 "Data has more than 3 dimensions. Please integrate or select dimensions accordingly."
             )
 
-    def _check_time_dim(self):
+    def _check_time_dim(self) -> None:
         """Check if time dimension is in data."""
         if self.time_dim not in self.data[self.variable].dims:
             raise ValueError(
                 f"Time dimension '{self.time_dim}' not found in variable dimensions."
             )
 
-    def _init_plot(self):
+    def _init_plot(self) -> None:
         """Initialise the plot."""
         self.fig, self.ax = plt.subplots(nrows=1, ncols=1, figsize=self.figsize)
         self.fig.canvas.header_visible = False
@@ -676,7 +682,7 @@ class VariableViewer:
             divider = make_axes_locatable(self.ax)
             cax = divider.append_axes("right", size="3%", pad=0.1)
             units = self.data[self.variable].attrs.get("units", "-")
-            cbar = self.fig.colorbar(
+            self.fig.colorbar(
                 self.mesh,
                 cax=cax,
                 label=f"{self.variable} [{units}]",
@@ -690,7 +696,7 @@ class VariableViewer:
 
             plt.show()
 
-    def _format_coord(self, x, y):
+    def _format_coord(self, x: float, y: float) -> str:
         """Custom formatter to show x, y, and the data value."""
         try:
             data = self.data[self.variable].isel(time=self.time_slider.value)
@@ -700,7 +706,7 @@ class VariableViewer:
         except Exception:
             return f"x={x:.1f}, y={y:.1f}"
 
-    def _handle_cbar(self):
+    def _handle_cbar(self) -> None:
         """Handle fixed colorbar limits."""
         if self.fixed_cbar:
             data_min = self.vmin
@@ -721,7 +727,7 @@ class VariableViewer:
             time = time / 3600
         return f"Time: {time:.1f} {self.time_format}"
 
-    def _update_plot(self, change: dict):
+    def _update_plot(self, change: dict[str, Any]) -> None:
         """Update the plot based on the time slider."""
         timestep = change["new"]
 
@@ -739,7 +745,7 @@ class VariableViewer:
 
         self.fig.canvas.draw_idle()
 
-    def _update_vlim(self, change: dict):
+    def _update_vlim(self, change: dict[str, Any]) -> None:
         """Update the colorbar limits."""
         vmin = self.vmin_slider.value
         vmax = self.vmax_slider.value
@@ -747,7 +753,7 @@ class VariableViewer:
         self.mesh.set_clim(vmin, vmax)
         self.fig.canvas.draw_idle()
 
-    def _handle_vlim(self):
+    def _handle_vlim(self) -> None:
         if self.vmin is None:
             self.vmin = np.nanquantile(self.data[self.variable].values, 0.001)
 
@@ -759,7 +765,7 @@ class VariableViewer:
 
         self.vstep = (self.data_max - self.data_min) / 100
 
-    def _create_widgets(self):
+    def _create_widgets(self) -> None:
         self.time_slider = widgets.IntSlider(
             value=0,
             min=0,
@@ -793,24 +799,24 @@ class VariableViewer:
             self.vstep
         )
 
-    def _wrap_widgets(self):
+    def _wrap_widgets(self) -> None:
         vlim_box = widgets.VBox([self.vmin_slider, self.vmax_slider])
         widget_box = widgets.HBox([self.time_slider, vlim_box])
         self.ui = widgets.VBox([widget_box, self.fig_output])
 
-    def _connect_events(self):
+    def _connect_events(self) -> None:
         self.time_slider.observe(self._update_plot, names="value")
         self.vmin_slider.observe(self._update_vlim, names="value")
         self.vmax_slider.observe(self._update_vlim, names="value")
 
-    def display(self):
+    def display(self) -> None:
         """Display the variable."""
         display(self.ui)
 
 
 def plot_gas_weight(
     data: xr.Dataset, gas: str = "CH4", fig_width: Union[int, float] = 15
-):
+) -> None:
     """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
@@ -889,7 +895,7 @@ def plot_case_comparison(
     default_case_index: int = 0,
     cmap: str = "RdBu_r",
     figsize: Tuple[int, int] = (12, 5),
-):
+) -> None:
     """Plot a comparison of one or more variables from multiple cases.
 
     Args:
@@ -992,3 +998,6 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
         return Normalize(vmin=vmin, vmax=0.0)
     else:
         return Normalize(vmin=0.0, vmax=vmax)
+
+
+__all__ = ["Visualisation", "VariableViewer", "plot_gas_weight", "plot_case_comparison"]
