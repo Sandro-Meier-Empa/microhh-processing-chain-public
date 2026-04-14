@@ -22,3 +22,26 @@ For local development, install those separately in the same environment. The pac
 pip install -r requirements.txt
 ```
 
+## Pre-commit hooks
+This repository uses [pre-commit](https://pre-commit.com/) to run code quality checks before commits. Before you can make any commits, you need to set up the pre-commit hooks. To set up the pre-commit hooks, run:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+One of the hooks is [`pyright`](https://github.com/microsoft/pyright). This is a static type checker for Python that can help catch type errors before they occur. Since pyright also resolves imports, it must have access to the virtual environment where the package and its dependencies are installed. To make sure pyright can find the virtual environment, you need to create the following configuration to your `pyrightconfig.json` file:
+
+```json
+{
+  "include": [
+    "srs",
+    "scripts"
+  ],
+  "typeCheckingMode": "standard",
+  "venvPath": "/path/to/your/venv/parent/directory",
+  "venv": "name_of_your_venv"
+}
+```
+
+The pre-commit hooks will run automatically before each commit. If any of the checks fail, the commit will be aborted and you will need to fix the issues before you can commit again.
