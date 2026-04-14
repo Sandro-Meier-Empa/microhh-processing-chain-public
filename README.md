@@ -23,19 +23,19 @@ pip install -r requirements.txt
 ```
 
 ## Pre-commit hooks
-This repository uses [pre-commit](https://pre-commit.com/) to run code quality checks before commits. Before you can make any commits, you need to set up the pre-commit hooks. To set up the pre-commit hooks, run:
+This repository uses [pre-commit](https://pre-commit.com/) to run code quality checks before commits. Before you can make any commits, you need to set up the pre-commit hooks:
 
 ```bash
 pip install pre-commit
 pre-commit install
 ```
 
-One of the hooks is [`pyright`](https://github.com/microsoft/pyright). This is a static type checker for Python that can help catch type errors before they occur. Since pyright also resolves imports, it must have access to the virtual environment where the package and its dependencies are installed. To make sure pyright can find the virtual environment, you need to create the following configuration to your `pyrightconfig.json` file:
+One of the hooks is [`pyright`](https://github.com/microsoft/pyright). This is a static type checker for Python that can help catch type errors before they occur. Since pyright also resolves imports, it must have access to the virtual environment where the package and its dependencies are installed. To make sure pyright can find the virtual environment, you need to create a `pyrightconfig.json` file in the root of the repository with the following content:
 
 ```json
 {
   "include": [
-    "srs",
+    "src",
     "scripts"
   ],
   "typeCheckingMode": "standard",
@@ -44,4 +44,4 @@ One of the hooks is [`pyright`](https://github.com/microsoft/pyright). This is a
 }
 ```
 
-The pre-commit hooks will run automatically before each commit. If any of the checks fail, the commit will be aborted and you will need to fix the issues before you can commit again.
+The pre-commit hooks will run automatically before each commit. If any of the checks fail, the commit will be aborted and you will need to fix the issues before you can commit again. You can check which of the hooks are failing by checking the output of your git log.
