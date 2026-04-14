@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 from functools import wraps
 
-import microhhpy
+import microhhpy  # pyright: ignore[reportMissingImports]
 
 if TYPE_CHECKING:
     from microhh_processing.initialisation import Case

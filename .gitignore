@@ -7,3 +7,5 @@ data/
 
 *.pyc
 __pycache__
+
+pyrightconfig.json

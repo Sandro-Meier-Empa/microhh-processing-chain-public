@@ -39,7 +39,7 @@ class Case:
         self.name = name
         self.suffix = suffix
         self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
-        self.job_id = None
+        self.job_id: Optional[int] = None
 
     @property
     def run_state(self) -> str:
@@ -52,7 +52,8 @@ class Case:
         # filter sacct info for the specific job name
         try:
             sacct_info = sacct_info[sacct_info["JobName"] == "run_microhh"]
-            return sacct_info["State"].values[0]
+            state_series = pd.Series(sacct_info["State"])
+            return str(state_series.iloc[0])
         except (KeyError, IndexError):
             return "UNKNOWN"
 
@@ -115,7 +116,7 @@ class Case:
 
         self._handle_method(method, init_from)
         self._handle_scratch_dir(overwrite)
-        self._handle_running_method(init_from)
+        self._handle_running_method(init_from=init_from)
 
         self.job_id = self.job_id if self.job_id is not None else self._get_job_id()
 
@@ -175,7 +176,9 @@ class Case:
                     logger.info(f"Overwriting {self.scratch_path}")
                     os.makedirs(self.scratch_path)
 
-    def _handle_running_method(self, init_from: Union[str, Path]) -> None:
+    def _handle_running_method(
+        self, init_from: Optional[Union[str, Path]] = None
+    ) -> None:
         """Execute the initialisation logic for the selected method.
 
         Depending on ``self.method``, this will:
@@ -192,6 +195,10 @@ class Case:
             ValueError: If ``self.method`` is not a recognised value.
         """
         if self.method == InitMethod.DEFAULT.value:
+            if init_from is None:
+                raise ValueError(
+                    "Please provide 'init_from' for default initialisation."
+                )
             case_path = Path(init_from)
             self._check_case_setup(case_path)
             self._create_initial(case_path)
@@ -200,6 +207,8 @@ class Case:
         elif self.method == InitMethod.INTERACTIVE.value:
             self.ini_path.touch()
         elif self.method == InitMethod.RERUN.value:
+            if init_from is None:
+                raise ValueError("Please provide 'init_from' for rerun initialisation.")
             case_path = Path(init_from)
             self._copy_ini(case_path)
             self._copy_initial(case_path)
@@ -221,9 +230,12 @@ class Case:
         if not out_files:
             return None
 
+        job_id: Optional[int] = None
         for file in out_files:
             file_name = file.name
-            job_id = int(re.search(r"\d+", file_name).group())
+            match = re.search(r"\d+", file_name)
+            if match is not None:
+                job_id = int(match.group())
 
         return job_id
 
@@ -237,6 +249,8 @@ class Case:
             FileNotFoundError: If the case directory does not exist or
                 required files are missing.
         """
+        case_path = Path(case_path)
+
         if not case_path.exists():
             raise FileNotFoundError(f"Case '{self.name}' does not exist.")
 
@@ -468,6 +482,9 @@ class Case:
         zsize = self.ini_file["grid"]["zsize"]
 
         # get saccing info
+        if self.job_id is None:
+            raise ValueError("No SLURM job ID found for this case.")
+
         info = cscs.get_sacct_info(self.job_id, ssh_connect=ssh_connect)
 
         # get first row of info
@@ -789,7 +806,9 @@ def read_case(
     )
     case.file_directory = case_directory
     case.ini_path = Path(case.file_directory, f"{case.name}.ini")
-    case.scratch_path = Path(scratch_path, case.name_spec) if scratch_path else None
+    case.scratch_path = (
+        Path(scratch_path, case.name_spec) if scratch_path else case.file_directory
+    )
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
 
     if not case.ini_path.exists():
@@ -867,6 +886,10 @@ def interpolate_to_model_profile(
     if variable_profile is None:
         model_var_profile = np.full(len(model_profile), variable_value)
     else:
+        if input_profile is None:
+            raise ValueError(
+                "Please provide 'input_profile' when 'variable_profile' is given."
+            )
         model_var_profile = np.interp(model_profile, input_profile, variable_profile)
 
     return model_var_profile

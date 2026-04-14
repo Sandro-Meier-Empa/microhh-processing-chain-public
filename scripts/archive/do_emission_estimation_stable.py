@@ -13,7 +13,7 @@ import initialisation as init
 import wind as wind_proc
 import ime_v2 as ime
 
-sys.path.append(f"/users/smeier/ddeq/src/")
+sys.path.append("/users/smeier/ddeq/src/")
 import ddeq
 
 
@@ -199,9 +199,9 @@ def process_case(case_name, case_suffix, **kwargs):
             )
 
         all_results_final["degradation"].attrs["units"] = "-"
-        all_results_final["degradation"].attrs[
-            "description"
-        ] = "Factor of resolution degradation in x and y direction"
+        all_results_final["degradation"].attrs["description"] = (
+            "Factor of resolution degradation in x and y direction"
+        )
         all_results_final["noise_level"].attrs["units"] = "ppmv m"
         all_results_final["noise_level"].attrs["description"] = "Gaussian noise"
 

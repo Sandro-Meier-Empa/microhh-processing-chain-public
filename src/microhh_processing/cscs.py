@@ -393,7 +393,7 @@ class AlpsSetup:
 
 
 def execute_bash_script(
-    job_file: Union[str, Path], wait: bool = True, ssh_connect: str = None
+    job_file: Union[str, Path], wait: bool = True, ssh_connect: Optional[str] = None
 ) -> int:
     """Run a simulation using sbatch
 
@@ -436,11 +436,11 @@ def _get_job_id(result: subprocess.CompletedProcess[str]) -> int:
     output = result.stdout.strip()
 
     # Parse the job ID
-    job_id = None
     if output.startswith("Submitted batch job"):
         job_id = output.split()[-1]
+        return int(job_id)
 
-    return int(job_id)
+    raise ValueError(f"Could not parse SLURM job ID from output: {output!r}")
 
 
 def jobs_in_queue(
@@ -551,7 +551,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     progress_percentages = []
 
     for index, row in df.iterrows():
-        job_dir = row["WORK_DIR"]
+        job_dir = str(row["WORK_DIR"])
         try:
             # read case
             case = init.read_case(job_dir)
@@ -680,10 +680,13 @@ def get_sacct_info(
 
     # Clean up whitespace in column names and values
     df.columns = df.columns.str.strip()
-    df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+    df = df.apply(lambda col: col.map(lambda x: x.strip() if isinstance(x, str) else x))
 
     # remove rows with JobID.batch or JobID.extern or JobID.0
-    df = df[~df["JobID"].str.contains(r"\.batch$|\.extern$|\.0$", regex=True)]
+    keep_mask = pd.Series(df["JobID"], index=df.index).map(
+        lambda value: re.search(r"\.batch$|\.extern$|\.0$", str(value)) is None
+    )
+    df = df.loc[keep_mask]
 
     return df
 

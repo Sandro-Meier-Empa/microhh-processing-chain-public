@@ -1,4 +1,4 @@
-#!/bin/bash -l 
+#!/bin/bash -l
 
 #SBATCH --job-name=run-tpot
 #SBATCH --account=s1302
@@ -9,7 +9,7 @@
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
-#SBATCH --partition=normal 
+#SBATCH --partition=normal
 #SBATCH --constraint=gpu
 #SBATCH --hint=nomultithread
 #SBATCH --output=run_tpot_%j.out

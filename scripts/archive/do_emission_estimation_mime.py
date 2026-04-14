@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import os
 import sys
 import argparse
 import cartopy.crs as ccrs
@@ -13,7 +12,7 @@ import microhh_processing.wind as wind_proc
 import microhh_processing.ime_v2 as ime
 
 
-sys.path.append(f"/users/smeier/ddeq/src/")
+sys.path.append("/users/smeier/ddeq/src/")
 import ddeq
 
 

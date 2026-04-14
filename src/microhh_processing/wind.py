@@ -14,6 +14,7 @@ import ucat
 
 import ls2d
 import microhh_processing.initialisation as init
+import microhh_processing.io as io
 from microhh_processing.enums import WindIntegrationMethod
 from microhh_processing.constants import EARTH_ROTATION_RATE
 
@@ -31,6 +32,7 @@ class WindProcessing:
         import microhh_processing.postprocessing as post
 
         self.post = post.PostProcessing(case)
+        self.case = case
         self.file_directory = case.file_directory
 
     def create_wind_dataset(
@@ -40,7 +42,7 @@ class WindProcessing:
         radius: int,
         method: Union[WindIntegrationMethod, str],
         gas: Optional[str] = None,
-        height: Optional[Union[int, float]] = None,
+        height: Optional[float] = None,
         save: bool = True,
         overwrite: bool = False,
         chunks: Optional[dict] = None,
@@ -69,7 +71,7 @@ class WindProcessing:
             could not be found or processed.
 
         Returns:
-            xr.Dataset: Dataset containg the wind information around a source.
+            xr.Dataset: Dataset containing the wind information around a source.
         """
         wind_data = self.create_2D_wind(method, gas, height, save, overwrite)
 
@@ -149,7 +151,7 @@ class WindProcessing:
         self,
         method: Union[WindIntegrationMethod, str],
         gas: Optional[str] = None,
-        height: Optional[Union[int, float]] = None,
+        height: Optional[float] = None,
         save: bool = True,
         overwrite: bool = False,
         chunks: Optional[Union[str, dict]] = None,
@@ -163,7 +165,7 @@ class WindProcessing:
             gas (str, optional):
                 Gas to use if method = 'concentration_weighted' wind speeds.
                 Defaults to None.
-            height (Union[int, float], optional):
+            height (float, optional):
                 Height at which the wind speed should be used if method = 'height'.
                 Defaults to None.
             save (bool, optional):
@@ -185,7 +187,7 @@ class WindProcessing:
                 os.remove(wind_nc_path)
                 logger.info(f"Overwriting {wind_nc_path}")
             else:
-                return self.post.open_microhh_nc(wind_nc_path, chunks=chunks)
+                return io.open_microhh_nc(self.case, variable="wind_2D", chunks=chunks)
 
         self._check_wind_integration(method, gas, height)
 
@@ -254,7 +256,12 @@ class WindProcessing:
         else:
             raise NotImplementedError(f"Method {method} is not implemented.")
 
-    def _check_wind_integration(self, method: str, gas: str, height: Union[int, float]):
+    def _check_wind_integration(
+        self,
+        method: Union[WindIntegrationMethod, str],
+        gas: Optional[str],
+        height: Optional[float],
+    ) -> None:
         """Check if all required variables for a given wind integration method are given.
 
         Args:
@@ -263,7 +270,7 @@ class WindProcessing:
                 "mean", "median", "height", "concentration_weighted"
             gas (str):
                 Gas to use if method = 'concentration_weighted' wind speeds.
-            height (Union[int, float]):
+            height (float):
                 Height at which the wind speed should be used if method = 'height'.
         """
 
@@ -283,7 +290,7 @@ class WindProcessing:
 
         Args:
             wind_data (xr.Dataset):
-                Dataset containg the wind information.
+                Dataset containing the wind information.
             selected_source (xr.Dataset):
                 Source around which the pixels are to be selected.
             radius (int):
@@ -309,8 +316,8 @@ class WindProcessing:
         self,
         wind_data: xr.Dataset,
         method: str,
-        gas: str = None,
-        height: Union[int, float] = None,
+        gas: Optional[str] = None,
+        height: Optional[float] = None,
     ) -> xr.Dataset:
         """Vertically integrate 3D wind fields.
 
@@ -350,14 +357,14 @@ class WindProcessing:
     def wind_at_height(
         self,
         data: xr.Dataset,
-        height: Union[int, float],
+        height: Optional[float],
     ) -> xr.Dataset:
         """Get the wind speed at a certain height.
 
         Args:
             data (xr.Dataset):
                 Dataset containing the wind speed information.
-            height (Union[int, float]):
+            height (float):
                 Height in m at which the wind speed should be taken from.
 
         """
@@ -381,10 +388,10 @@ class WindProcessing:
     def concentration_weighted_mean_wind(
         self,
         data: xr.Dataset,
-        gas: str = "ch4",
+        gas: Optional[str],
         wind_vars: Union[str, list] = ["u", "v"],
-        threshold: float = None,
-        threshold_unit: str = None,
+        threshold: Optional[float] = None,
+        threshold_unit: Optional[str] = None,
     ) -> xr.Dataset:
         """Compute the concentration weighted wind speed from the 3D fields
         of 'gas' and the 3D wind fields with variable(s) 'wind_vars'.
@@ -396,13 +403,20 @@ class WindProcessing:
             gas (str, optional):
                 Gas which should be used to weight the 3D wind fields.
                 Defaults to "ch4".
+            wind_vars (Union[str, list], optional):
+                Variable name(s) of the wind components. Defaults to ["u", "v"].
             threshold (float, optional):
                 Threshold below which the gas values are not used
                 to compute the weight profile. Defaults to None.
+            threshold_unit (str, optional):
+                Unit of the threshold value. Required if threshold is given.
 
         Returns:
             xr.Dataset: Dataset containing the weighted wind.
         """
+        if gas is None:
+            raise ValueError("'gas' must be a string, not 'None'.")
+
         if isinstance(wind_vars, str):
             wind_vars = [wind_vars]
 
@@ -432,9 +446,9 @@ class WindProcessing:
     def calculate_weight_profile(
         self,
         data: xr.Dataset,
-        gas: str = "CH4",
-        threshold: float = None,
-        threshold_unit: str = "kg m-2",
+        gas: str,
+        threshold: Optional[float] = None,
+        threshold_unit: Optional[str] = "kg m-2",
     ) -> xr.Dataset:
         """Calculate a weight profile for 3D wind speed based on the concentration
         distribution of a gas. Remove data below 'threshold' to avoid division by 0.
@@ -442,13 +456,13 @@ class WindProcessing:
         Args:
             data (xr.Dataset):
                 Dataset to which the weight profile should be added.
-            threshold (float):
+            gas (str, optional):
+                Gas which is used to compute the weight profile.
+            threshold (float, optional):
                 Threshold below which the gas values are not used
                 to compute the weight profile to avoid division by 0.
             threshold_unit (str, optional):
-                Unit of the threshold value
-            gas (str, optional):
-                Gas which is used to compute the weight profile. Defaults to "CH4".
+                Unit of the threshold value. Required if threshold is given.
 
 
         Returns:
@@ -460,8 +474,8 @@ class WindProcessing:
             )
 
         # get current unit of gas
-        unit = data[gas].attrs.get("units", None)
-        quantity, _, _ = ucat._unit2quantity(unit)
+        unit = data[gas].attrs.get("units", "a.u.")
+        quantity, _, _ = ucat._unit2quantity(str(unit))
 
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
@@ -473,13 +487,19 @@ class WindProcessing:
         data_integrated = data[gas].integrate(coord="z")
 
         if threshold is None:
-            threshold = np.nanquantile(data_integrated, q=0.8)
+            threshold = float(np.nanquantile(data_integrated, q=0.8))
         else:
-            threshold = ucat.convert_columns(
-                threshold,
-                from_unit=threshold_unit,
-                to_unit=unit,
-                molar_mass=gas,
+            if threshold_unit is None:
+                raise ValueError(
+                    "threshold_unit must be provided if threshold is given."
+                )
+            threshold = float(
+                ucat.convert_columns(
+                    threshold,
+                    from_unit=threshold_unit,
+                    to_unit=unit,
+                    molar_mass=gas,
+                )
             )
 
         # filter out values with low gas concentration to avoid erroneous weights
@@ -510,7 +530,7 @@ class WindProcessing:
 
 class EffectiveWind:
     # TODO
-    def _init__() -> None:
+    def _init__(self) -> None:
         return None
 
 
@@ -526,14 +546,14 @@ def wind_profile_from_given_wind(
         ls2d.grid.Grid_stretched,
         ls2d.grid.Grid_stretched_manual,
     ],
-    wind_speed: Union[int, float],
-    height: Union[int, float],
-    surface_roughness: Union[int, float],
-    thl: Union[int, float, list, np.ndarray],
-    E: Union[int, float, list, np.ndarray],
-    sensible_heat_flux: Union[int, float],
+    wind_speed: float,
+    height: float,
+    surface_roughness: float,
+    thl: float,
+    E: float,
+    sensible_heat_flux: float,
     threshold: float,
-) -> xr.Dataset:
+) -> np.ndarray:
     """Compute a wind profile from a given wind speed at a specific height.
 
     Args:
@@ -594,10 +614,10 @@ def wind_profile_from_given_wind(
     if np.abs(wind_speed - actual_wind_speed) > threshold:
         logger.info(
             f"Wind speed at {height} m ({actual_wind_speed:.2f} m/s) deviates too much from prescribed wind speed ({wind_speed} m/s).\n"
-            "Returning vertically homogenous wind profile."
+            "Returning vertically homogeneous wind profile."
         )
         wind_profile = init.interpolate_to_model_profile(
-            grid=grid, variable_profile=wind_speed
+            grid=grid, variable_value=wind_speed
         )
 
     return wind_profile
@@ -605,14 +625,14 @@ def wind_profile_from_given_wind(
 
 def get_wind_profile(
     z: Union[int, float, list, np.ndarray],
-    z0: Union[int, float],
-    u_star: Union[int, float],
-    T: Union[int, float],
-    L: Union[int, float] = None,
-    H: Union[int, float] = None,
-    H_turb: Union[int, float] = None,
-    E: Union[int, float] = 0,
-    displacement_height: Union[int, float] = 0,
+    z0: float,
+    u_star: float,
+    T: float,
+    L: Optional[float] = None,
+    H: Optional[float] = None,
+    H_turb: Optional[float] = None,
+    E: float = 0,
+    displacement_height: float = 0,
     stability_criterion: Literal["MO", "Ri"] = "Ri",
     kappa: float = 0.4,
 ) -> np.ndarray:
@@ -651,35 +671,35 @@ def get_wind_profile(
 
     # calculate MO length if it is not given
     if L is None:
-        # raise error if both H and H_turb are provided
         if (H is not None) and (H_turb is not None):
             raise ValueError(
                 "Only one of sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided, not both."
             )
 
-        # convert sensible heat flux H to turbulent sensible heat flux H_turb, if H is provided
-        elif H is not None:
-            H_turb = calculate_virtual_turbulent_heat_flux(H, E, T=T)
-
-        # raise error if both H and H_turb are not provided
-        elif (H is None) and (H_turb is None):
+        if H is not None:
+            h_turb_value = calculate_virtual_turbulent_heat_flux(H, E, T=T)
+        elif H_turb is not None:
+            h_turb_value = H_turb
+        else:
             raise ValueError(
                 "Either sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided."
             )
 
-        L = calculate_monin_obukhov_length(u_star, T, H_turb)
+        L = calculate_monin_obukhov_length(u_star, T, h_turb_value)
 
     if stability_criterion == "Ri":
-        stability = _determine_stability_Ri(np.nanmean(z) / L)
+        stability = _determine_stability_Ri(float(np.nanmean(z) / L))
     else:
         stability = _determine_stability_MO(L)
 
     if stability == "stable":
         stability_correction = _correction_stable(z - displacement_height, L)
     elif stability == "neutral":
-        stability_correction = 0
+        stability_correction = np.zeros_like(z, dtype=np.float64)
     elif stability == "unstable":
         stability_correction = _correction_unstable(z - displacement_height, L)
+    else:
+        raise ValueError(f"Unknown stability: {stability}")
 
     uz = (u_star / kappa) * (
         np.log((z - displacement_height) / z0) - stability_correction
@@ -730,9 +750,9 @@ def calculate_virtual_turbulent_heat_flux(
 
 
 def calculate_monin_obukhov_length(
-    u_star: Union[int, float],
-    T0: Union[int, float],
-    H_turb: Union[int, float],
+    u_star: float,
+    T0: float,
+    H_turb: float,
     kappa: float = 0.4,
     g: float = 9.81,
 ) -> float:
@@ -791,8 +811,6 @@ def _determine_stability_Ri(
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
     """
-    Ri = np.asarray(Ri)
-
     stable = np.sum(Ri < lower_threshold)
     unstable = np.sum(Ri > upper_threshold)
     neutral = np.sum((Ri >= lower_threshold) & (Ri <= upper_threshold))
@@ -806,8 +824,8 @@ def _determine_stability_Ri(
 
 
 def _correction_stable(
-    z: Union[int, float, np.ndarray], L: float, beta: float = 4.8
-) -> Union[int, float, np.ndarray]:
+    z: Union[float, np.ndarray], L: float, beta: float = 4.8
+) -> Union[float, np.ndarray]:
     """Stability correction for stable conditions.
 
     * 4.8 in Wyngaard (2010) Turbulence in the Atmosphere.
@@ -824,8 +842,8 @@ def _correction_stable(
 
 
 def _correction_unstable(
-    z: Union[int, float, np.ndarray], L: float, alpha: float = 1 / 4, gamma: float = 15
-) -> Union[int, float, np.ndarray]:
+    z: Union[float, np.ndarray], L: float, alpha: float = 1 / 4, gamma: float = 15
+) -> Union[float, np.ndarray]:
     """Stability correction for unstable conditions.
 
     Args:
@@ -854,14 +872,14 @@ def _correction_unstable(
 
 
 def solve_wind_profile(
-    u_star: Union[int, float],
-    wind_speed: Union[int, float],
-    z: Union[int, float, list, np.ndarray],
-    z0: Union[int, float],
-    T: Union[int, float, list, np.ndarray],
-    E: Union[int, float, list, np.ndarray],
-    H: Union[int, float] = None,
-    H_turb: Union[int, float] = None,
+    u_star: float,
+    wind_speed: float,
+    z: float,
+    z0: float,
+    T: float,
+    E: float,
+    H: Optional[float] = None,
+    H_turb: Optional[float] = None,
 ) -> np.ndarray:
     """Equation to solve for finding friction velocity (u_star).
 
@@ -885,14 +903,14 @@ def solve_wind_profile(
 
 
 def calculate_u_star(
-    wind_speed: Union[int, float],
-    z: Union[int, float],
-    z0: Union[int, float],
-    T: Union[int, float],
-    E: Union[int, float],
-    H: Union[int, float] = None,
-    H_turb: Union[int, float] = None,
-    u_star_initial: Union[int, float] = None,
+    wind_speed: float,
+    z: float,
+    z0: float,
+    T: float,
+    E: float,
+    H: Optional[float] = None,
+    H_turb: Optional[float] = None,
+    u_star_initial: Optional[float] = None,
 ) -> float:
     """Compute the friction velocity u* with a correction term for stability numerically.
 
@@ -922,17 +940,17 @@ def calculate_u_star(
 
 
 def calculate_u_star_stable(
-    wind_speed: Union[int, float],
-    z: Union[int, float],
-    z0: Union[int, float],
+    wind_speed: float,
+    z: float,
+    z0: float,
     kappa: float = 0.4,
 ) -> float:
     """Compute u* for neutrally stable situations without a correction term for stability analytically.
 
     Args:
-        wind_speed (Union[int, float]): Measured wind speed (m/s).
-        z (Union[int, float]): Height above ground at which the wind speed was measured (m).
-        z0 (Union[int, float]): Roughness length (m).
+        wind_speed (float): Measured wind speed (m/s).
+        z (float): Height above ground at which the wind speed was measured (m).
+        z0 (float): Roughness length (m).
         kappa (float, optional): von Kármán constant (dimensionless). Defaults to 0.4.
 
     Returns:
@@ -975,7 +993,7 @@ def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
 
 def calculate_effective_wind_speed(
     results: xr.Dataset,
-    true_emissions: Union[int, float],
+    true_emissions: float,
     gas: str,
     true_emissions_unit: str,
 ) -> xr.Dataset:

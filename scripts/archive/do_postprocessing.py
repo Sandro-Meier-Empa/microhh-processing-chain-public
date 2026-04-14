@@ -5,7 +5,6 @@ import sys
 import argparse
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
-import processing as proc
 import initialisation as init
 
 

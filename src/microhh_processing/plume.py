@@ -44,7 +44,7 @@ def calculate_meandering_dispersion(y_mean_centerline: np.ndarray) -> float:
 
     Equation (5) in Raznevic et al., 2022.
     """
-    return np.var(y_mean_centerline)
+    return float(np.var(y_mean_centerline))
 
 
 def calculate_plume_psd(

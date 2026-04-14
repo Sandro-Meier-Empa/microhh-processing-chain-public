@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, cast, Union, Optional
 
 import logging
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_source_strength(
-    case: init.Case, to_unit: str, time_s: int = None
+    case: init.Case, to_unit: str, time_s: Optional[int] = None
 ) -> np.ndarray:
     """Get source strengths converted to desired units.
 
@@ -55,7 +55,9 @@ def get_source_strength(
     return np.array(source_strength_conv)
 
 
-def _get_dynamic_source_strength(case: init.Case, time_s: int = None) -> np.ndarray:
+def _get_dynamic_source_strength(
+    case: init.Case, time_s: Optional[int] = None
+) -> np.ndarray:
     """Get time-dependent source strengths from initial conditions.
 
     Args:
@@ -70,7 +72,9 @@ def _get_dynamic_source_strength(case: init.Case, time_s: int = None) -> np.ndar
 
     # get all data variables with "source_strength_*"
     strength_vars = [
-        var for var in initial_cond.data_vars if var.startswith("source_strength_")
+        str(var)
+        for var in initial_cond.data_vars
+        if str(var).startswith("source_strength_")
     ]
 
     if len(strength_vars) == 0:
@@ -96,19 +100,19 @@ def _get_dynamic_source_strength(case: init.Case, time_s: int = None) -> np.ndar
     return source_strengths
 
 
-def _get_emission_units(case: init.Case) -> np.ndarray:
+def _get_emission_units(case: init.Case) -> tuple[np.ndarray, np.ndarray]:
     swvmr_list = case.ini_file["source"]["swvmr"]
     sourcelist_list = case.ini_file["source"]["sourcelist"]
 
     from_unit = np.where(swvmr_list, "kmol/s", "kg/s")
-    gas_mass = np.where(swvmr_list, sourcelist_list, None)
+    gas_mass = np.where(swvmr_list, sourcelist_list, "")
 
     return from_unit, gas_mass
 
 
 def seconds_from_midnight(
     time: Union[pd.Timestamp, pd.DatetimeIndex],
-) -> Union[int, pd.Series]:
+) -> Union[int, np.ndarray]:
     """Calculate seconds from midnight for a given time.
 
     Args:
@@ -126,9 +130,7 @@ def seconds_from_midnight(
         return int(delta.total_seconds())
     else:
         # Handle DatetimeIndex
-        midnight = time.normalize()
-        delta = time - midnight
-        return delta.total_seconds().astype(int)
+        return np.array([seconds_from_midnight(ts) for ts in time], dtype=int)
 
 
 def create_strength_profiles(
@@ -160,12 +162,14 @@ def create_strength_profiles(
         xr.Dataset with strength profiles, dimensions (time, source)
     """
 
-    strengths = np.array(strengths)
-    strengths_converted = ucat.convert_mass_per_time_unit(
-        strengths,
-        from_unit,
-        to_unit,
-        gas_mass=gas_mass,
+    strength_values = np.array(strengths)
+    strengths_converted = np.atleast_1d(
+        ucat.convert_mass_per_time_unit(
+            strength_values,
+            from_unit,
+            to_unit,
+            gas_mass=gas_mass,
+        )
     )
 
     reference_start = _parse_reference(reference_start, "reference_start")
@@ -188,7 +192,7 @@ def create_strength_profiles(
         if start_t > end_t:
             raise ValueError("end_time must be after start_time")
 
-        time_of_day = time_range.time
+        time_of_day = np.array([ts.time() for ts in time_range])
         mask = (time_of_day >= start_t) & (time_of_day <= end_t)
 
         results.append(np.where(mask, strength, 0.0))
@@ -214,13 +218,15 @@ def create_strength_profiles(
 def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
     # Allow "HH:MM:SS" strings by anchoring to a fixed UTC date.
     if isinstance(ref, str):
-        t = pd.to_datetime(ref, format="%H:%M:%S").time()
-        return pd.Timestamp.combine(pd.Timestamp("1970-01-01").date(), t).tz_localize(
-            "UTC"
-        )
+        parsed = pd.to_datetime(f"1970-01-01 {ref}", utc=True)
+        if pd.isna(parsed):
+            raise TypeError(f"{name} must be a valid time string 'HH:MM:SS'")
+        return cast(pd.Timestamp, parsed)
 
     if isinstance(ref, pd.Timestamp):
-        return ref.tz_convert("UTC")
+        if pd.isna(ref):
+            raise TypeError(f"{name} must not be NaT")
+        return ref.tz_localize("UTC") if ref.tz is None else ref.tz_convert("UTC")
 
     raise TypeError(f"{name} must be a pd.Timestamp or a string 'HH:MM:SS'")
 
@@ -231,8 +237,8 @@ def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
 def briggs_momentum_rise(
     x: Union[float, np.ndarray],
     u: Union[float, np.ndarray],
-    d: Union[float, np.ndarray],
-    Vs: Union[float, np.ndarray],
+    d: float,
+    Vs: float,
     stability: Stability = Stability.NEUTRAL,
 ) -> Union[float, np.ndarray]:
     """Briggs (1969) momentum-dominated plume rise Δh(x) for neutral conditions.
@@ -333,7 +339,7 @@ def asme_momentum_rise(
 
 
 def _generic_plume_rise_form(
-    E: float,
+    E: Union[float, np.ndarray],
     x: Union[float, np.ndarray],
     b: float,
     u: Union[float, np.ndarray],

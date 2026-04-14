@@ -13,6 +13,7 @@ import numpy as np
 import microhh_processing.initialisation as init
 import microhh_processing.cscs as cscs
 import microhh_processing.io as io
+from microhh_processing import utils
 from microhh_processing.enums import RunMode
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ class PreProcessing:
         if arch != exec_arch:
             logger.error(f"Mismatch: System is {arch}, but binary is {exec_arch}.")
 
-    def _get_architecture(self) -> str:
+    def _get_architecture(self) -> Optional[str]:
         """Get the architecture of the system.
         If ssh_connect is provided, get the architecture of the remote system.
         Returns:
@@ -98,7 +99,7 @@ class PreProcessing:
         """
         if self.alps_setup.ssh_connect:
             try:
-                result = subprocess.check_output(
+                subprocess.check_output(
                     ["ssh", self.alps_setup.ssh_connect, "uname -m"],
                     stderr=subprocess.STDOUT,
                     text=True,  # Python 3.7+
@@ -108,11 +109,9 @@ class PreProcessing:
                     f"Failed to connect to {self.alps_setup.ssh_connect}. "
                     f"SSH error:\n{e.output.strip()}"
                 )
-                result = None
+                return None
         else:
-            result = platform.machine()
-
-        return result
+            return str(platform.machine())
 
     def _check_jobpreport_gpu(self) -> None:
         """Make sure that jobreport is only provided when using GPU partition and raise an error if not."""
@@ -258,7 +257,13 @@ class PreProcessing:
     ) -> Path:
         job_file = Path(self.case.scratch_path, "run_microhh.sbash")
 
-        commands = _get_microhh_run_commands(self.case, mode, self.jobreport_path)
+        commands = _get_microhh_run_commands(
+            case_list=[self.case],
+            mode=mode,
+            jobreport_path=(
+                str(self.jobreport_path) if self.jobreport_path is not None else None
+            ),
+        )
 
         if not job_file.exists() or overwrite:
             job_file = self.alps_setup.create_bash_script(
@@ -270,7 +275,7 @@ class PreProcessing:
         else:
             logger.info(f"Reading existing bash script {job_file}")
 
-        return job_file
+        return Path(job_file)
 
     def _check_ini_setup_valid(self) -> None:
         """Check if the .ini file setup is valid.
@@ -349,6 +354,9 @@ class PreProcessing:
         expected_cores = (
             self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
         )
+        if self.alps_setup.ntasks_per_node is None:
+            raise ValueError("Alps setup requires 'ntasks_per_node' to validate nodes.")
+
         requested_cores = self.alps_setup.ntasks_per_node * self.alps_setup.nodes
         if expected_cores != requested_cores:
             raise ValueError(
@@ -376,9 +384,9 @@ class PreProcessing:
 
         # Determine if relevant variables exist in initial conditions
         matching_vars = [
-            v
+            str(v)
             for v in initial_cond.data_vars
-            if fnmatch.fnmatch(v, initial_cond_var_name)
+            if fnmatch.fnmatch(str(v), initial_cond_var_name)
         ]
         has_vars = len(matching_vars) > 0
 
@@ -534,8 +542,12 @@ class PreProcessing:
 
     def _check_nudgelists(self) -> None:
         """Check if the variables specified in the tdep nudging list are also present in the nudging list."""
-        timedeplist_nudging = self.case.ini_file.get("force", "timedeplist_nudge", [])
-        nudgelist = self.case.ini_file.get("force", "nudgelist", [])
+        timedeplist_nudging = utils.object_to_list(
+            self.case.ini_file.get("force", "timedeplist_nudge", [])
+        )
+        nudgelist = utils.object_to_list(
+            self.case.ini_file.get("force", "nudgelist", [])
+        )
 
         for var in timedeplist_nudging:
             if var not in nudgelist:
@@ -644,6 +656,8 @@ class PreProcessing:
 
         zstart = self.case.ini_file.get("buffer", "zstart", 0)
         zsize = self.case.ini_file.get("grid", "zsize")
+        if zsize is None:
+            return
         if zstart > zsize:
             raise ValueError(
                 f"Buffer height={zstart} lies outside of the domain "
@@ -728,7 +742,7 @@ class PreProcessing:
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0)
+        iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0) or 0
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)
@@ -754,7 +768,7 @@ def _get_microhh_run_commands(
     Returns:
         List of shell command strings.
     """
-    case_list = np.atleast_1d(case_list)
+    case_list = list(case_list)
     mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
     if mode_val == RunMode.RUN.value:
@@ -778,7 +792,7 @@ def _get_microhh_run_commands(
             jobreport_path=jobreport_path,
         )
     else:
-        logger.warning(
+        raise ValueError(
             f"Expected either 1 or 4 cases, but got {len(case_list)}. For a "
             f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
         )
@@ -898,7 +912,7 @@ def create_run_4x_script(
     else:
         logger.info(f"Reading existing bash script {master_job_file}")
 
-    return master_job_file
+    return Path(master_job_file)
 
 
 def _get_common_case_name(cases: list[init.Case]) -> str:
@@ -911,7 +925,7 @@ def _get_common_case_name(cases: list[init.Case]) -> str:
             "Cases must have the same case name for themulti-gpu setup to work."
         )
 
-    return case_names[0]
+    return str(case_names[0])
 
 
 __all__ = [

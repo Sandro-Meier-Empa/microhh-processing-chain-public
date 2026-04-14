@@ -4,7 +4,7 @@ import subprocess
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Union, List, Any
+from typing import Union, List, Any, Optional
 
 import numpy as np
 import xarray as xr
@@ -76,7 +76,7 @@ def _parse_string_to_list(var: str) -> List:
 
 
 def to_comma_separated_list(
-    lst: Union[List, np.ndarray], n: int = 1, ndecimals: int = None
+    lst: Union[List, np.ndarray], n: int = 1, ndecimals: Optional[int] = None
 ) -> str:
     """Convert a Python iterable to a comma-separated string.
 

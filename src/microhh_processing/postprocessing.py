@@ -24,6 +24,7 @@ import microhh_processing.io as io
 import microhh_processing.sources as src
 import microhh_processing.spatial as spatial
 import microhh_processing.wind as wind_proc
+from microhh_processing import utils
 from microhh_processing.enums import Precision, WindIntegrationMethod
 from microhh_processing.constants import GAS_MOLAR_MASS
 
@@ -43,13 +44,13 @@ class PostProcessing:
     def run_postprocessing(
         self,
         py_file_path: Union[str, Path],
-        gases: Union[str, list] = None,
+        gases: Optional[Union[str, list[str]]] = None,
         prognostic_vars: list[str] = ["u", "v", "th"],
         precision: Union[Precision, str] = Precision.DOUBLE,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         method: Union[WindIntegrationMethod, str] = WindIntegrationMethod.HEIGHT,
-        height: Optional[Union[int, float]] = None,
+        height: Optional[float] = None,
         profile_gas: Optional[str] = None,
         overwrite: bool = False,
         save: bool = True,
@@ -83,7 +84,7 @@ class PostProcessing:
             method (str, optional):
                 Method to vertically integrate wind speeds. Available options are
                 "mean", "median", "height", "concentration_weighted". Defaults to "height".
-            height (Union[int, float], optional):
+            height (float, optional):
                 Height at which the wind speed should be used if method = 'height'. Defaults to None.
             profile_gas (str, optional):
                 Gas used to weight the wind speed if method = 'concentration_weighted'.
@@ -94,12 +95,16 @@ class PostProcessing:
             chunks (Union[str, dict], optional):
                 Chunks used when opening the netCDF files with xarray. Defaults to None.
         """
+        gases_list: list[str]
         if gases is None:
-            gases = self.case.ini_file["fields"]["slist"]
+            gases_list = [
+                str(gas)
+                for gas in utils.object_to_list(self.case.ini_file["fields"]["slist"])
+            ]
         else:
-            gases = np.atleast_1d(gases).tolist()
+            gases_list = [str(gas) for gas in np.atleast_1d(gases).tolist()]
 
-        vars = prognostic_vars + gases
+        vars = prognostic_vars + gases_list
 
         logger.info(f"########## START PROCESSING OF {self.case.name_spec} ##########")
 
@@ -118,7 +123,7 @@ class PostProcessing:
         )
 
         if profile_gas is None and method == "concentration_weighted":
-            profile_gas = gases[0]
+            profile_gas = gases_list[0]
             logger.warning(
                 f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
             )
@@ -157,7 +162,7 @@ class PostProcessing:
             python_path (str):
                 Path of the python environment to use. The default is /users/USER/bin/python3
             additional_args (dict, optional):
-                Addtional arguments for the function called in the python script. Defaults to {}.
+                Additional arguments for the function called in the python script. Defaults to {}.
             start_jobs (bool, optional):
                 Specify if the job should be starte. Defaults to True.
         """
@@ -304,7 +309,7 @@ class PostProcessing:
         self,
         store_path: Union[str, Path],
         overwrite: bool = False,
-        vars: Union[str, list] = None,
+        vars: Optional[Union[str, list]] = None,
     ) -> None:
         """Move files used for running MicroHH to store for reproducibility.
 
@@ -343,8 +348,8 @@ class PostProcessing:
             )
 
         if vars is not None:
-            vars = np.atleast_1d(vars)
-            for var in vars:
+            vars_list = np.atleast_1d(vars).tolist()
+            for var in vars_list:
                 pattern = f"{var}.nc"
                 self.move_pattern_to_store(
                     pattern, store_path=store_path, overwrite=overwrite
@@ -414,7 +419,7 @@ class PostProcessing:
                 file.unlink()
 
     def unzip_grid_files(self, remove_zip_file: bool = False) -> None:
-        """Unzip the binay grid files to scratch"""
+        """Unzip the binary grid files to scratch"""
         zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
@@ -432,7 +437,7 @@ class PostProcessing:
             zip_filename.unlink()
 
     def open_3d_prognostic_variable(
-        self, variable: str, chunks: Union[str, dict] = None
+        self, variable: str, chunks: Optional[Union[str, dict]] = None
     ) -> xr.Dataset:
         """Open 3D output netCDF file of 'variable' from model output.
 
@@ -488,8 +493,9 @@ class PostProcessing:
 
         # Assign attributes to variables
         for var in data.variables:
-            if var.lower() in variables:
-                long_name, unit = variables[var.lower()]
+            var_name = str(var).lower()
+            if var_name in variables:
+                long_name, unit = variables[var_name]
                 data[var].attrs.update({"long_name": long_name, "units": unit})
 
         return data
@@ -506,9 +512,10 @@ class PostProcessing:
             keys in the GAS_MOLAR_MASS dictionary.
         """
         for var_name in list(dataset.variables):
-            new_var_name = self._capitalise_gas_key(var_name)
-            if new_var_name != var_name:
-                dataset = dataset.rename({var_name: new_var_name})
+            var_name_str = str(var_name)
+            new_var_name = self._capitalise_gas_key(var_name_str)
+            if new_var_name != var_name_str:
+                dataset = dataset.rename({var_name_str: new_var_name})
         return dataset
 
     def _capitalise_gas_key(self, variable_name: str) -> str:
@@ -524,7 +531,7 @@ class PostProcessing:
         filename: str,
         overwrite: bool = False,
         save: bool = True,
-        chunks: dict = None,
+        chunks: Optional[dict] = None,
         interpolate: bool = True,
     ) -> xr.Dataset:
         """Combine .nc files of different variables to one file.
@@ -567,8 +574,8 @@ class PostProcessing:
     def combine_prognostic_variables(
         self,
         vars: Union[str, list],
-        data: xr.Dataset = None,
-        chunks: Union[str, dict] = None,
+        data: Optional[xr.Dataset] = None,
+        chunks: Optional[Union[str, dict]] = None,
         interpolate: bool = True,
     ) -> xr.Dataset:
         """Combine multiple prognostic variables of the MicroHH output to one
@@ -640,7 +647,7 @@ class PostProcessing:
 
         return data_interpolated
 
-    def _get_dims_at_grid_boundaries(self, data: xr.Dataset) -> str:
+    def _get_dims_at_grid_boundaries(self, data: xr.Dataset) -> Optional[str]:
         """Get the name of the dimension that is sampled at the boundaries of the
         MicroHH grid
 
@@ -655,8 +662,9 @@ class PostProcessing:
         # iterate over the dimensions of the Dataset
         for dim in list(data.dims):
             # check if the dimension name ends with 'h'
-            if dim.endswith("h"):
-                return dim
+            dim_name = str(dim)
+            if dim_name.endswith("h"):
+                return dim_name
 
         return None
 
@@ -664,8 +672,8 @@ class PostProcessing:
         self,
         lat: Union[list, np.ndarray],
         lon: Union[list, np.ndarray],
-        source_names: Union[list, np.ndarray] = None,
-        source_labels: Union[list, np.ndarray] = None,
+        source_names: Optional[Union[list, np.ndarray]] = None,
+        source_labels: Optional[Union[list, np.ndarray]] = None,
     ) -> xr.Dataset:
         """Create a sources dataset used for the plume detection and in 'ddeq'.
 
@@ -759,7 +767,7 @@ class PostProcessing:
     def convert_microhh_grid_to_coords(
         self,
         data: xr.Dataset,
-        source: xr.DataArray = None,
+        source: Optional[xr.DataArray] = None,
         target_crs: str = "epsg:4326",
         microhh_crs: str = "epsg:32632",
     ) -> xr.Dataset:
@@ -872,7 +880,7 @@ class PostProcessing:
     def convert_microhh_timestep_to_date(
         self,
         data: xr.Dataset,
-        start_date: Union[str, pd.Timestamp] = None,
+        start_date: Optional[Union[str, pd.Timestamp]] = None,
         format: str = "%Y-%m-%d %H:%M:%S",
     ) -> xr.Dataset:
         """Convert time into a timestamp to make the
@@ -901,6 +909,11 @@ class PostProcessing:
         else:
             pass
 
+        if start_date is None:
+            raise ValueError(
+                "Please provide 'start_date' or set 'datetime_utc' in the ini file."
+            )
+
         tz = "UTC"
         # Check if start_date is a string and convert it to a Timestamp if necessary
         if isinstance(start_date, str):
@@ -909,19 +922,21 @@ class PostProcessing:
         if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
             start_date = start_date.tz_convert("UTC").tz_localize(None)
 
-        # check if the time coordinate is alreay given as datetime:
+        # check if the time coordinate is already given as datetime:
         if data["time"].dtype == "<M8[ns]":
             # overwrite datetime
-            time_diff = pd.Timestamp(data["time"][0].values) - start_date
-            data["time"] = data["time"] - time_diff
+            time_diff = pd.Timestamp(data["time"].values[0]) - start_date
+            data = data.assign_coords(
+                time=pd.to_datetime(data["time"].values) - time_diff
+            )
 
         elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
             data["time"].dtype, np.floating
         ):
             # convert time to timedelta
-            data["time"] = pd.to_timedelta(data["time"], unit="s")
+            time_delta = pd.to_timedelta(data["time"].values, unit="s")
             # add Timedelta to the start date
-            data["time"] = start_date + data["time"]
+            data = data.assign_coords(time=start_date + time_delta)
 
         else:
             raise ValueError("Data type of 'time' was not recognized.")
@@ -935,7 +950,7 @@ class PostProcessing:
         data: xr.Dataset,
         gas: str = "ch4",
         to_unit: str = "kg m-3",
-        chunks: Union[str, dict] = None,
+        chunks: Optional[Union[str, dict]] = None,
     ) -> xr.Dataset:
         """Convert the gas given in data to concentrations using modelled pressure
         and potential temperature.
@@ -970,6 +985,8 @@ class PostProcessing:
             data = self.add_absolute_temperature(data)
 
         from_unit = data[gas].attrs.get("units", None)
+        if from_unit is None:
+            raise ValueError(f"No units defined for variable '{gas}'.")
 
         logger.info(
             f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}].",
@@ -1070,7 +1087,7 @@ class PostProcessing:
         return absolute_temperature
 
     def calculate_3D_tke(
-        self, data: xr.Dataset, chunks: Union[str, dict] = None
+        self, data: xr.Dataset, chunks: Optional[Union[str, dict]] = None
     ) -> xr.Dataset:
         """Calculate the TKE based on the 3D prognostic variables of MicroHH
 
@@ -1107,8 +1124,8 @@ class PostProcessing:
         data["TKE"] = 0.5 * (
             data["u_std"] ** 2 + data["v_std"] ** 2 + data["w_std"] ** 2
         ).mean(dim="time")
-        data[f"{wind_component}_std"].attrs["units"] = "m2 s-2"
-        data[f"{wind_component}_std"].attrs["long_name"] = "turbulent kinetic energy"
+        data["TKE"].attrs["units"] = "m2 s-2"
+        data["TKE"].attrs["long_name"] = "turbulent kinetic energy"
 
         return data
 
@@ -1179,7 +1196,7 @@ class PostProcessing:
             else:
                 return np.float32
 
-        mass_dict = {"time": time_range}
+        mass_dict: dict[str, object] = {"time": time_range}
         for i, scalar in enumerate(scalars):
             scalar = str(scalar)
             if read_method == "binary":
@@ -1189,7 +1206,9 @@ class PostProcessing:
             else:
                 raise ValueError("Unknown read_method: choose 'binary' or 'netcdf'")
 
-            mass_dict[f"prescribed_{scalar}_mass"] = strength[i] * time_range
+            mass_dict[f"prescribed_{scalar}_mass"] = np.asarray(
+                strength[i] * time_range
+            )
             mass_dict[f"simulated_{scalar}_mass"] = simulated_scalar
 
         return mass_dict
@@ -1295,10 +1314,13 @@ def degrade_resolution(
 
     for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
         if all(dim in data.dims for dim in dims):
-            degraded_data = data.coarsen(
-                {zonal_dim: zonal_res, meridional_dim: meridional_res},
-                boundary="trim",
-            ).mean()
+            degraded_data = getattr(
+                data.coarsen(
+                    {zonal_dim: zonal_res, meridional_dim: meridional_res},
+                    boundary="trim",
+                ),
+                "mean",
+            )()
             return degraded_data
 
     raise ValueError(f"Unknown spatial dimensions: {data.dims}")

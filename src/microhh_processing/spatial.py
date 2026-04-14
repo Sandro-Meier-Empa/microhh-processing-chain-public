@@ -1,11 +1,13 @@
 import numpy as np
 
 from pyproj import Transformer
-from typing import Union, Literal, Tuple
+from typing import Optional, Union, Literal, Tuple, cast
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from cartopy.mpl.geoaxes import GeoAxes
 import cartopy.crs as ccrs
 
 __all__ = [
@@ -37,7 +39,7 @@ class Domain:
             ],
             tuple[float, float],
         ] = "lower left",
-        epsg_code: str = None,
+        epsg_code: Optional[str] = None,
     ) -> None:
         """Initialize the Domain object.
         Adapted from https://github.com/microhh/microhhpy
@@ -82,8 +84,8 @@ class Domain:
 
     def _get_offsets(
         self,
-        ref_x: int,
-        ref_y: int,
+        ref_x: float,
+        ref_y: float,
         anchor: Union[
             Literal[
                 "center",
@@ -153,34 +155,37 @@ class Domain:
 
     def plot(
         self,
-        lon: Union[float, np.ndarray] = None,
-        lat: Union[float, np.ndarray] = None,
+        lon: Optional[Union[float, np.ndarray]] = None,
+        lat: Optional[Union[float, np.ndarray]] = None,
         figsize: Tuple[int, int] = (10, 8),
-    ) -> None:
+    ) -> Figure:
 
         fig, ax = plt.subplots(
             figsize=figsize,
             subplot_kw={"projection": ccrs.PlateCarree()},
         )
+        geo_ax: GeoAxes = cast(GeoAxes, ax)
 
         # Plot the reference point
-        ax.plot(self.ref_lon, self.ref_lat, "ko", markersize=5, label="Reference Point")
+        geo_ax.plot(
+            self.ref_lon, self.ref_lat, "ko", markersize=5, label="Reference Point"
+        )
 
         # Plot additional points if provided
         if lon is not None and lat is not None:
-            ax.plot(lon, lat, "ro", markersize=3, label="Points")
+            geo_ax.plot(lon, lat, "ro", markersize=3, label="Points")
 
         # Plot the domain boundaries
-        ax.plot(self.lon_h[0, :], self.lat_h[0, :], "b-")  # Bottom edge
-        ax.plot(self.lon_h[-1, :], self.lat_h[-1, :], "b-")  # Top edge
-        ax.plot(self.lon_h[:, 0], self.lat_h[:, 0], "b-")  # Left edge
-        ax.plot(self.lon_h[:, -1], self.lat_h[:, -1], "b-")  # Right edge
+        geo_ax.plot(self.lon_h[0, :], self.lat_h[0, :], "b-")  # Bottom edge
+        geo_ax.plot(self.lon_h[-1, :], self.lat_h[-1, :], "b-")  # Top edge
+        geo_ax.plot(self.lon_h[:, 0], self.lat_h[:, 0], "b-")  # Left edge
+        geo_ax.plot(self.lon_h[:, -1], self.lat_h[:, -1], "b-")  # Right edge
 
-        ax.set_xlabel("Longitude [°]")
-        ax.set_ylabel("Latitude [°]")
-        ax.legend(loc="upper right")
+        geo_ax.set_xlabel("Longitude [°]")
+        geo_ax.set_ylabel("Latitude [°]")
+        geo_ax.legend(loc="upper right")
 
-        gl = ax.gridlines(
+        gl = geo_ax.gridlines(
             crs=ccrs.PlateCarree(),
             draw_labels=True,
             linewidth=0.8,

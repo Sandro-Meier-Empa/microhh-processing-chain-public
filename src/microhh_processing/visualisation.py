@@ -4,9 +4,10 @@ import re
 import matplotlib.figure
 
 from pathlib import Path
-from typing import Any, List, Literal, Sequence, Tuple, Union
+from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
+from matplotlib.axes import Axes
+from matplotlib.cm import ScalarMappable, get_cmap
 from matplotlib.lines import Line2D
-from matplotlib import cm
 from matplotlib.colors import Normalize, TwoSlopeNorm
 from IPython.display import display
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -117,34 +118,34 @@ class CaseViewer:
 
             plt.show()
 
-    def _plot_variable(self, data: xr.DataArray, ax: plt.Axes, cmap: str) -> None:
+    def _plot_variable(self, data: xr.DataArray, ax: Axes, cmap: str) -> None:
         dims = data.dims
         # Check if it is a height profile
         aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
         # Check if it is a time series
-        time_dim = next((d for d in dims if "time_" in d), None)
+        time_dim = next((str(d) for d in dims if "time_" in str(d)), None)
 
         if len(dims) == 0:
-            ax.axhline(data.values, linestyle="--")
+            ax.axhline(float(data.values), linestyle="--")
 
         elif len(dims) == 1:
             if aux_dim:
                 ax.plot(data.values, data[aux_dim], marker="x")
                 ax.set_ylabel(aux_dim)
             elif time_dim:
-                data.plot(ax=ax, marker="x")
+                data.plot(ax=ax, marker="x")  # pyright: ignore
             else:
-                data.plot(ax=ax)
+                data.plot(ax=ax)  # pyright: ignore
 
         elif len(dims) == 2:
-            data.T.plot(
+            data.T.plot(  # pyright: ignore
                 ax=ax, cmap=cmap, cbar_kwargs={"orientation": "horizontal", "pad": 0.1}
             )
 
     def plot_prognostic_variables(
         self,
         variables: list[str],
-        data: xr.Dataset = None,
+        data: Optional[xr.Dataset] = None,
         n_lines: int = 5,
         colorful: bool = True,
         time_format: str = "h",
@@ -152,41 +153,57 @@ class CaseViewer:
         color_init: str = "k",
     ) -> matplotlib.figure.Figure:
         """Plot the prognostic variables."""
-        no_data = True if data is None else False
-        variables = utils.object_to_list(variables)
+        variables = [str(variable) for variable in utils.object_to_list(variables)]
         time_factor = self._get_time_factor(time_format)
 
         # read in initial conditions
         data_initial = io.open_initial_cond(self.case)
 
         fig, ax = plt.subplots(ncols=len(variables), sharey=True)
+        axes = np.atleast_1d(ax)
+        sm: Optional[ScalarMappable] = None
+        color: Union[str, tuple[float, float, float, float]] = color_init
 
         for c, component in enumerate(variables):
-            # if data is None, read data
-            if no_data:
-                data = io.open_microhh_nc(self.case, variable=component)
+            current_data = (
+                data
+                if data is not None
+                else io.open_microhh_nc(self.case, variable=component)
+            )
 
             # get dim names from variable
-            time_dim, z_dim, y_dim, x_dim = data[component].dims
-            t_step = int(data[time_dim].size / n_lines)
+            time_dim, z_dim, y_dim, x_dim = [
+                str(dim) for dim in current_data[component].dims
+            ]
+            t_step = max(1, int(current_data[time_dim].size / n_lines))
 
             # Normalize the time values to range [0, 1] for colormap
-            norm = Normalize(vmin=0, vmax=data.time.max() / time_factor)
+            norm = Normalize(
+                vmin=0,
+                vmax=float(np.asarray(current_data[time_dim].max().values).item())
+                / time_factor,
+            )
 
             # Create a ScalarMappable and set the colormap
-            sm = plt.cm.ScalarMappable(cmap=cm.viridis, norm=norm)
+            sm = ScalarMappable(cmap=get_cmap("viridis"), norm=norm)
             sm.set_array([])  # Only needed for the colorbar to work
 
-            for t in np.arange(data[time_dim].size, step=t_step):
-                subset_t = data.isel({time_dim: t})
-                color = (
-                    sm.to_rgba(subset_t[time_dim].values / time_factor)
-                    if colorful
-                    else "gray"
-                )
+            for t in np.arange(current_data[time_dim].size, step=t_step):
+                subset_t = current_data.isel({time_dim: int(t)})
+                if colorful:
+                    norm_value = (
+                        float(np.asarray(subset_t[time_dim].values).item())
+                        / time_factor
+                    )
+                    rgba = tuple(
+                        float(value) for value in get_cmap("viridis")(norm(norm_value))
+                    )
+                    color = cast(tuple[float, float, float, float], rgba)
+                else:
+                    color = "gray"
                 if plot_format == "line":
                     self._plot_lines(
-                        ax=ax[c],
+                        ax=axes[c],
                         data=subset_t,
                         variable=component,
                         n_lines=n_lines,
@@ -198,7 +215,7 @@ class CaseViewer:
 
                 elif plot_format == "shaded":
                     self._plot_shaded(
-                        ax=ax[c],
+                        ax=axes[c],
                         data=subset_t,
                         variable=component,
                         x_dim=x_dim,
@@ -208,26 +225,28 @@ class CaseViewer:
                     )
 
             # plot initial conditions
-            ax[c].plot(
+            axes[c].plot(
                 data_initial[component],
                 data_initial.z,
                 label="prescribed",
                 color=color_init,
             )
-            ax[c].set_xlabel(f"{component} [{data[component].attrs.get('units', '-')}]")
+            axes[c].set_xlabel(
+                f"{component} [{current_data[component].attrs.get('units', '-')}]"
+            )
 
-        ax[0].set_ylabel("Height [m]")
+        axes[0].set_ylabel("Height [m]")
 
-        if colorful:
+        if colorful and sm is not None:
             # create colorbar
-            cbar = fig.colorbar(sm, ax=ax)
+            cbar = fig.colorbar(sm, ax=axes)
             cbar.set_label(f"Time [{time_format}]")
-            ax[-1].legend(loc="upper right")
+            axes[-1].legend(loc="upper right")
         else:
             # create legend manually
             lines = [Line2D([0], [0], color=c) for c in [color_init, color]]
             labels = ["initial", "simulated"]
-            ax[-1].legend(lines, labels, loc="upper right")
+            axes[-1].legend(lines, labels, loc="upper right")
 
         return fig
 
@@ -248,18 +267,18 @@ class CaseViewer:
 
     def _plot_lines(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         data: xr.Dataset,
         variable: str,
         n_lines: int,
         x_dim: str,
         y_dim: str,
         z_dim: str,
-        color: Union[str, tuple],
+        color: Union[str, tuple[float, float, float, float]],
     ) -> None:
         # define step size for plot
-        x_step = int(data[x_dim].size / n_lines)
-        y_step = int(data[y_dim].size / n_lines)
+        x_step = max(1, int(data[x_dim].size / n_lines))
+        y_step = max(1, int(data[y_dim].size / n_lines))
 
         # loop over x dimension
         for x in np.arange(data[x_dim].size, step=x_step):
@@ -270,13 +289,13 @@ class CaseViewer:
 
     def _plot_shaded(
         self,
-        ax: plt.Axes,
+        ax: Axes,
         data: xr.Dataset,
         variable: str,
         x_dim: str,
         y_dim: str,
         z_dim: str,
-        color: Union[str, tuple],
+        color: Union[str, tuple[float, float, float, float]],
         alpha: float = 0.3,
     ) -> None:
         # integrate over x and y dimensions: Mean and std
@@ -295,8 +314,8 @@ class CaseViewer:
         data: xr.Dataset,
         variable: str,
         timestep: int,
-        fig_width: Union[int, float] = 15,
-        cbar_width: Union[int, float] = 0.01,
+        fig_width: float = 15,
+        cbar_width: float = 0.01,
         cmap: str = "viridis",
     ) -> matplotlib.figure.Figure:
         """Plot 3D Model output in a figure with 3 subplots.
@@ -312,16 +331,16 @@ class CaseViewer:
                 Name of the variable to be plotted.
             timestep (int):
                 Time step to be plotted.
-            fig_width (Union[int, float], optional. Default: 15):
+            fig_width (float, optional. Default: 15):
                 Width of figure.
-            cbar_width (Union[int, float], optional: Default 0.01.):
+            cbar_width (float, optional: Default 0.01.):
                 Width of colorbar.
 
         Returns:
             matplotlib.figure.Figure: Figure with subplots and text
         """
 
-        time_dim, zdim, ydim, xdim = data[variable].dims
+        time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
         data = data.isel({time_dim: timestep})
 
         x_max = data[xdim].max().values
@@ -329,13 +348,13 @@ class CaseViewer:
         z_max = data[zdim].max().values
 
         if variable in self.wind_dims.keys():
-            dd_yz = data.mean(dim=xdim)
-            dd_xy = data.mean(dim=zdim)
-            dd_xz = data.mean(dim=ydim)
+            dd_yz = data.mean(dim=str(xdim))
+            dd_xy = data.mean(dim=str(zdim))
+            dd_xz = data.mean(dim=str(ydim))
         else:
-            dd_yz = data.sum(dim=xdim)
-            dd_xy = data.sum(dim=zdim)
-            dd_xz = data.sum(dim=ydim)
+            dd_yz = data.sum(dim=str(xdim))
+            dd_xy = data.sum(dim=str(zdim))
+            dd_xz = data.sum(dim=str(ydim))
 
         aspect_ratio = (z_max + x_max) / (z_max + y_max)
         fig_height = fig_width / aspect_ratio
@@ -376,12 +395,12 @@ class CaseViewer:
 
         # Set the position and size of the colorbar
         cbar_ax = fig.add_axes(
-            [
-                left_top.xmax - cbar_width,
-                right_bottom.ymin,
-                cbar_width,
-                right_bottom.ymax - right_bottom.ymin,
-            ]
+            (
+                float(left_top.xmax - cbar_width),
+                float(right_bottom.ymin),
+                float(cbar_width),
+                float(right_bottom.ymax - right_bottom.ymin),
+            )
         )
         fig.colorbar(
             im,
@@ -508,12 +527,16 @@ class CaseViewer:
         initial_cond = io.open_initial_cond(self.case)
 
         # get all variables that contain "_nudge" in their name
-        nudge_vars = [var for var in initial_cond.data_vars if "_nudge" in var]
+        nudge_vars = [
+            str(var) for var in initial_cond.data_vars if "_nudge" in str(var)
+        ]
         if len(nudge_vars) == 0:
             raise ValueError("No nudge variables found in initial condition file.")
 
         # get all time coordinates in initial condition file
-        time_vars = [c for c in initial_cond.coords if "time" in c]
+        time_vars = [
+            str(coord) for coord in initial_cond.coords if "time" in str(coord)
+        ]
         if len(time_vars) == 0:
             raise ValueError("No time coordinate found in initial condition file.")
 
@@ -547,7 +570,7 @@ class CaseViewer:
             vmax = np.nanquantile(np.abs(values), 0.99)
             norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
 
-            values.T.plot(
+            values.T.plot(  # pyright: ignore
                 ax=axs[c],
                 cmap=cmap,
                 norm=norm,
@@ -566,14 +589,15 @@ class CaseViewer:
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
 
-        ustar = stats.ustar.isel(time=timestep).values
-        obuk = stats.obuk.isel(time=timestep).values
+        ustar = float(stats.ustar.isel(time=timestep).values)
+        obuk = float(stats.obuk.isel(time=timestep).values)
+        mean_temp = float(stats.th.isel(time=timestep).mean().values)
 
         u_prof = wind_proc.get_wind_profile(
             z=initial_cond.z.values,
             z0=self.case.ini_file["boundary"]["z0m"],
             u_star=ustar,
-            T=None,
+            T=mean_temp,
             L=obuk,
         )
 
@@ -601,8 +625,8 @@ class VariableViewer:
         figsize: tuple = (10, 6),
         fixed_cbar: bool = True,
         cmap: str = "viridis",
-        vmin: float = None,
-        vmax: float = None,
+        vmin: Optional[float] = None,
+        vmax: Optional[float] = None,
         time_format: Literal["s", "min", "h"] = "s",
     ) -> None:
         """Initialise the VariableViewer with a microHH dataset.
@@ -616,8 +640,9 @@ class VariableViewer:
         self.time_dim = time_dim
 
         self.fig_output = widgets.Output()
-        self.fig = None
-        self.ax = None
+        self.fig: Any = None
+        self.ax: Any = None
+        self.mesh: Any = None
         self.figsize = figsize
         self.fixed_cbar = fixed_cbar
         self.cmap = cmap
@@ -659,7 +684,7 @@ class VariableViewer:
     def _init_plot(self) -> None:
         """Initialise the plot."""
         self.fig, self.ax = plt.subplots(nrows=1, ncols=1, figsize=self.figsize)
-        self.fig.canvas.header_visible = False
+        setattr(self.fig.canvas, "header_visible", False)
 
         data_init = self.data[self.variable].isel(time=0)
         ydim, xdim = data_init.dims
@@ -729,6 +754,8 @@ class VariableViewer:
 
     def _update_plot(self, change: dict[str, Any]) -> None:
         """Update the plot based on the time slider."""
+        if self.ax is None or self.fig is None or self.mesh is None:
+            return
         timestep = change["new"]
 
         data_subset = self.data[self.variable].isel({self.time_dim: timestep}).values
@@ -747,6 +774,8 @@ class VariableViewer:
 
     def _update_vlim(self, change: dict[str, Any]) -> None:
         """Update the colorbar limits."""
+        if self.fig is None or self.mesh is None:
+            return
         vmin = self.vmin_slider.value
         vmax = self.vmax_slider.value
 
@@ -814,9 +843,7 @@ class VariableViewer:
         display(self.ui)
 
 
-def plot_gas_weight(
-    data: xr.Dataset, gas: str = "CH4", fig_width: Union[int, float] = 15
-) -> None:
+def plot_gas_weight(data: xr.Dataset, gas: str = "CH4", fig_width: float = 15) -> None:
     """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
@@ -921,6 +948,7 @@ def plot_case_comparison(
     case_stats = [stats.interp(time=ref_time) for stats in case_stats]
 
     # Prepare cases for comparison
+    default_stats: Optional[xr.Dataset] = None
     if difference:
         default_stats = case_stats[default_case_index]
         comp_cases_stats = [
@@ -938,10 +966,10 @@ def plot_case_comparison(
         # Extract values and metadata
         ref_stats = comp_cases_stats[0][1]
         units = ref_stats[var].attrs.get("units", "-")
-        dims = ref_stats[var].dims
+        dims = [str(dim) for dim in ref_stats[var].dims]
 
         # Prepare data values
-        if difference:
+        if difference and default_stats is not None:
             default_values = default_stats[var].values
             vals = [stats[var].values - default_values for _, stats in comp_cases_stats]
             clabel = f"{var} difference [{units}]"
@@ -959,6 +987,7 @@ def plot_case_comparison(
         axs = np.atleast_1d(axs)
 
         # Plot data
+        y_coord: Optional[xr.DataArray] = None
         for ax, val, (case, stats) in zip(axs, vals, comp_cases_stats):
             x_coord, y_coord = stats[dims[0]], stats[dims[1]]
             ax.pcolormesh(
@@ -974,9 +1003,10 @@ def plot_case_comparison(
             )
             ax.set_title(case.suffix)
 
-        axs[0].set_ylabel(
-            f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
-        )
+        if y_coord is not None:
+            axs[0].set_ylabel(
+                f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
+            )
 
         # Add colorbar
         divider = make_axes_locatable(axs[-1])
