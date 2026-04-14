@@ -27,14 +27,14 @@ import ddeq
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "Visualisation",
+    "CaseViewer",
     "VariableViewer",
     "plot_gas_weight",
     "plot_case_comparison",
 ]
 
 
-class Visualisation:
+class CaseViewer:
     wind_dims = {
         "u": ["xh", "y", "z"],
         "v": ["x", "yh", "z"],
@@ -1000,4 +1000,4 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
         return Normalize(vmin=0.0, vmax=vmax)
 
 
-__all__ = ["Visualisation", "VariableViewer", "plot_gas_weight", "plot_case_comparison"]
+__all__ = ["CaseViewer", "VariableViewer", "plot_gas_weight", "plot_case_comparison"]

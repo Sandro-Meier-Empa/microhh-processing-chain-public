@@ -564,7 +564,7 @@ def wind_profile_from_given_wind(
     ):
         model_profile = grid.z
 
-    u_star = compute_u_star(
+    u_star = calculate_u_star(
         wind_speed, height, surface_roughness, thl, E=E, H=sensible_heat_flux
     )
 
@@ -884,7 +884,7 @@ def solve_wind_profile(
     )
 
 
-def compute_u_star(
+def calculate_u_star(
     wind_speed: Union[int, float],
     z: Union[int, float],
     z0: Union[int, float],
@@ -911,7 +911,7 @@ def compute_u_star(
             calculated assuming neutrally stable conditions. Defaults to None.
     """
     if u_star_initial is None:
-        u_star_initial = compute_u_star_stable(wind_speed, z, z0, kappa=0.4)
+        u_star_initial = calculate_u_star_stable(wind_speed, z, z0, kappa=0.4)
 
     u_star_solution = fsolve(
         solve_wind_profile,
@@ -921,7 +921,7 @@ def compute_u_star(
     return u_star_solution[0]
 
 
-def compute_u_star_stable(
+def calculate_u_star_stable(
     wind_speed: Union[int, float],
     z: Union[int, float],
     z0: Union[int, float],
@@ -973,7 +973,7 @@ def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
-def compute_effective_wind_speed(
+def calculate_effective_wind_speed(
     results: xr.Dataset,
     true_emissions: Union[int, float],
     gas: str,
@@ -1003,7 +1003,7 @@ def ramp(x: Union[int, float, np.ndarray]) -> Union[int, float, np.ndarray]:
     return np.maximum(x, 0)
 
 
-def compute_smagorinsky_constant(
+def calculate_smagorinsky_constant(
     delta: Union[int, float, np.ndarray],
     L: Union[int, float, np.ndarray],
     z: Union[int, float, np.ndarray],
@@ -1086,10 +1086,10 @@ __all__ = [
     "calculate_virtual_turbulent_heat_flux",
     "calculate_monin_obukhov_length",
     "solve_wind_profile",
-    "compute_u_star",
-    "compute_u_star_stable",
-    "compute_effective_wind_speed",
-    "compute_smagorinsky_constant",
+    "calculate_u_star",
+    "calculate_u_star_stable",
+    "calculate_effective_wind_speed",
+    "calculate_smagorinsky_constant",
     "calculate_coriolis_force",
     "calculate_richardson_number",
 ]

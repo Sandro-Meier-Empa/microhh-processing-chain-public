@@ -2,12 +2,6 @@ import numpy as np
 from scipy import fftpack
 import xarray as xr
 
-__all__ = [
-    "calculate_plume_centerline",
-    "calculate_absolute_dispersion",
-    "calculate_meandering_dispersion",
-]
-
 
 def calculate_plume_centerline(
     grid_y: np.ndarray, concentration_2d: np.ndarray
@@ -131,3 +125,10 @@ def radial_profile(data: np.ndarray, center: tuple) -> np.ndarray:
     radialprofile = tbin / nr  # normalize by the number of points in each bin
 
     return radialprofile
+
+
+__all__ = [
+    "calculate_plume_centerline",
+    "calculate_absolute_dispersion",
+    "calculate_meandering_dispersion",
+]
