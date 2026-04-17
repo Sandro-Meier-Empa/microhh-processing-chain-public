@@ -836,8 +836,8 @@ class PostProcessing:
         )
 
         # add attributes to lon and lat
-        data.lon.attrs["epsg"] = target_crs.split(":")[-1]
-        data.lat.attrs["epsg"] = target_crs.split(":")[-1]
+        data.lon.attrs["epsg"] = int(target_crs.split(":")[-1])
+        data.lat.attrs["epsg"] = int(target_crs.split(":")[-1])
 
         # drop nrows and nobs from data vars
         data = data.drop_vars(["nrows", "nobs"])
@@ -846,12 +846,12 @@ class PostProcessing:
         data["x"] = (
             ("nrows", "nobs"),
             domain.xx + domain.x_offset,
-            {"epsg": microhh_crs.split(":")[-1]},
+            {"epsg": int(microhh_crs.split(":")[-1])},
         )
         data["y"] = (
             ("nrows", "nobs"),
             domain.yy + domain.y_offset,
-            {"epsg": microhh_crs.split(":")[-1]},
+            {"epsg": int(microhh_crs.split(":")[-1])},
         )
 
         return data
