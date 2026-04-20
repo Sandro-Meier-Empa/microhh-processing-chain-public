@@ -23,7 +23,7 @@ import microhh_processing.sources as src
 import microhh_processing.wind as wind_proc
 from microhh_processing import io, utils
 
-import ddeq
+from ddeq.gui import interactions
 
 logger = logging.getLogger(__name__)
 
@@ -812,7 +812,7 @@ class VariableViewer:
             description="Min:",
             continuous_update=True,
         )
-        self.vmin_slider.readout_format = ddeq.gui_utils.determine_readout_format(
+        self.vmin_slider.readout_format = interactions.determine_readout_format(
             self.vstep
         )
 
@@ -824,7 +824,7 @@ class VariableViewer:
             description="Max:",
             continuous_update=True,
         )
-        self.vmax_slider.readout_format = ddeq.gui_utils.determine_readout_format(
+        self.vmax_slider.readout_format = interactions.determine_readout_format(
             self.vstep
         )
 
