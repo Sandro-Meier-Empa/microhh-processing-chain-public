@@ -938,14 +938,24 @@ def plot_case_comparison(
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)
 
-    # Load and interpolate stats to common time axis
+    # Load statistics
     case_stats = [io.open_statistics(case) for case in cases]
-    ref_time = case_stats[int(np.argmax([s.sizes["time"] for s in case_stats]))].time
 
-    logger.info(
-        f"Interpolating statistics to common time axis with {len(ref_time)} time steps."
-    )
-    case_stats = [stats.interp(time=ref_time) for stats in case_stats]
+    # Determine the reference time axis with the most steps
+    max_idx = int(np.argmax([s.sizes["time"] for s in case_stats]))
+    ref_time = case_stats[max_idx].time
+
+    processed_stats = []
+    for stats in case_stats:
+        # Check if the current time axis matches the reference
+        if np.allclose(stats.time, ref_time, atol=1e-5):
+            processed_stats.append(stats)
+        else:
+            logger.info("Interpolating case to match reference time axis.")
+            interpolated = stats.interp(time=ref_time)
+            processed_stats.append(interpolated)
+
+    case_stats = processed_stats
 
     # Prepare cases for comparison
     default_stats: Optional[xr.Dataset] = None
@@ -987,9 +997,10 @@ def plot_case_comparison(
         axs = np.atleast_1d(axs)
 
         # Plot data
-        y_coord: Optional[xr.DataArray] = None
         for ax, val, (case, stats) in zip(axs, vals, comp_cases_stats):
-            x_coord, y_coord = stats[dims[0]], stats[dims[1]]
+            x_coord: xr.DataArray = stats[dims[0]]
+            y_coord: xr.DataArray = stats[dims[1]]
+
             ax.pcolormesh(
                 x_coord.values,
                 y_coord.values,
@@ -1003,10 +1014,10 @@ def plot_case_comparison(
             )
             ax.set_title(case.suffix)
 
-        if y_coord is not None:
-            axs[0].set_ylabel(
-                f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
-            )
+        y_coord = comp_cases_stats[0][1][dims[1]]
+        axs[0].set_ylabel(
+            f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
+        )
 
         # Add colorbar
         divider = make_axes_locatable(axs[-1])
