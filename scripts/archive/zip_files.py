@@ -17,7 +17,7 @@ def process_case(case_name, case_suffix):
     post_processing = post.PostProcessing(case)
 
     try:
-        post_processing.zip_grid_files(remove_files=True)
+        post_processing.zip_binary_files(remove_files=True)
     except Exception as err:
         print(f"Error processing {case_suffix}: {err}")
 

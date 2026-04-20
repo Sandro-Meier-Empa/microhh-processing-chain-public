@@ -7,6 +7,7 @@ import logging
 
 from pathlib import Path
 from typing import Union, Tuple, Optional, Literal
+from tqdm.auto import tqdm
 
 import pandas as pd
 import xarray as xr
@@ -305,7 +306,7 @@ class PostProcessing:
                 overwrite=overwrite,
             )
 
-    def move_to_store(
+    def archive_case_on_store(
         self,
         store_path: Union[str, Path],
         overwrite: bool = False,
@@ -314,6 +315,8 @@ class PostProcessing:
         """Move files used for running MicroHH to store for reproducibility.
 
         Args:
+            store_path (Union[str, Path]):
+                Path to the folder where the files should be moved to.
             overwrite (bool, optional):
                 Specify if existing files on 'store' should be overwritten.
             vars (Union[str, list], optional):
@@ -363,6 +366,8 @@ class PostProcessing:
         Args:
             pattern (str):
                 Pattern of files or folders which should be moved.
+            store_path (Union[str, Path]):
+                Path to the folder where the files or folders should be moved to.
             overwrite (bool):
                 Specify if existing files or folders should be overwritten.
         """
@@ -387,38 +392,52 @@ class PostProcessing:
                 else:
                     logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
 
-    def zip_grid_files(self, remove_files: bool = False) -> None:
-        """Zip all binary grid files together.
+    def zip_binary_files(
+        self, file_pattern: str = "^.*", remove_files: bool = False
+    ) -> None:
+        """Zip all binary files matching the given pattern together.
 
         Args:
+            file_pattern (str, optional):
+                Pattern of files to zip.
+                Defaults to "^.*".
             remove_files (bool, optional):
                 Specify if the grid files should be removed after zipping them together.
                 Defaults to False.
         """
-        zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
+        zip_filename = (
+            f"{file_pattern}.zip" if file_pattern != "^.*" else "binary_files.zip"
+        )
+        zip_file_path = Path(self.case.file_directory, zip_filename)
 
-        if zip_filename.exists():
-            logger.info(f"{zip_filename} already exists. Skipping...")
+        if zip_file_path.exists():
+            logger.info(f"{zip_file_path} already exists. Skipping...")
             return
 
-        pattern = re.compile(r"^.*\.\d{7}$")
+        pattern = re.compile(rf"{file_pattern}\.\d{{7}}$")
         matching_files = [
             file
             for file in self.case.file_directory.iterdir()
             if pattern.match(file.name)
         ]
 
-        with zipfile.ZipFile(zip_filename, "w") as zip_file:
-            for file in matching_files:
+        if not matching_files:
+            logger.warning(
+                f"No files matching the pattern '{file_pattern}' were found. Skipping..."
+            )
+            return
+
+        with zipfile.ZipFile(zip_file_path, "w") as zip_file:
+            for file in tqdm(matching_files, desc="Zipping files", unit="file"):
                 zip_file.write(file, file.name)
 
-        logger.info(f"{len(matching_files)} files were zipped to '{zip_filename}'.")
+        logger.info(f"{len(matching_files)} files were zipped to '{zip_file_path}'.")
 
         if remove_files:
-            for file in matching_files:
+            for file in tqdm(matching_files, desc="Removing files", unit="file"):
                 file.unlink()
 
-    def unzip_grid_files(self, remove_zip_file: bool = False) -> None:
+    def unzip_binary_files(self, remove_zip_file: bool = False) -> None:
         """Unzip the binary grid files to scratch"""
         zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
 
