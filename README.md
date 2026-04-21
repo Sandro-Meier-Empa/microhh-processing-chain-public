@@ -12,6 +12,7 @@ pip install -e .
 
 This repository also relies on several local companion packages such as
 - [`ddeq`](https://gitlab.com/empa503/remote-sensing/ddeq)
+- [`u-cat`](https://gitlab.com/empa503/general-tools/u-cat)
 - [`ls2d`](https://github.com/Sandro-Meier-Empa/LS2D) (fork to resolve import issues)
 - [`microhh_py`](https://github.com/Sandro-Meier-Empa/microhh) (fork to make python scripts available as a package)
 - [`microhhpy`](https://github.com/microhh/microhhpy)
