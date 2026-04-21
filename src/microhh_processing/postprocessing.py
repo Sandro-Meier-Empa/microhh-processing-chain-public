@@ -145,12 +145,14 @@ class PostProcessing:
         alps_setup: cscs.AlpsSetup,
         py_file_path: str,
         job_name: str,
-        python_path: str = "python",
+        python_path: str,
         additional_args: dict[str, object] = {},
         overwrite: bool = False,
         start_jobs: bool = True,
-    ) -> None:
+    ) -> Union[str, Path]:
         """Submit a bash script to process a case on alps.
+        Make sure that the python venv used for processing was created with the
+        same uenv as the one in alps_setup.
 
         Args:
             alps_setup (cscs.AlpsSetup):
@@ -161,22 +163,27 @@ class PostProcessing:
                 Name of the job. Determines the name of the resulting slurm.out script
                 and the job name in the queue.
             python_path (str):
-                Path of the python environment to use. The default is /users/USER/bin/python3
+                Path of the python environment to use.
             additional_args (dict, optional):
                 Additional arguments for the function called in the python script. Defaults to {}.
             start_jobs (bool, optional):
                 Specify if the job should be starte. Defaults to True.
+
+        Returns:
+            Union[str, Path]:
+                Path to the created bash script.
         """
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        cmd = f"srun {python_path} {py_file_path} --case-name {self.case.name} --case-suffix {self.case.suffix}"
+        cmd = f"srun {python_path} {py_file_path} --file_directory {self.case.file_directory}"
 
-        if additional_args:
-            additional_args_str = " ".join(
-                [f"{key}={str(value)}" for key, value in additional_args.items()]
-            )
-            cmd = f"{cmd} --additional-args {additional_args_str}"
+        for key, value in additional_args.items():
+            if isinstance(value, list):  # convert list to string for command
+                list_string = " ".join(map(str, value))
+                cmd += f" --{key} {list_string}"
+            else:
+                cmd += f" --{key} {value}"
 
         # submit bash script to run post processing in parallel on alps
         job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbash")
@@ -197,6 +204,8 @@ class PostProcessing:
         if start_jobs:
             # Launch the job on alps
             cscs.execute_bash_script(job_file, wait=False)
+
+        return job_file
 
     def create_3d_output(
         self,
