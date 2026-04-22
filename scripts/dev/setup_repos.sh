@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -e  # stop on error
 
+# go to parent directory of microhh_processing
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TARGET_DIR="$SCRIPT_DIR"
+while [ ! -d "$TARGET_DIR/microhh_processing" ]; do
+  TARGET_DIR="$(dirname "$TARGET_DIR")"
+done
+
+cd "$TARGET_DIR"
+
 clone_or_update () {
   REPO_URL=$1
   DIR_NAME=$2
