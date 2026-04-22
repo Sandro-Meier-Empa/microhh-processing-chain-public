@@ -19,10 +19,11 @@ clone_or_update () {
     echo "Updating $DIR_NAME"
     cd "$DIR_NAME"
     git pull
+    git submodule update --init --recursive
     cd ..
   else
     echo "Cloning $DIR_NAME"
-    git clone "$REPO_URL" "$DIR_NAME"
+    git clone --recursive "$REPO_URL" "$DIR_NAME"
   fi
 }
 
@@ -40,6 +41,10 @@ cd ..
 
 cd u-cat
 git checkout ucat-bugfix
+cd ..
+
+cd ddeq
+git checkout ddeq-gui-refactored
 cd ..
 
 # Install in editable mode
