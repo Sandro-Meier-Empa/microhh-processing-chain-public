@@ -17,11 +17,12 @@ This repository also relies on several local companion packages such as
 - [`microhh_py`](https://github.com/Sandro-Meier-Empa/microhh) (fork to make python scripts available as a package)
 - [`microhhpy`](https://github.com/microhh/microhhpy)
 
-For local development, install those separately in the same environment. The packages can then be installed in editable mode from the requirements file:
-
+The repositories can be cloned with the `setup_repos.sh` script in `scripts/dev/`. This script will clone the repositories into the same parent directory as `microhh_processing` and update them if they already exist. Then it installs the packages from the correct branch in editable mode. You can run the script with:
 ```bash
-pip install -r requirements.txt
+./scripts/dev/setup_repos.sh
 ```
+
+**Note**: Make sure that your python environment is activated before running the script.
 
 ## Pre-commit hooks
 This repository uses [pre-commit](https://pre-commit.com/) to run code quality checks before commits. Before you can make any commits, you need to set up the pre-commit hooks:
