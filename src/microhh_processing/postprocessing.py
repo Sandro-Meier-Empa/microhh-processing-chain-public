@@ -390,16 +390,20 @@ class PostProcessing:
                     if dest_item.exists() and overwrite:
                         shutil.rmtree(dest_item)
                     shutil.copytree(item, dest_item)
-                    logger.info(f"Successfully copied '{item}' to '{store_path}'.")
+                    logger.info(f"Successfully copied '{item.name}' to '{store_path}'.")
                 else:
-                    logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
+                    logger.info(
+                        f"'{item.name}' already exists in '{store_path}'. Skipping."
+                    )
             else:
                 # Handle files
                 if not dest_item.exists() or overwrite:
                     shutil.copy(item, store_path)
-                    logger.info(f"Successfully copied '{item}' to '{store_path}'.")
+                    logger.info(f"Successfully copied '{item.name}' to '{store_path}'.")
                 else:
-                    logger.info(f"'{item}' already exists in '{store_path}'. Skipping.")
+                    logger.info(
+                        f"'{item.name}' already exists in '{store_path}'. Skipping."
+                    )
 
     def zip_binary_files(
         self, file_pattern: str = "^.*", remove_files: bool = False
