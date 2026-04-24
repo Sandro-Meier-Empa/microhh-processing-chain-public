@@ -978,6 +978,11 @@ def plot_case_comparison(
         units = ref_stats[var].attrs.get("units", "-")
         dims = [str(dim) for dim in ref_stats[var].dims]
 
+        if len(dims) != 2:
+            raise ValueError(
+                f"Variable '{var}' does not have 2 dimensions. Found dimensions: {dims}"
+            )
+
         # Prepare data values
         if difference and default_stats is not None:
             default_values = default_stats[var].values
