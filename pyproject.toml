@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microhh-processing-chain"
-version = "2.0.0"
+version = "1.1.0"
 description = "Processing chain for MicroHH simulations"
 readme = "README.md"
 authors = [
