@@ -1,4 +1,4 @@
-"""Physical and chemical constants used throughout the microhh_processing package."""
+"""Physical and chemical constants used throughout the microhh_processing_chain package."""
 
 from dataclasses import dataclass
 from enum import Enum

@@ -10,14 +10,14 @@ from io import StringIO
 
 import pandas as pd
 
-from microhh_processing.enums import Cluster, Processor, Partition, MailType
-from microhh_processing.constants import PrintColor
-from microhh_processing import utils
+from microhh_processing_chain.enums import Cluster, Processor, Partition, MailType
+from microhh_processing_chain.constants import PrintColor
+from microhh_processing_chain import utils
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from microhh_processing.initialisation import Case
+    from microhh_processing_chain.initialisation import Case
 
 
 class AlpsSetup:
@@ -546,7 +546,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame:
             DataFrame containing the jobs in the queue with simulation progress.
     """
-    import microhh_processing.initialisation as init
+    import microhh_processing_chain.initialisation as init
 
     progress_percentages = []
 

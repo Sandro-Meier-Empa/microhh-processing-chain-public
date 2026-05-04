@@ -10,11 +10,11 @@ from typing import Union, Tuple, Optional, List
 
 import numpy as np
 
-import microhh_processing.initialisation as init
-import microhh_processing.cscs as cscs
-import microhh_processing.io as io
-from microhh_processing import utils
-from microhh_processing.enums import RunMode
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.cscs as cscs
+import microhh_processing_chain.io as io
+from microhh_processing_chain import utils
+from microhh_processing_chain.enums import RunMode
 
 logger = logging.getLogger(__name__)
 

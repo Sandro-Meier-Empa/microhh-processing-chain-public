@@ -7,9 +7,9 @@ import xarray as xr
 from tqdm.auto import tqdm
 
 import ddeq
-import microhh_processing.initialisation as init
-import microhh_processing.postprocessing as post
-from microhh_processing import io
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.postprocessing as post
+from microhh_processing_chain import io
 
 logging.basicConfig(level=logging.INFO)
 

@@ -3,8 +3,8 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "microhh_processing"
-version = "1.0.0"
+name = "microhh-processing-chain"
+version = "2.0.0"
 description = "Processing chain for MicroHH simulations"
 readme = "README.md"
 authors = [
@@ -39,6 +39,7 @@ dependencies = [
     "IPython",
     "seaborn",
     "tqdm",
+    "ls2d",
 ]
 
 [project.optional-dependencies]

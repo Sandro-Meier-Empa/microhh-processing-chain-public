@@ -1,5 +1,4 @@
 -e git+https://gitlab.com/empa503/remote-sensing/ddeq.git#egg=ddeq
--e git+https://github.com/Sandro-Meier-Empa/LS2D.git#egg=LS2D
 -e git+https://github.com/Sandro-Meier-Empa/microhh.git@microhh-ch4#egg=microhh_py&subdirectory=microhh_py
 -e git+https://github.com/microhh/microhhpy.git#egg=microhhpy
 -e git+https://gitlab.com/empa503/general-tools/u-cat.git@ucat-bugfix#egg=ucat

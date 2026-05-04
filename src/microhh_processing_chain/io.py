@@ -8,7 +8,7 @@ from functools import wraps
 import microhhpy  # pyright: ignore[reportMissingImports]
 
 if TYPE_CHECKING:
-    from microhh_processing.initialisation import Case
+    from microhh_processing_chain.initialisation import Case
 
 
 def open_microhh_nc(

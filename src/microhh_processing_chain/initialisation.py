@@ -14,8 +14,8 @@ import numpy as np
 import microhh_py.microhh_tools as mht
 import ls2d
 
-from microhh_processing.enums import InitMethod, FileType
-from microhh_processing import cscs, utils
+from microhh_processing_chain.enums import InitMethod, FileType
+from microhh_processing_chain import cscs, utils
 
 logger = logging.getLogger(__name__)
 

@@ -8,9 +8,9 @@ import pandas as pd
 
 import ucat
 import xarray as xr
-import microhh_processing.initialisation as init
-import microhh_processing.io as io
-from microhh_processing.enums import Stability
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.io as io
+from microhh_processing_chain.enums import Stability
 
 logger = logging.getLogger(__name__)
 

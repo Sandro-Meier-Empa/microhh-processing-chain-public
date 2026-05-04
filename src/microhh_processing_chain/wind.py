@@ -13,10 +13,10 @@ import ddeq
 import ucat
 
 import ls2d
-import microhh_processing.initialisation as init
-import microhh_processing.io as io
-from microhh_processing.enums import WindIntegrationMethod
-from microhh_processing.constants import EARTH_ROTATION_RATE
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.io as io
+from microhh_processing_chain.enums import WindIntegrationMethod
+from microhh_processing_chain.constants import EARTH_ROTATION_RATE
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class WindProcessing:
             case (init.Case):
                 Case to post-process.
         """
-        import microhh_processing.postprocessing as post
+        import microhh_processing_chain.postprocessing as post
 
         self.post = post.PostProcessing(case)
         self.case = case

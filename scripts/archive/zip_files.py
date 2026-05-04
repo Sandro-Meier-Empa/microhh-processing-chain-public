@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 
-from microhh_processing import initialisation as init
-from microhh_processing import postprocessing as post
+from microhh_processing_chain import initialisation as init
+from microhh_processing_chain import postprocessing as post
 
 
 def process_case(case_name, case_suffix):

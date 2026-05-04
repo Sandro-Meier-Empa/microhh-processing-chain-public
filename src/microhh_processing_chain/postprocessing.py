@@ -19,15 +19,15 @@ import microhh_py.microhh_tools as mht
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
 import microhh_py.cross_to_nc as cross_to_nc
 
-import microhh_processing.cscs as cscs
-import microhh_processing.initialisation as init
-import microhh_processing.io as io
-import microhh_processing.sources as src
-import microhh_processing.spatial as spatial
-import microhh_processing.wind as wind_proc
-from microhh_processing import utils
-from microhh_processing.enums import Precision, WindIntegrationMethod
-from microhh_processing.constants import GAS_MOLAR_MASS
+import microhh_processing_chain.cscs as cscs
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.io as io
+import microhh_processing_chain.sources as src
+import microhh_processing_chain.spatial as spatial
+import microhh_processing_chain.wind as wind_proc
+from microhh_processing_chain import utils
+from microhh_processing_chain.enums import Precision, WindIntegrationMethod
+from microhh_processing_chain.constants import GAS_MOLAR_MASS
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 import argparse
 import logging
-import microhh_processing.initialisation as init
-import microhh_processing.postprocessing as post
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.postprocessing as post
 
 logging.basicConfig(level=logging.INFO)
 

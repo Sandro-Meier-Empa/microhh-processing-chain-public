@@ -1,4 +1,4 @@
-"""Enumeration types used throughout the microhh_processing package."""
+"""Enumeration types used throughout the microhh_processing_chain package."""
 
 from enum import Enum
 

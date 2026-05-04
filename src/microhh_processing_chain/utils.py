@@ -1,4 +1,4 @@
-"""Utility functions for the microhh_processing package."""
+"""Utility functions for the microhh_processing_chain package."""
 
 import subprocess
 from contextlib import contextmanager

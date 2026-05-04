@@ -18,7 +18,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-SCRIPT="/users/smeier/microhh_processing/scripts/create_2d_3d_output.py"
+SCRIPT="/users/smeier/microhh-processing-chain/scripts/create_2d_3d_output.py"
 PY_PATH="/users/smeier/py314_eiger/bin/python"
 VARS="u v w"
 NPROCS=3

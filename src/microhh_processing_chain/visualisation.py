@@ -18,10 +18,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import ipywidgets as widgets
 
-import microhh_processing.initialisation as init
-import microhh_processing.sources as src
-import microhh_processing.wind as wind_proc
-from microhh_processing import io, utils
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.sources as src
+import microhh_processing_chain.wind as wind_proc
+from microhh_processing_chain import io, utils
 
 from ddeq.gui import interactions
 

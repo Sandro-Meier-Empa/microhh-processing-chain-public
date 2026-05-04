@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -e  # stop on error
 
-# go to parent directory of microhh_processing
+# go to parent directory of microhh-processing-chain
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET_DIR="$SCRIPT_DIR"
-while [ ! -d "$TARGET_DIR/microhh_processing" ]; do
+while [ ! -d "$TARGET_DIR/microhh-processing-chain" ]; do
   TARGET_DIR="$(dirname "$TARGET_DIR")"
 done
 
@@ -29,7 +29,6 @@ clone_or_update () {
 
 # Clone repos
 clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq
-clone_or_update https://github.com/Sandro-Meier-Empa/LS2D.git LS2D
 clone_or_update https://github.com/Sandro-Meier-Empa/microhh.git microhh
 clone_or_update https://github.com/microhh/microhhpy.git microhhpy
 clone_or_update https://gitlab.com/empa503/general-tools/u-cat.git u-cat
@@ -49,7 +48,6 @@ cd ..
 
 # Install in editable mode
 pip install -e ./ddeq
-pip install -e ./LS2D
 pip install -e ./microhh/microhh_py
 pip install -e ./microhhpy
 pip install -e ./u-cat
