@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+#SBATCH --exclusive
+#SBATCH --job-name=postproc_parallel
+#SBATCH --account=em05
+#SBATCH --time=06:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=12
+#SBATCH --partition=normal
+#SBATCH --constraint=mc
+#SBATCH --hint=nomultithread
+#SBATCH --output=postproc_parallel_%j.out
+#SBATCH --uenv=prgenv-gnu/25.11:v1
+#SBATCH --view=default
+
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+SCRIPT="/users/smeier/microhh_processing/scripts/create_2d_3d_output.py"
+PY_PATH="/users/smeier/py314_eiger/bin/python"
+VARS="u v w"
+NPROCS=3
+
+CASE_DIRS=(
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_cs023
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_cs010
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_tPr05
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_tPr07
+)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Launch all 4 cases in the background, each using 3 parallel workers
+for CASE_DIR in "${CASE_DIRS[@]}"; do
+    $PY_PATH "$SCRIPT" \
+        --file_directory "$CASE_DIR" \
+        --vars_3d $VARS \
+        --sample_time 20 &
+done
+
+# Wait for all background jobs to finish
+wait
+echo "All cases completed."
