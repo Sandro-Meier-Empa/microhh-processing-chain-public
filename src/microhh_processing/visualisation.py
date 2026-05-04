@@ -843,6 +843,88 @@ class VariableViewer:
         display(self.ui)
 
 
+def compare_initial_conditions(
+    case1: init.Case,
+    case2: init.Case,
+    variables: Optional[Union[str, list]] = None,
+    show_differences: bool = False,
+    figsize: Tuple[int, int] = (12, 6),
+    subset_kwargs: Optional[dict] = None,
+) -> None:
+    """Compare the initial conditions of two cases by plotting the difference of
+    specified variables.
+
+    Args:
+        case1: First case to compare.
+        case2: Second case to compare.
+        variables: Variables to compare. If None, all common variables will be compared.
+        show_differences: Whether to show the difference between the two cases in a third subplot.
+        figsize: Size of the figure for each variable.
+        subset_kwargs: Optional dictionary of keyword arguments to subset the initial
+            conditions datasets (e.g., {"z": slice(0, 10)} to select the first 10 z-levels).
+            This will be applied to both cases before comparison.
+    """
+    # compare initial conditions of the two cases
+    ic_case1 = io.open_initial_cond(case1).sel(subset_kwargs)
+    ic_case2 = io.open_initial_cond(case2).sel(subset_kwargs)
+
+    vars = (
+        variables
+        if variables is not None
+        else list(set(ic_case1.data_vars).intersection(ic_case2.data_vars))
+    )
+
+    ncols = 2 if not show_differences else 3
+
+    for var in vars:
+        fig, ax = plt.subplots(ncols=ncols, figsize=figsize, sharey=True)
+        time_dims = [dim for dim in ic_case1[var].dims if "time" in str(dim)]
+
+        x_dim = time_dims[0] if time_dims else None
+        y_dim = "z" if "z" in ic_case1[var].dims else None
+
+        ic_case1[var].plot(ax=ax[0], y=y_dim, x=x_dim)  # pyright: ignore
+        ax[0].set_title(case1.suffix)
+        ic_case2[var].plot(ax=ax[1], y=y_dim, x=x_dim)  # pyright: ignore
+        ax[1].set_title(case2.suffix)
+
+        if show_differences:
+            diff = _compute_difference(ic_case1, ic_case2, var)
+            diff.plot(ax=ax[2], y=y_dim, x=x_dim)  # pyright: ignore
+            ax[2].set_title("Difference")
+
+        plt.tight_layout()
+        plt.show()
+
+
+def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataArray:
+    """Compute the difference between two initial condition datasets for a given
+    variable, handling interpolation if needed.
+
+    Args:
+        ic1: First initial condition dataset.
+        ic2: Second initial condition dataset.
+        var: Variable name to compare.
+
+    Returns:
+        DataArray containing the difference (ic1 - ic2) for the specified variable.
+    """
+    da1 = ic1[var]
+    da2 = ic2[var]
+
+    # Interpolate case2 onto case1's time grid if needed
+    if "time" in da1.dims and "time" in da2.dims:
+        if not da1["time"].equals(da2["time"]):
+            da2 = da2.interp(time=da1["time"])
+
+    # Interpolate case2 onto case1's z grid if needed
+    if "z" in da1.dims and "z" in da2.dims:
+        if not da1["z"].equals(da2["z"]):
+            da2 = da2.interp(z=da1["z"])
+
+    return da1 - da2
+
+
 def plot_gas_weight(data: xr.Dataset, gas: str = "CH4", fig_width: float = 15) -> None:
     """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
@@ -1046,4 +1128,10 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
         return Normalize(vmin=0.0, vmax=vmax)
 
 
-__all__ = ["CaseViewer", "VariableViewer", "plot_gas_weight", "plot_case_comparison"]
+__all__ = [
+    "CaseViewer",
+    "VariableViewer",
+    "compare_initial_conditions",
+    "plot_gas_weight",
+    "plot_case_comparison",
+]
