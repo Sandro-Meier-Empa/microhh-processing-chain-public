@@ -6,14 +6,14 @@ import subprocess
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional, List
+from typing import Union, Optional, List
 
 import numpy as np
+import xarray as xr
 
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.cscs as cscs
 import microhh_processing_chain.io as io
-from microhh_processing_chain import utils
 from microhh_processing_chain.enums import RunMode
 
 logger = logging.getLogger(__name__)
@@ -286,17 +286,12 @@ class PreProcessing:
         self._adjust_mpi_settings()
         self._check_grid_match()
         self._check_nodes_match()
-        self._check_tdep_bc()
         self._check_grid_order()
         self._check_thermo()
-        self._check_tdep_pbot()
         self._check_forcing()
-        self._check_tdep_geo()
-        self._check_tdep_ls_forcing()
-        self._check_dtep_wls()
-        self._check_nudging()
-        self._check_tdep_nudging()
-        self._check_nudgelists()
+        self._check_thermo_logic()
+        self._check_forcing_logic()
+        self._check_boundary_logic()
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
@@ -364,54 +359,6 @@ class PreProcessing:
                 f"expected cores ({expected_cores})."
             )
 
-    def _check_switch_list_vars_alignment(
-        self,
-        switch_config: Tuple[str, str, bool],
-        initial_cond_var_name: str,
-        list_config: Optional[Tuple[str, str, list]] = None,
-    ) -> None:
-        """Check if switches, variable lists, and initial condition variables align.
-
-        Args:
-            switch_config: Tuple of (group, key, default) for the switch in the ini file.
-            initial_cond_var_name: The name of the variable to check in initial conditions.
-            list_config: Optional tuple of (group, key, default) for the list in the ini file.
-        """
-        switch_group, switch_key, switch_default = switch_config
-        switch_value = self.case.ini_file.get(switch_group, switch_key, switch_default)
-
-        initial_cond = io.open_initial_cond(self.case)
-
-        # Determine if relevant variables exist in initial conditions
-        matching_vars = [
-            str(v)
-            for v in initial_cond.data_vars
-            if fnmatch.fnmatch(str(v), initial_cond_var_name)
-        ]
-        has_vars = len(matching_vars) > 0
-
-        # Check alignment
-        if list_config is not None:
-            list_group, list_key, list_default = list_config
-            list_value = self.case.ini_file.get(list_group, list_key, list_default)
-            if bool(switch_value) != bool(list_value) != has_vars:
-                raise ValueError(
-                    f"Switch '{switch_key}' in group '{switch_group}', list '{list_key}' in group '{list_group}', and initial condition variables do not align."
-                )
-        else:
-            if bool(switch_value) != has_vars:
-                raise ValueError(
-                    f"Switch '{switch_key}' in group '{switch_group}' and initial condition variables do not align."
-                )
-
-    def _check_tdep_bc(self) -> None:
-        """Check if switches for dtep boundary conditions, timedeplist and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("boundary", "swtimedep", False),
-            initial_cond_var_name="*_sbot",
-            list_config=("boundary", "timedeplist", []),
-        )
-
     def _check_grid_order(self) -> None:
         """Check that the grid order matches the orders of the advection schemes."""
         swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
@@ -461,13 +408,6 @@ class PreProcessing:
                 "Valid options are 'boussinesq' or 'anelastic'."
             )
 
-    def _check_tdep_pbot(self) -> None:
-        """Check if switches for dtep pbot and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_pbot", False),
-            initial_cond_var_name="p_bot",
-        )
-
     def _check_forcing(self) -> None:
         """Check if the specified forcing is valid."""
         force = self.case.ini_file.get("force", "swlspres", None)
@@ -502,57 +442,162 @@ class PreProcessing:
                 "Valid options are 'geo', 'dpdx', or 'uflux'."
             )
 
-    def _check_tdep_geo(self) -> None:
-        """Check if switches for dtep geostrophic forcing and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_geo", False),
-            initial_cond_var_name="?_geo",
+    def _check_alignment(
+        self,
+        group: str,
+        key: str,
+        default: Union[str, bool],
+        var_pattern: str,
+        nc_group: str = "init",
+        required_by_list: str = "",
+    ) -> bool:
+        """
+        Generic check: If switch is True, variables must exist in nc_group.
+        """
+        switch_val = self.case.ini_file.get(group, key, default)
+
+        is_active = (
+            bool(switch_val)
+            and switch_val != "0"
+            and switch_val != 0
+            and str(switch_val).lower() != "false"
         )
 
-    def _check_dtep_wls(self) -> None:
-        """Check if switches for dtep wls and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_wls", False),
-            initial_cond_var_name="w_ls",
-        )
+        available_vars = self._get_vars_in_group(nc_group)
+        matching_vars = [v for v in available_vars if fnmatch.fnmatch(v, var_pattern)]
+        has_vars = len(matching_vars) > 0
 
-    def _check_tdep_ls_forcing(self) -> None:
-        """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_ls", False),
-            initial_cond_var_name="*_ls",
-            list_config=("force", "timedeplist_ls", []),
-        )
+        if is_active and not has_vars:
+            raise ValueError(
+                f"Switch [{group}] {key} is active, but no variables matching "
+                f"'{var_pattern}' found in NetCDF group '{nc_group}'."
+            )
+        if not is_active and has_vars:
+            logger.warning(
+                f"Switch [{group}] {key} is not active, but variables matching "
+                f"'{var_pattern}' were found in NetCDF group '{nc_group}'."
+            )
+        if not is_active and not has_vars:
+            return False
 
-    def _check_nudging(self) -> None:
-        """Check if switches for nudging, nudging list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swnudge", False),
-            initial_cond_var_name="nudgefac",
-            list_config=("force", "nudgelist", []),
-        )
-
-    def _check_tdep_nudging(self) -> None:
-        """Check if switches for dtep nudging, tdep nudging list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_nudge", False),
-            initial_cond_var_name="*_nudge",
-            list_config=("force", "timedeplist_nudge", []),
-        )
-
-    def _check_nudgelists(self) -> None:
-        """Check if the variables specified in the tdep nudging list are also present in the nudging list."""
-        timedeplist_nudging = utils.object_to_list(
-            self.case.ini_file.get("force", "timedeplist_nudge", [])
-        )
-        nudgelist = utils.object_to_list(
-            self.case.ini_file.get("force", "nudgelist", [])
-        )
-
-        for var in timedeplist_nudging:
-            if var not in nudgelist:
+        # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
+        if required_by_list:
+            config_list = self.case.ini_file.get(group, required_by_list, [])
+            if config_list is None or len(config_list) == 0:
                 raise ValueError(
-                    f"Variable '{var}' specified in 'timedeplist_nudge' is not present in 'nudgelist'."
+                    f"Switch [{group}] {key} is active, but the required list "
+                    f"[{group}] {required_by_list} is empty."
+                )
+            for item in config_list:
+                item_pattern = var_pattern.replace("*", item).replace("?", item)
+                if not any(fnmatch.fnmatch(v, item_pattern) for v in available_vars):
+                    raise ValueError(
+                        f"Variable '{item}' in [{group}] {required_by_list} "
+                        f"not found as '{item_pattern}' in group '{nc_group}'."
+                    )
+
+        return is_active
+
+    def _get_vars_in_group(self, group_name: str):
+        """Helper to get variable names from a specific NetCDF group."""
+        try:
+            initial_cond = xr.open_dataset(
+                Path(self.case.file_directory, f"{self.case.name}_input.nc"),
+                group=group_name,
+            )
+            return [str(v) for v in initial_cond.variables]
+        except (AttributeError, KeyError, OSError):
+            # If the dataset is flattened or group doesn't exist
+            initial_cond = io.open_initial_cond(self.case)
+            return [str(v) for v in initial_cond.data_vars]
+
+    def _check_forcing_logic(self):
+        # 1. Large Scale Forcing
+        swls = self.case.ini_file.get("force", "swls", False)
+        swtdep_ls = self.case.ini_file.get("force", "swtimedep_ls", False)
+
+        if swtdep_ls and not swls:
+            raise ValueError(
+                "swtimedep_ls is True, but swls is False. swls must be enabled for LS forcing."
+            )
+
+        if swls:
+            if swtdep_ls:
+                self._check_alignment(
+                    "force", "swtimedep_ls", False, "*_ls", "timedep", "timedeplist_ls"
+                )
+            else:
+                self._check_alignment("force", "swls", False, "*_ls", "init", "lslist")
+
+        # 2. Geostrophic Forcing
+        swlspres = self.case.ini_file.get("force", "swlspres", False)
+        swtdep_geo = self.case.ini_file.get("force", "swtimedep_geo", False)
+
+        if swtdep_geo and swlspres != "geo":
+            raise ValueError("swtimedep_geo is True, but swlspres is not 'geo'.")
+
+        if swlspres == "geo":
+            nc_grp = "timedep" if swtdep_geo else "init"
+            self._check_alignment("force", "swlspres", False, "u_geo", nc_grp)
+            self._check_alignment("force", "swlspres", False, "v_geo", nc_grp)
+
+        # 3. Subsidence (w_ls)
+        swwls = self.case.ini_file.get("force", "swwls", False)
+        swtdep_wls = self.case.ini_file.get("force", "swtimedep_wls", False)
+
+        if swtdep_wls and not swwls:
+            raise ValueError("swtimedep_wls is True, but swwls is disabled.")
+
+        if swwls:
+            nc_grp = "timedep" if swtdep_wls else "init"
+            self._check_alignment("force", "swwls", False, "w_ls", nc_grp)
+
+        # 4. Nudging
+        swnudge = self.case.ini_file.get("force", "swnudge", False)
+        swtdep_nudge = self.case.ini_file.get("force", "swtimedep_nudge", False)
+
+        if swtdep_nudge and not swnudge:
+            raise ValueError("swtimedep_nudge is True, but swnudge is False.")
+
+        # nudgefac is always required in 'init' group if nudging is on
+        self._check_alignment("force", "swnudge", False, "nudgefac", "init")
+        if swtdep_nudge:
+            self._check_alignment(
+                "force",
+                "swtimedep_nudge",
+                False,
+                "*_nudge",
+                "timedep",
+                "timedeplist_nudge",
+            )
+        else:
+            self._check_alignment(
+                "force", "swnudge", False, "*_nudge", "init", "nudgelist"
+            )
+
+    def _check_boundary_logic(self):
+        # Requires time_surface and *_sbot in timedep group
+        self._check_alignment("boundary", "swtimedep", False, "time_surface", "timedep")
+        self._check_alignment(
+            "boundary", "swtimedep", False, "*", "timedep", "timedeplist"
+        )
+
+    def _check_thermo_logic(self):
+        self._check_alignment("thermo", "swtimedep_pbot", False, "p_bot", "timedep")
+
+    def _check_grid_logic(self):
+        """Checks spatial order consistency."""
+        spatial = self.case.ini_file.get("grid", "swspatialorder", None)
+        if spatial is None:
+            return
+
+        # Check Pressure and Advection match Spatial order
+        for grp, key in [("pres", "swpres"), ("advec", "swadvec")]:
+            val = str(self.case.ini_file.get(grp, key, spatial))
+            # Extract first digit for advection schemes like '2i5'
+            if int(val[0]) != int(spatial):
+                raise ValueError(
+                    f"[{grp}] {key} ({val}) must match [grid] swspatialorder ({spatial})"
                 )
 
     def _check_source_position(self) -> None:
@@ -637,16 +682,24 @@ class PreProcessing:
 
     def _check_tdep_source_location(self) -> None:
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("source", "swtimedep_location", False),
-            initial_cond_var_name="source_?0_*",
+        self._check_alignment(
+            group="source",
+            key="swtimedep_location",
+            default=False,
+            var_pattern="source_?0_*",
+            nc_group="timedep",
+            required_by_list="timedeplist_location",
         )
 
     def _check_tdep_source_strength(self) -> None:
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("source", "swtimedep_strength", False),
-            initial_cond_var_name="source_strength_*",
+        self._check_alignment(
+            group="source",
+            key="swtimedep_strength",
+            default=False,
+            var_pattern="source_strength_*",
+            nc_group="timedep",
+            required_by_list="timedeplist_strength",
         )
 
     def _check_buffer_height(self) -> None:
