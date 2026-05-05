@@ -13,7 +13,7 @@ import xarray as xr
 
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.cscs as cscs
-import microhh_processing_chain.io as io
+from microhh_processing_chain import io, utils
 from microhh_processing_chain.enums import RunMode
 
 logger = logging.getLogger(__name__)
@@ -483,7 +483,8 @@ class PreProcessing:
         # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
         if required_by_list:
             config_list = self.case.ini_file.get(group, required_by_list, [])
-            if config_list is None or len(config_list) == 0:
+            config_list = utils.object_to_list(config_list)
+            if len(config_list) == 0:
                 raise ValueError(
                     f"Switch [{group}] {key} is active, but the required list "
                     f"[{group}] {required_by_list} is empty."
@@ -583,7 +584,7 @@ class PreProcessing:
         )
 
     def _check_thermo_logic(self):
-        self._check_alignment("thermo", "swtimedep_pbot", False, "p_bot", "timedep")
+        self._check_alignment("thermo", "swtimedep_pbot", False, "p_sbot", "timedep")
 
     def _check_grid_logic(self):
         """Checks spatial order consistency."""
@@ -688,7 +689,6 @@ class PreProcessing:
             default=False,
             var_pattern="source_?0_*",
             nc_group="timedep",
-            required_by_list="timedeplist_location",
         )
 
     def _check_tdep_source_strength(self) -> None:
@@ -699,7 +699,6 @@ class PreProcessing:
             default=False,
             var_pattern="source_strength_*",
             nc_group="timedep",
-            required_by_list="timedeplist_strength",
         )
 
     def _check_buffer_height(self) -> None:
