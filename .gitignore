@@ -9,3 +9,11 @@ data/
 __pycache__
 
 pyrightconfig.json
+ddeq/
+diplib/
+microhh-ch4/
+microhh/
+microhhpy/
+u-cat/
+LS2D/
+microhh_py/
