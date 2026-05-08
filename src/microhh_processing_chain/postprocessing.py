@@ -1,5 +1,6 @@
 import os
 import re
+import netCDF4 as nc4
 import scipy
 import shutil
 import zipfile
@@ -110,7 +111,9 @@ class PostProcessing:
         logger.info(f"########## START PROCESSING OF {self.case.name_spec} ##########")
 
         # skip post-processing if simulation failed at start
-        current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
+        current_time_step, max_time_step = cscs.get_simulation_progress_from_files(
+            self.case
+        )
         if current_time_step == 0:
             logger.error("ERROR: Simulation failed. Skipped post-processing.")
             return
@@ -1267,6 +1270,91 @@ class PostProcessing:
         return num / den
 
 
+def merge_restart_statistics(
+    stat_file1: Union[str, Path],
+    stat_file2: Union[str, Path],
+    combined_stat_file: Union[str, Path],
+    split_time: int,
+) -> None:
+    """Merge two MicroHH statistics files from restarted cases into one file.
+
+    Args:
+        stat_file1 (Union[str, Path]):
+            Path to the first statistics file (before restart).
+        stat_file2 (Union[str, Path]):
+            Path to the second statistics file (after restart).
+        combined_stat_file (Union[str, Path]):
+            Path to the output file where the combined statistics will be saved.
+        split_time (int):
+            Time in seconds at which the two files should be merged. Data from
+            stat_file1 will be used for time < split_time and data from
+            stat_file2 will be used for time >= split_time.
+    """
+
+    if Path(combined_stat_file).exists():
+        logger.info(f"{combined_stat_file} already exists. Skipping...")
+        return
+
+    def clean_time(ds: xr.Dataset, times: np.ndarray) -> xr.Dataset:
+        """Assign integer-valued time coordinates without float noise."""
+        times_clean = np.rint(times).astype(np.int64)
+
+        # Drop any existing time coordinate/variable, then assign the clean one.
+        if "time" in ds.coords:
+            ds = ds.drop_vars("time")
+
+        return ds.assign_coords(time=("time", times_clean))
+
+    with xr.open_dataset(stat_file1, decode_times=False) as ds1_root:
+        times1 = np.rint(ds1_root.time.values).astype(np.int64)
+
+    with xr.open_dataset(stat_file2, decode_times=False) as ds2_root:
+        times2 = np.rint(ds2_root.time.values).astype(np.int64)
+
+    with nc4.Dataset(stat_file1, "r") as nc:
+        group_names = list(nc.groups.keys())
+
+    # Write root group first.
+    all_groups = [None] + group_names
+
+    for i, group in enumerate(all_groups):
+        ds1 = xr.open_dataset(stat_file1, group=group, decode_times=False)
+        ds2 = xr.open_dataset(stat_file2, group=group, decode_times=False)
+
+        ds1 = clean_time(ds1, times1)
+        ds2 = clean_time(ds2, times2)
+
+        ds1_sliced = ds1.where(ds1.time < split_time, drop=True)
+        ds2_sliced = ds2.where(ds2.time >= split_time, drop=True)
+
+        ds_out = xr.concat(
+            [ds1_sliced, ds2_sliced],
+            dim="time",
+            data_vars="all",
+        )
+
+        # Force the concatenated output coordinate to stay clean.
+        ds_out = ds_out.assign_coords(
+            time=("time", np.rint(ds_out.time.values).astype(np.int64))
+        )
+
+        ds_out = ds_out.transpose(*ds1.dims)
+
+        write_mode = "w" if i == 0 else "a"
+
+        ds_out.to_netcdf(
+            combined_stat_file,
+            group=group,
+            mode=write_mode,
+            engine="netcdf4",
+        )
+
+        ds1.close()
+        ds2.close()
+
+    logger.info(f"Finished merging into {combined_stat_file}")
+
+
 def add_gaussian_noise(
     data: xr.Dataset, var_name: str, gas: str, std: float, noise_units: str
 ) -> xr.Dataset:
@@ -1428,6 +1516,7 @@ def format_data_for_cdo(
 
 __all__ = [
     "PostProcessing",
+    "merge_restart_statistics",
     "format_data_for_cdo",
     "add_gaussian_noise",
     "degrade_resolution",
