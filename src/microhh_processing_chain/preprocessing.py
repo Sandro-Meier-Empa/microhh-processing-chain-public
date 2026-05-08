@@ -303,6 +303,7 @@ class PreProcessing:
         self._check_buffer_height()
         self._check_surface_roughness_height()
         self._check_sample_times()
+        self._check_initial_conditions_times()
 
     def _check_ini_content(self) -> None:
         """check if the .ini file is not empty"""
@@ -767,6 +768,28 @@ class PreProcessing:
                 f"sample time for 3d output '{sample_time_3d:.0f}'s, 2d output '{sample_time_2d:.0f}'s, and "
                 f"statistics '{sample_time_stats:.0f}'s for postprocessing convenience."
             )
+
+    def _check_initial_conditions_times(self) -> None:
+        """Check if the times specified in the boundary conditions match the time specified in the .ini file."""
+        ic = io.open_initial_cond(self.case)
+
+        time_coords = [name for name in ic.coords if "time" in str(name)]
+
+        for time_coord in time_coords:
+            ic_start_time = int(ic[time_coord].values[0])
+            ic_end_time = int(ic[time_coord].values[-1])
+
+            ini_start_time = int(self.case.config["time"]["starttime"])
+            ini_end_time = int(self.case.config["time"]["endtime"])
+
+            if ini_start_time != ic_start_time:
+                raise ValueError(
+                    f"Start time in .ini file ({ini_start_time}s) does not match the start time in initial conditions variable '{time_coord}' ({ic_start_time}s)."
+                )
+            if ini_end_time != ic_end_time:
+                raise ValueError(
+                    f"End time in .ini file ({ini_end_time}s) does not match the end time in initial conditions variable '{time_coord}' ({ic_end_time}s)."
+                )
 
     def _get_lowest_grid_level(self) -> float:
         """Get the lowest atmospheric grid level from the {case}_input.nc file."""
