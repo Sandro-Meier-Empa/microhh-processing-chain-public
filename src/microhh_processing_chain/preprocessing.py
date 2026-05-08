@@ -846,7 +846,7 @@ def _get_microhh_run_commands(
             phases, case=case_list[0], jobreport_path=jobreport_path
         )
 
-    elif len(case_list) == 4:
+    elif len(case_list) > 1 and len(case_list) <= 4:
         return _get_multi_run_commands(
             phases,
             case_list=case_list,
@@ -856,7 +856,7 @@ def _get_microhh_run_commands(
         )
     else:
         raise ValueError(
-            f"Expected either 1 or 4 cases, but got {len(case_list)}. For a "
+            f"Expected between 1 and 4 cases, but got {len(case_list)}. For a "
             f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
         )
 
@@ -893,7 +893,7 @@ def _get_multi_run_commands(
     gpus_per_task_per_case: int = 1,
     jobreport_path: Optional[str] = None,
 ) -> list[str]:
-    """Generate srun commands that launch 4 cases in parallel on a GPU node.
+    """Generate srun commands that launch up to 4 cases in parallel on a GPU node.
 
     Args:
         phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
@@ -905,6 +905,10 @@ def _get_multi_run_commands(
     Returns:
         List of shell command strings.
     """
+    if len(case_list) > 4:
+        raise ValueError(
+            f"Expected at most 4 cases for multi-GPU run, but got {len(case_list)}."
+        )
     case_name = _get_common_case_name(case_list)
     n_cases = len(case_list)
     executable = "./microhh"
@@ -956,10 +960,12 @@ def create_run_4x_script(
     jobreport_path: Optional[str] = None,
 ) -> Path:
     """Run 4 prepared simulations on GPU."""
-    if len(cases) != 4:
-        raise ValueError(f"Expected 4 cases, but got {len(cases)}.")
+    ncases = len(cases)
 
-    master_job_file = Path(scratch_path, "run_microhh_4x.sbash")
+    if ncases != 4:
+        logger.warning(f"Expected 4 cases, but got {len(cases)}.")
+
+    master_job_file = Path(scratch_path, f"run_microhh_{ncases}x.sbash")
 
     commands = _get_microhh_run_commands(
         case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path
@@ -968,7 +974,7 @@ def create_run_4x_script(
     if not master_job_file.exists() or overwrite:
         master_job_file = alps_setup.create_bash_script(
             commands=commands,
-            job_name="run_microhh_4x",
+            job_name=f"run_microhh_{ncases}x",
             file_path=master_job_file,
             scratch_path=scratch_path,
         )
@@ -985,7 +991,7 @@ def _get_common_case_name(cases: list[init.Case]) -> str:
 
     if len(case_names) > 1:
         raise ValueError(
-            "Cases must have the same case name for themulti-gpu setup to work."
+            "Cases must have the same case name for the multi-gpu setup to work."
         )
 
     return str(case_names[0])
