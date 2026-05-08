@@ -570,7 +570,8 @@ def print_simulation_progress(case: "Case") -> None:
     """Print the progress of a simulation based on the saved binary output
     files of MicroHH"""
 
-    current_timestep, max_timestep = get_simulation_progress_from_files(case)
+    # current_timestep, max_timestep = get_simulation_progress_from_files(case)
+    current_timestep, max_timestep = get_simulation_progress_from_out(case)
     progress_percentage = current_timestep / max_timestep * 100
 
     if progress_percentage == 0.0:
