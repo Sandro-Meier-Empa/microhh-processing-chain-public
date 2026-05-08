@@ -287,11 +287,12 @@ class PreProcessing:
         self._check_grid_match()
         self._check_nodes_match()
         self._check_grid_order()
+        self._check_dump()
         self._check_thermo()
         self._check_forcing()
-        self._check_thermo_logic()
-        self._check_forcing_logic()
         self._check_boundary_logic()
+        self._check_forcing_logic()
+        self._check_thermo_logic()
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
@@ -477,7 +478,7 @@ class PreProcessing:
                 f"Switch [{group}] {key} is not active, but variables matching "
                 f"'{var_pattern}' were found in NetCDF group '{nc_group}'."
             )
-        if not is_active and not has_vars:
+        if not is_active:
             return False
 
         # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
@@ -507,10 +508,20 @@ class PreProcessing:
                 group=group_name,
             )
             return [str(v) for v in initial_cond.variables]
-        except (AttributeError, KeyError, OSError):
-            # If the dataset is flattened or group doesn't exist
-            initial_cond = io.open_initial_cond(self.case)
-            return [str(v) for v in initial_cond.data_vars]
+        except Exception:
+            return []
+
+    def _check_cross(self) -> None:
+        swcross = self.case.ini_file.get("cross", "swcross", False)
+        crosslist = self.case.ini_file.get("cross", "crosslist", []) or []
+        if swcross and len(crosslist) == 0:
+            raise ValueError("swcross is True, but crosslist is empty.")
+
+    def _check_dump(self):
+        swdump = self.case.ini_file.get("dump", "swdump", False)
+        swdumplist = self.case.ini_file.get("dump", "dumplist", []) or []
+        if swdump and len(swdumplist) == 0:
+            raise ValueError("swdump is True, but dumplist is empty.")
 
     def _check_forcing_logic(self):
         # 1. Large Scale Forcing
@@ -742,8 +753,8 @@ class PreProcessing:
                     )
 
     def _check_sample_times(self) -> None:
-        sample_time_3d = self.case.ini_file.get("time", "savetime", None)
         sample_time_2d = self.case.ini_file.get("cross", "sampletime", None)
+        sample_time_3d = self.case.ini_file.get("dump", "sampletime", None)
         sample_time_stats = self.case.ini_file.get("stats", "sampletime", None)
 
         # Remove None values
