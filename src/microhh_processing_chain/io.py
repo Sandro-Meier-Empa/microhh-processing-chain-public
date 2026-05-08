@@ -1,5 +1,6 @@
 import xarray as xr
 import netCDF4 as nc4
+import pandas as pd
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -87,12 +88,31 @@ def open_statistics(case: "Case") -> xr.Dataset:
     return _combine_nc_groups(file_path)
 
 
-@wraps(microhhpy.io.read_case_out)
-def open_microhh_out(case: "Case") -> list[Any]:
-    path = case.file_directory / f"{case.name}.out"
-    out = microhhpy.io.read_case_out(path)
+def open_microhh_out(case: "Case") -> pd.DataFrame:
+    """
+    Parse a MicroHH case.out file into a pandas DataFrame.
 
-    return out[0]
+    Adds:
+    - CPUT: cumulative CPU time
+    - SDPD: simulated days per day
+
+    Args:
+        case (Case): The Case object containing the file directory.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the parsed case.out data.
+    """
+    out_file = Path(case.file_directory, f"{case.name}.out")
+    df = pd.read_csv(out_file, sep=r"\s+")
+
+    df["CPUT"] = df["CPUDT"].cumsum()
+
+    dtime = df["TIME"].diff()
+    df["SDPD"] = dtime / df["CPUDT"]
+
+    df.loc[0, "SDPD"] = 0.0
+
+    return df
 
 
 @wraps(microhhpy.io.save_case_input)
