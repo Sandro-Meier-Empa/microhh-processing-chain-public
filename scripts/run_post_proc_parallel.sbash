@@ -3,7 +3,7 @@
 #SBATCH --exclusive
 #SBATCH --job-name=postproc_parallel
 #SBATCH --account=em05
-#SBATCH --time=06:00:00
+#SBATCH --time=20:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
@@ -24,16 +24,16 @@ VARS="u v w"
 NPROCS=3
 
 CASE_DIRS=(
-    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_cs023
-    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_cs010
-    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_tPr05
-    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_tPr07
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_128x128
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_256x256
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_512x512
+    /capstor/scratch/cscs/smeier/microhh_tests/microhh_tests.test_ls2d_1d_coarse_met_wind_1024x1024_combined
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Launch all 4 cases in the background, each using 3 parallel workers
 for CASE_DIR in "${CASE_DIRS[@]}"; do
-    $PY_PATH "$SCRIPT" \
+    $PY_PATH -u "$SCRIPT" \
         --file_directory "$CASE_DIR" \
         --vars_3d $VARS \
         --sample_time 20 &
