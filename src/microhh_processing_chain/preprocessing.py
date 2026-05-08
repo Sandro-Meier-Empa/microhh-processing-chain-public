@@ -201,14 +201,14 @@ class PreProcessing:
             restart_time (int):
                 Time in seconds from which the simulation is restarted.
         """
-        start_time = self.case.ini_file["time"]["starttime"]
+        start_time = self.case.config["time"]["starttime"]
 
         if start_time != restart_time:
             raise ValueError(
                 f"start time ({start_time}s) in .ini file does not match "
                 f"the specified restart_time ({restart_time}s)."
             )
-        end_time = self.case.ini_file["time"]["endtime"]
+        end_time = self.case.config["time"]["endtime"]
         if end_time <= restart_time:
             raise ValueError(
                 f"end time ({end_time}s) must be larger than restart_time ({restart_time}s)."
@@ -306,33 +306,31 @@ class PreProcessing:
 
     def _check_ini_content(self) -> None:
         """check if the .ini file is not empty"""
-        if len(self.case.ini_file.groups) == 0:
+        if len(self.case.config.groups) == 0:
             raise ValueError(f"{self.case.name}.ini is empty.")
 
     def _adjust_mpi_settings(self) -> None:
         """Adjust MPI settings if MPI is disabled."""
         if (
             self.alps_setup.processor == "gpu"
-            and not self.case.ini_file["master"]["npx"] == 1
-            and not self.case.ini_file["master"]["npy"] == 1
+            and not self.case.config["master"]["npx"] == 1
+            and not self.case.config["master"]["npy"] == 1
         ):
             for dim in ["x", "y"]:
-                self.case.ini_file.set_value(
-                    group="master", variable=f"np{dim}", value=1
-                )
-            self.case.ini_file.save(self.case.ini_path, allow_overwrite=True)
+                self.case.config.set_value(group="master", variable=f"np{dim}", value=1)
+            self.case.config.save(self.case.ini_file_path, allow_overwrite=True)
             logger.info("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
     def _check_grid_match(self) -> None:
         """Check if the grid size matches the number of processes."""
         itot, jtot, ktot = (
-            self.case.ini_file["grid"]["itot"],
-            self.case.ini_file["grid"]["jtot"],
-            self.case.ini_file["grid"]["ktot"],
+            self.case.config["grid"]["itot"],
+            self.case.config["grid"]["jtot"],
+            self.case.config["grid"]["ktot"],
         )
         npx, npy = (
-            self.case.ini_file["master"]["npx"],
-            self.case.ini_file["master"]["npy"],
+            self.case.config["master"]["npx"],
+            self.case.config["master"]["npy"],
         )
 
         if itot % npx != 0:
@@ -349,7 +347,7 @@ class PreProcessing:
     def _check_nodes_match(self) -> None:
         """Check if the number of nodes matches the expected value."""
         expected_cores = (
-            self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
+            self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
         )
         if self.alps_setup.ntasks_per_node is None:
             raise ValueError("Alps setup requires 'ntasks_per_node' to validate nodes.")
@@ -363,9 +361,9 @@ class PreProcessing:
 
     def _check_grid_order(self) -> None:
         """Check that the grid order matches the orders of the advection schemes."""
-        swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
-        swpres = self.case.ini_file.get("pres", "swpres", None)
-        swadvec = str(self.case.ini_file.get("advec", "swadvec", None))
+        swspatial = self.case.config.get("grid", "swspatialorder", None)
+        swpres = self.case.config.get("pres", "swpres", None)
+        swadvec = str(self.case.config.get("advec", "swadvec", None))
 
         if swspatial is None:
             return
@@ -383,9 +381,9 @@ class PreProcessing:
     def _check_thermo(self) -> None:
         """Check if the thermo settings are valid."""
 
-        swthermo = self.case.ini_file.get("thermo", "swthermo", None)
-        swbasestate = self.case.ini_file.get("thermo", "swbasestate", None)
-        thref0 = self.case.ini_file.get("thermo", "thref0", None)
+        swthermo = self.case.config.get("thermo", "swthermo", None)
+        swbasestate = self.case.config.get("thermo", "swbasestate", None)
+        thref0 = self.case.config.get("thermo", "thref0", None)
 
         if swbasestate is None:
             return
@@ -399,7 +397,7 @@ class PreProcessing:
                     )
 
         elif swbasestate == "anelastic":
-            swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
+            swspatial = self.case.config.get("grid", "swspatialorder", None)
             if swspatial == 4:
                 raise ValueError(
                     "'swbasestate'='anelastic' is not supported for 'swspatialorder'=4"
@@ -412,9 +410,9 @@ class PreProcessing:
 
     def _check_forcing(self) -> None:
         """Check if the specified forcing is valid."""
-        force = self.case.ini_file.get("force", "swlspres", None)
-        fc = self.case.ini_file.get("force", "fc", None)
-        dpdx = self.case.ini_file.get("force", "dpdx", None)
+        force = self.case.config.get("force", "swlspres", None)
+        fc = self.case.config.get("force", "fc", None)
+        dpdx = self.case.config.get("force", "dpdx", None)
 
         if force is None:
             return
@@ -427,13 +425,13 @@ class PreProcessing:
                     "when using 'swlspres = geo' forcing."
                 )
         elif force == "dpdx":
-            dpdx = self.case.ini_file["force"].get("dpdx", None)
+            dpdx = self.case.config["force"].get("dpdx", None)
             if dpdx is None:
                 raise ValueError(
                     "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
                 )
         elif force == "uflux":
-            uflux = self.case.ini_file["force"].get("uflux", None)
+            uflux = self.case.config["force"].get("uflux", None)
             if uflux is None:
                 raise ValueError(
                     "'uflux' must be specified when using 'swlspres = uflux' forcing."
@@ -456,7 +454,7 @@ class PreProcessing:
         """
         Generic check: If switch is True, variables must exist in nc_group.
         """
-        switch_val = self.case.ini_file.get(group, key, default)
+        switch_val = self.case.config.get(group, key, default)
 
         is_active = (
             bool(switch_val)
@@ -484,7 +482,7 @@ class PreProcessing:
 
         # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
         if required_by_list:
-            config_list = self.case.ini_file.get(group, required_by_list, [])
+            config_list = self.case.config.get(group, required_by_list, [])
             config_list = utils.object_to_list(config_list)
             if len(config_list) == 0:
                 raise ValueError(
@@ -513,21 +511,21 @@ class PreProcessing:
             return []
 
     def _check_cross(self) -> None:
-        swcross = self.case.ini_file.get("cross", "swcross", False)
-        crosslist = self.case.ini_file.get("cross", "crosslist", []) or []
+        swcross = self.case.config.get("cross", "swcross", False)
+        crosslist = self.case.config.get("cross", "crosslist", []) or []
         if swcross and len(crosslist) == 0:
             raise ValueError("swcross is True, but crosslist is empty.")
 
     def _check_dump(self):
-        swdump = self.case.ini_file.get("dump", "swdump", False)
-        swdumplist = self.case.ini_file.get("dump", "dumplist", []) or []
+        swdump = self.case.config.get("dump", "swdump", False)
+        swdumplist = self.case.config.get("dump", "dumplist", []) or []
         if swdump and len(swdumplist) == 0:
             raise ValueError("swdump is True, but dumplist is empty.")
 
     def _check_forcing_logic(self):
         # 1. Large Scale Forcing
-        swls = self.case.ini_file.get("force", "swls", False)
-        swtdep_ls = self.case.ini_file.get("force", "swtimedep_ls", False)
+        swls = self.case.config.get("force", "swls", False)
+        swtdep_ls = self.case.config.get("force", "swtimedep_ls", False)
 
         if swtdep_ls and not swls:
             raise ValueError(
@@ -543,8 +541,8 @@ class PreProcessing:
                 self._check_alignment("force", "swls", False, "*_ls", "init", "lslist")
 
         # 2. Geostrophic Forcing
-        swlspres = self.case.ini_file.get("force", "swlspres", False)
-        swtdep_geo = self.case.ini_file.get("force", "swtimedep_geo", False)
+        swlspres = self.case.config.get("force", "swlspres", False)
+        swtdep_geo = self.case.config.get("force", "swtimedep_geo", False)
 
         if swtdep_geo and swlspres != "geo":
             raise ValueError("swtimedep_geo is True, but swlspres is not 'geo'.")
@@ -555,8 +553,8 @@ class PreProcessing:
             self._check_alignment("force", "swlspres", False, "v_geo", nc_grp)
 
         # 3. Subsidence (w_ls)
-        swwls = self.case.ini_file.get("force", "swwls", False)
-        swtdep_wls = self.case.ini_file.get("force", "swtimedep_wls", False)
+        swwls = self.case.config.get("force", "swwls", False)
+        swtdep_wls = self.case.config.get("force", "swtimedep_wls", False)
 
         if swtdep_wls and not swwls:
             raise ValueError("swtimedep_wls is True, but swwls is disabled.")
@@ -566,8 +564,8 @@ class PreProcessing:
             self._check_alignment("force", "swwls", False, "w_ls", nc_grp)
 
         # 4. Nudging
-        swnudge = self.case.ini_file.get("force", "swnudge", False)
-        swtdep_nudge = self.case.ini_file.get("force", "swtimedep_nudge", False)
+        swnudge = self.case.config.get("force", "swnudge", False)
+        swtdep_nudge = self.case.config.get("force", "swtimedep_nudge", False)
 
         if swtdep_nudge and not swnudge:
             raise ValueError("swtimedep_nudge is True, but swnudge is False.")
@@ -600,13 +598,13 @@ class PreProcessing:
 
     def _check_grid_logic(self):
         """Checks spatial order consistency."""
-        spatial = self.case.ini_file.get("grid", "swspatialorder", None)
+        spatial = self.case.config.get("grid", "swspatialorder", None)
         if spatial is None:
             return
 
         # Check Pressure and Advection match Spatial order
         for grp, key in [("pres", "swpres"), ("advec", "swadvec")]:
-            val = str(self.case.ini_file.get(grp, key, spatial))
+            val = str(self.case.config.get(grp, key, spatial))
             # Extract first digit for advection schemes like '2i5'
             if int(val[0]) != int(spatial):
                 raise ValueError(
@@ -615,19 +613,19 @@ class PreProcessing:
 
     def _check_source_position(self) -> None:
         """Check if the source position conflicts with the domain size."""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
         for coord in ["x", "y", "z"]:
-            source_0 = np.atleast_1d(self.case.ini_file["source"][f"source_{coord}0"])
-            sigma = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            source_0 = np.atleast_1d(self.case.config["source"][f"source_{coord}0"])
+            sigma = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
 
             if len(source_0) != len(sigma):
                 raise ValueError(
                     f"source_{coord}0 and sigma_{coord} must have the same length."
                 )
 
-            grid_size = float(self.case.ini_file["grid"][f"{coord}size"])
+            grid_size = float(self.case.config["grid"][f"{coord}size"])
 
             for s0, sig in zip(source_0, sigma):
                 source_ext = s0 + 2 * sig
@@ -638,10 +636,10 @@ class PreProcessing:
 
     def _check_source_height(self) -> None:
         """Check if source height is greater than vertical resolution"""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
-        source_heights = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
+        source_heights = np.atleast_1d(self.case.config["source"]["source_z0"])
         lowest_grid_level = self._get_lowest_grid_level()
 
         for source_height in source_heights:
@@ -656,29 +654,29 @@ class PreProcessing:
         It must be >0 and between grid size/4 and grid size/2 since the source is
         simulated within 4*sigma."""
 
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
-            sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            sigmas = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
             if np.any(sigmas <= 0):
                 raise ValueError(f"'sigma_{coord}' cannot be <=0.")
 
     def _check_source_list(self) -> None:
         """Check if all required variables have the same length."""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
-        sourcelist = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
-        source_x0 = np.atleast_1d(self.case.ini_file["source"]["source_x0"])
-        source_y0 = np.atleast_1d(self.case.ini_file["source"]["source_y0"])
-        source_z0 = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
-        sigma_x = np.atleast_1d(self.case.ini_file["source"]["sigma_x"])
-        sigma_y = np.atleast_1d(self.case.ini_file["source"]["sigma_y"])
-        sigma_z = np.atleast_1d(self.case.ini_file["source"]["sigma_z"])
-        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
-        swvmr = np.atleast_1d(self.case.ini_file["source"]["swvmr"])
+        sourcelist = np.atleast_1d(self.case.config["source"]["sourcelist"])
+        source_x0 = np.atleast_1d(self.case.config["source"]["source_x0"])
+        source_y0 = np.atleast_1d(self.case.config["source"]["source_y0"])
+        source_z0 = np.atleast_1d(self.case.config["source"]["source_z0"])
+        sigma_x = np.atleast_1d(self.case.config["source"]["sigma_x"])
+        sigma_y = np.atleast_1d(self.case.config["source"]["sigma_y"])
+        sigma_z = np.atleast_1d(self.case.config["source"]["sigma_z"])
+        strength = np.atleast_1d(self.case.config["source"]["strength"])
+        swvmr = np.atleast_1d(self.case.config["source"]["swvmr"])
 
         if not (
             len(sourcelist)
@@ -715,11 +713,11 @@ class PreProcessing:
 
     def _check_buffer_height(self) -> None:
         """Check if the buffer height lies within the domain."""
-        if "buffer" not in self.case.ini_file.groups:
+        if "buffer" not in self.case.config.groups:
             return
 
-        zstart = self.case.ini_file.get("buffer", "zstart", 0)
-        zsize = self.case.ini_file.get("grid", "zsize")
+        zstart = self.case.config.get("buffer", "zstart", 0)
+        zsize = self.case.config.get("grid", "zsize")
         if zsize is None:
             return
         if zstart > zsize:
@@ -734,12 +732,12 @@ class PreProcessing:
         lowest_grid_level = self._get_lowest_grid_level()
         warning_threshold = 0.9 * lowest_grid_level
 
-        if "boundary" not in self.case.ini_file.groups:
+        if "boundary" not in self.case.config.groups:
             return
 
         for roughness_type in ["z0m", "z0h"]:
-            if roughness_type in self.case.ini_file["boundary"]:
-                surface_roughness = self.case.ini_file["boundary"][roughness_type]
+            if roughness_type in self.case.config["boundary"]:
+                surface_roughness = self.case.config["boundary"][roughness_type]
                 if surface_roughness >= lowest_grid_level:
                     logger.warning(
                         f"Surface roughness ({roughness_type} = {surface_roughness} m) "
@@ -754,9 +752,9 @@ class PreProcessing:
                     )
 
     def _check_sample_times(self) -> None:
-        sample_time_2d = self.case.ini_file.get("cross", "sampletime", None)
-        sample_time_3d = self.case.ini_file.get("dump", "sampletime", None)
-        sample_time_stats = self.case.ini_file.get("stats", "sampletime", None)
+        sample_time_2d = self.case.config.get("cross", "sampletime", None)
+        sample_time_3d = self.case.config.get("dump", "sampletime", None)
+        sample_time_stats = self.case.config.get("stats", "sampletime", None)
 
         # Remove None values
         sample_times = [sample_time_3d, sample_time_2d, sample_time_stats]
@@ -806,7 +804,7 @@ class PreProcessing:
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0) or 0
+        iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)

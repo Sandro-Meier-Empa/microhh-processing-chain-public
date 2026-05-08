@@ -101,14 +101,14 @@ class PostProcessing:
         if gases is None:
             gases_list = [
                 str(gas)
-                for gas in utils.object_to_list(self.case.ini_file["fields"]["slist"])
+                for gas in utils.object_to_list(self.case.config["fields"]["slist"])
             ]
         else:
             gases_list = [str(gas) for gas in np.atleast_1d(gases).tolist()]
 
         vars = prognostic_vars + gases_list
 
-        logger.info(f"########## START PROCESSING OF {self.case.name_spec} ##########")
+        logger.info(f"########## START PROCESSING OF {self.case.full_name} ##########")
 
         # skip post-processing if simulation failed at start
         current_time_step, max_time_step = cscs.get_simulation_progress_from_files(
@@ -141,7 +141,7 @@ class PostProcessing:
             overwrite=overwrite,
             chunks=chunks,
         )
-        logger.info(f"########## FINISH PROCESSING OF {self.case.name_spec} ##########")
+        logger.info(f"########## FINISH PROCESSING OF {self.case.full_name} ##########")
 
     def process_case_on_alps(
         self,
@@ -334,7 +334,7 @@ class PostProcessing:
             vars (Union[str, list], optional):
                 Names of the processed {var}.nc files to move. Defaults to None.
         """
-        store_path = Path(store_path) / self.case.name_spec
+        store_path = Path(store_path) / self.case.full_name
 
         # Handle target path
         if not store_path.exists():
@@ -503,7 +503,7 @@ class PostProcessing:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
-        swvmr = np.all(self.case.ini_file["source"]["swvmr"])
+        swvmr = np.all(self.case.config["source"]["swvmr"])
         if swvmr:
             unit = "mol mol-1"
             prefix = "volume"
@@ -730,7 +730,7 @@ class PostProcessing:
             xr.Dataset: Dataset with source information.
         """
 
-        source_list = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
+        source_list = np.atleast_1d(self.case.config["source"]["sourcelist"])
         nr_sources = len(source_list)
 
         source_names = (
@@ -740,8 +740,8 @@ class PostProcessing:
         )
         source_labels = source_labels or source_names
 
-        sigma_x = np.array(self.case.ini_file["source"]["sigma_x"])
-        sigma_y = np.array(self.case.ini_file["source"]["sigma_y"])
+        sigma_x = np.array(self.case.config["source"]["sigma_x"])
+        sigma_y = np.array(self.case.config["source"]["sigma_y"])
         source_diameter = np.maximum(sigma_x, sigma_y) * 4  # 4 sigma rule
 
         data = {
@@ -750,19 +750,19 @@ class PostProcessing:
             "source_x0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_x0"], dtype=float)
+                    np.array(self.case.config["source"]["source_x0"], dtype=float)
                 ),
             ),
             "source_y0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_y0"], dtype=float)
+                    np.array(self.case.config["source"]["source_y0"], dtype=float)
                 ),
             ),
             "source_z0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_z0"], dtype=float)
+                    np.array(self.case.config["source"]["source_z0"], dtype=float)
                 ),
             ),
             "label": (
@@ -834,11 +834,11 @@ class PostProcessing:
         """
 
         # if lat/lon is defined in .ini file: use these values to convert grid
-        if "lat" in self.case.ini_file["grid"] and source is None:
-            lat_ref = self.case.ini_file["grid"]["lat"]
-            lon_ref = self.case.ini_file["grid"]["lon"]
-            grid_x_ref = self.case.ini_file["grid"]["xsize"] / 2
-            grid_y_ref = self.case.ini_file["grid"]["ysize"] / 2
+        if "lat" in self.case.config["grid"] and source is None:
+            lat_ref = self.case.config["grid"]["lat"]
+            lon_ref = self.case.config["grid"]["lon"]
+            grid_x_ref = self.case.config["grid"]["xsize"] / 2
+            grid_y_ref = self.case.config["grid"]["ysize"] / 2
         elif source is not None:
             lat_ref = source.lat.values
             lon_ref = source.lon.values
@@ -852,10 +852,10 @@ class PostProcessing:
 
         # Create domain
         domain = spatial.Domain(
-            xsize=self.case.ini_file["grid"]["xsize"],
-            ysize=self.case.ini_file["grid"]["ysize"],
-            itot=self.case.ini_file["grid"]["itot"],
-            jtot=self.case.ini_file["grid"]["jtot"],
+            xsize=self.case.config["grid"]["xsize"],
+            ysize=self.case.config["grid"]["ysize"],
+            itot=self.case.config["grid"]["itot"],
+            jtot=self.case.config["grid"]["jtot"],
             lon=lon_ref,
             lat=lat_ref,
             anchor=(grid_x_ref, grid_y_ref),
@@ -933,12 +933,12 @@ class PostProcessing:
                 The dataset with the time converted to a timestamp.
         """
         # use 'datetime_utc' if available in the .ini file
-        if "datetime_utc" in self.case.ini_file["time"] and start_date is None:
-            start_date = self.case.ini_file["time"]["datetime_utc"]
-        elif "datetime_utc" in self.case.ini_file["time"] and start_date is not None:
+        if "datetime_utc" in self.case.config["time"] and start_date is None:
+            start_date = self.case.config["time"]["datetime_utc"]
+        elif "datetime_utc" in self.case.config["time"] and start_date is not None:
             start_date = start_date
             logger.info(
-                f"Using {start_date} to overwrite {self.case.ini_file['time']['datetime_utc']} "
+                f"Using {start_date} to overwrite {self.case.config['time']['datetime_utc']} "
                 f"in .ini file"
             )
         else:
@@ -1180,23 +1180,23 @@ class PostProcessing:
         zh = stats.zh.values
         dz = zh[1:] - zh[:-1]
 
-        itot = self.case.ini_file["grid"]["itot"]
-        jtot = self.case.ini_file["grid"]["jtot"]
-        ktot = self.case.ini_file["grid"]["ktot"]
+        itot = self.case.config["grid"]["itot"]
+        jtot = self.case.config["grid"]["jtot"]
+        ktot = self.case.config["grid"]["ktot"]
 
-        xsize = self.case.ini_file["grid"]["xsize"]
-        ysize = self.case.ini_file["grid"]["ysize"]
+        xsize = self.case.config["grid"]["xsize"]
+        ysize = self.case.config["grid"]["ysize"]
 
         dx = xsize / itot
         dy = ysize / jtot
 
-        scalars = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
-        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
+        scalars = np.atleast_1d(self.case.config["source"]["sourcelist"])
+        strength = np.atleast_1d(self.case.config["source"]["strength"])
 
         time_range = np.arange(
             0,
-            int(self.case.ini_file["time"]["endtime"] + 1),
-            int(self.case.ini_file["time"]["savetime"]),
+            int(self.case.config["time"]["endtime"] + 1),
+            int(self.case.config["time"]["savetime"]),
         )
 
         def read_mass_from_binary(scalar: str, time_range: np.ndarray) -> list[float]:

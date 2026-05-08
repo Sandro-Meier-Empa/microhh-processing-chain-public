@@ -60,10 +60,7 @@ def open_initial_cond(case: "Case") -> xr.Dataset:
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
-
-    fname = Path(case.file_directory, f"{case.name}_input.nc")
-
-    return _combine_nc_groups(fname)
+    return _combine_nc_groups(case.initial_conditions_file_path)
 
 
 def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
@@ -83,9 +80,7 @@ def open_statistics(case: "Case") -> xr.Dataset:
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
-    file_path = Path(case.file_directory, f"{case.name}.default.0000000.nc")
-
-    return _combine_nc_groups(file_path)
+    return _combine_nc_groups(case.statistics_file_path)
 
 
 def open_microhh_out(case: "Case") -> pd.DataFrame:
@@ -102,8 +97,7 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame containing the parsed case.out data.
     """
-    out_file = Path(case.file_directory, f"{case.name}.out")
-    df = pd.read_csv(out_file, sep=r"\s+")
+    df = pd.read_csv(case.out_file_path, sep=r"\s+")
 
     df["CPUT"] = df["CPUDT"].cumsum()
 

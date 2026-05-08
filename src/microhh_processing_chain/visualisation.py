@@ -466,7 +466,7 @@ class CaseViewer:
         # Information about sources
         try:
             source_strength = src.get_source_strength(self.case, to_unit="kg/h")
-            source_height = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
+            source_height = np.atleast_1d(self.case.config["source"]["source_z0"])
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append("\nSources")
@@ -595,7 +595,7 @@ class CaseViewer:
 
         u_prof = wind_proc.get_wind_profile(
             z=initial_cond.z.values,
-            z0=self.case.ini_file["boundary"]["z0m"],
+            z0=self.case.config["boundary"]["z0m"],
             u_star=ustar,
             T=mean_temp,
             L=obuk,

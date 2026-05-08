@@ -584,7 +584,7 @@ def print_simulation_progress(case: "Case") -> None:
     end_color = PrintColor.ENDC
 
     print(
-        f"{color.value}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
+        f"{color.value}Simulation progress of {case.full_name}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
     )
 
 
@@ -620,7 +620,7 @@ def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
             timestep = future.result()
             current_timestep = max(current_timestep, timestep)
 
-    max_timestep = int(case.ini_file["time"]["endtime"])
+    max_timestep = int(case.config["time"]["endtime"])
 
     return current_timestep, max_timestep
 
@@ -632,7 +632,7 @@ def get_simulation_progress_from_out(case: "Case") -> Tuple[float, int]:
     mhh_out = io.open_microhh_out(case)
 
     current_timestep = mhh_out["TIME"].iloc[-1]
-    max_timestep = int(case.ini_file["time"]["endtime"])
+    max_timestep = int(case.config["time"]["endtime"])
 
     return current_timestep, max_timestep
 
