@@ -14,6 +14,7 @@ import ucat
 
 import ls2d
 import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.preprocessing as pre
 import microhh_processing_chain.io as io
 from microhh_processing_chain.enums import WindIntegrationMethod
 from microhh_processing_chain.constants import EARTH_ROTATION_RATE
@@ -616,7 +617,7 @@ def wind_profile_from_given_wind(
             f"Wind speed at {height} m ({actual_wind_speed:.2f} m/s) deviates too much from prescribed wind speed ({wind_speed} m/s).\n"
             "Returning vertically homogeneous wind profile."
         )
-        wind_profile = init.interpolate_to_model_profile(
+        wind_profile = pre.interpolate_to_model_profile(
             grid=grid, variable_value=wind_speed
         )
 

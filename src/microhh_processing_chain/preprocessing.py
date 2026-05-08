@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Union, Optional, List
 
+import ls2d
 import numpy as np
 import xarray as xr
 
@@ -997,7 +998,82 @@ def _get_common_case_name(cases: list[init.Case]) -> str:
     return str(case_names[0])
 
 
+def interpolate_to_model_profile(
+    grid: Union[
+        np.ndarray,
+        ls2d.grid.Grid_equidist,
+        ls2d.grid.Grid_linear_stretched,
+        ls2d.grid.Grid_stretched,
+        ls2d.grid.Grid_stretched_manual,
+    ],
+    variable_value: Union[float, int] = 0.0,
+    variable_profile: Optional[Union[list, np.ndarray]] = None,
+    input_profile: Optional[Union[list, np.ndarray]] = None,
+) -> np.ndarray:
+    """Interpolate a vertical profile to the MicroHH model height levels.
+
+    Can also be used to create a constant profile by specifying only
+    *variable_value*.
+
+    Args:
+        grid: MicroHH grid object (from LS2D) or a height-level array.
+        variable_value: Constant value used when *variable_profile* is
+            not provided.
+        variable_profile: Vertical profile of the variable to
+            interpolate.
+        input_profile: Height levels corresponding to
+            *variable_profile*.
+
+    Returns:
+        Values interpolated (or filled) to the model height levels.
+
+    Raises:
+        ValueError: If neither *variable_value* nor *variable_profile*
+            is provided, or if *grid* is not a recognised type.
+    """
+    # check if variable value or variable profile is provided
+    if variable_value is None and variable_profile is None:
+        raise ValueError(
+            "Please provide either a variable value or a variable profile."
+        )
+
+    if isinstance(grid, np.ndarray):
+        model_profile = grid
+    elif isinstance(
+        grid,
+        (
+            ls2d.grid.Grid_equidist,
+            ls2d.grid.Grid_linear_stretched,
+            ls2d.grid.Grid_stretched,
+            ls2d.grid.Grid_stretched_manual,
+        ),
+    ):
+        model_profile = grid.z
+    else:
+        raise ValueError(
+            "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
+        )
+
+    # convert model profile and variable profile to numpy arrays
+    if variable_profile is not None:
+        variable_profile = np.array(variable_profile)
+    if input_profile is not None:
+        input_profile = np.array(input_profile)
+
+    if variable_profile is None:
+        model_var_profile = np.full(len(model_profile), variable_value)
+    else:
+        if input_profile is None:
+            raise ValueError(
+                "Please provide 'input_profile' when 'variable_profile' is given."
+            )
+        model_var_profile = np.interp(model_profile, input_profile, variable_profile)
+
+    return model_var_profile
+
+
 __all__ = [
     "PreProcessing",
     "create_run_4x_script",
+    "interpolate_to_model_profile",
 ]
