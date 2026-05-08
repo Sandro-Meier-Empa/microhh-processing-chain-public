@@ -149,10 +149,44 @@ def save_case_input(
     )
 
 
+def open_jobreport(path: Union[str, Path]) -> pd.DataFrame:
+    """Open a jobreport file as a pandas DataFrame.
+
+    Args:
+        path (Union[str, Path]): Path where the jobreport file is located.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the jobreport data.
+    """
+    path = Path(path)
+
+    if path.is_file() and path.suffix == ".csv":
+        csv_file = path
+    else:
+        # get the csv file in the directory
+        csv_files = list(path.glob("jobreport*/*/*.csv"))
+
+        if not csv_files:
+            raise FileNotFoundError(f"No jobreport .csv file found in {path}")
+
+        if len(csv_files) > 1:
+            raise FileExistsError(f"Multiple .csv files found in {path}.")
+
+        csv_file = csv_files[0]
+
+    df = pd.read_csv(csv_file)
+    df["startTime"] = pd.to_datetime(df["startTime"], unit="us")
+    df["endTime"] = pd.to_datetime(df["endTime"], unit="us")
+    df["runTime"] = df["endTime"] - df["startTime"]
+
+    return df
+
+
 __all__ = [
     "open_microhh_nc",
     "open_initial_cond",
     "open_statistics",
     "open_microhh_out",
     "save_case_input",
+    "open_jobreport",
 ]
