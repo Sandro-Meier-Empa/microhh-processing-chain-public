@@ -26,9 +26,8 @@ import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.spatial as spatial
-import microhh_processing_chain.wind as wind_proc
 from microhh_processing_chain import utils
-from microhh_processing_chain.enums import Precision, WindIntegrationMethod
+from microhh_processing_chain.enums import Precision
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
 
 logger = logging.getLogger(__name__)
@@ -43,106 +42,6 @@ class PostProcessing:
                 Case to post-process.
         """
         self.case = case
-
-    def run_postprocessing(
-        self,
-        py_file_path: Union[str, Path],
-        gases: Optional[Union[str, list[str]]] = None,
-        prognostic_vars: list[str] = ["u", "v", "th"],
-        precision: Union[Precision, str] = Precision.DOUBLE,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        method: Union[WindIntegrationMethod, str] = WindIntegrationMethod.HEIGHT,
-        height: Optional[float] = None,
-        profile_gas: Optional[str] = None,
-        overwrite: bool = False,
-        save: bool = True,
-        chunks: Optional[Union[str, dict[str, int]]] = None,
-    ) -> None:
-        """Run all post-processing steps to...
-            ... create netCDF files from grid output files
-            ... convert gas mixing ratios to concentrations
-            ... vertically integrate the concentrations
-            ... vertically integrate wind data
-
-        Args:
-            gases (Union[str, list]):
-                Gas or list of gases to process to concentrations and vertically integrate.
-                If not given it will process all gases specified in the .ini file.
-            prognostic_vars (list, optional):
-                Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "qt", "th"]
-            precision (str, optional):
-                Precision used for the created .nc file. Defaults to "double".
-            start_time (int, optional. Default: None):
-                Start time in s of the data to process.
-            end_time (int, optional. Default: None):
-                End time in s of the data to process.
-            to_unit (str, optional):
-                Units of the trace gas columns. Defaults to "kg m-2".
-            default_p_and_t (bool, optional):
-                Indicate if the standard values for pressure and temperature should be
-                used to convert mixing ratios to concentrations or if the
-                modelled pressure and temperature should be used. Defaults to False.
-            method (str, optional):
-                Method to vertically integrate wind speeds. Available options are
-                "mean", "median", "height", "concentration_weighted". Defaults to "height".
-            height (float, optional):
-                Height at which the wind speed should be used if method = 'height'. Defaults to None.
-            profile_gas (str, optional):
-                Gas used to weight the wind speed if method = 'concentration_weighted'.
-            overwrite (bool, optional):
-                Specify if the resulting dataset should be overwritten if it exists. Defaults to False.
-            save (bool, optional):
-                Specify if the resulting dataset should be saved. Defaults to True.
-            chunks (Union[str, dict], optional):
-                Chunks used when opening the netCDF files with xarray. Defaults to None.
-        """
-        gases_list: list[str]
-        if gases is None:
-            gases_list = [
-                str(gas)
-                for gas in utils.object_to_list(self.case.config["fields"]["slist"])
-            ]
-        else:
-            gases_list = [str(gas) for gas in np.atleast_1d(gases).tolist()]
-
-        vars = prognostic_vars + gases_list
-
-        logger.info(f"########## START PROCESSING OF {self.case.full_name} ##########")
-
-        # skip post-processing if simulation failed at start
-        current_time_step, max_time_step = cscs.get_simulation_progress_from_files(
-            self.case
-        )
-        if current_time_step == 0:
-            logger.error("ERROR: Simulation failed. Skipped post-processing.")
-            return
-
-        self.create_3d_output(
-            vars=vars,
-            overwrite=overwrite,
-            precision=precision,
-            start_time=start_time,
-            end_time=end_time,
-        )
-
-        if profile_gas is None and method == "concentration_weighted":
-            profile_gas = gases_list[0]
-            logger.warning(
-                f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
-            )
-
-        wind_processing = wind_proc.WindProcessing(self.case)
-        wind_processing.create_2D_wind(
-            method=method,
-            gas=profile_gas,
-            height=height,
-            save=save,
-            overwrite=overwrite,
-            chunks=chunks,
-        )
-        logger.info(f"########## FINISH PROCESSING OF {self.case.full_name} ##########")
 
     def process_case_on_alps(
         self,
