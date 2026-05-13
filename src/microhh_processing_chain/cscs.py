@@ -629,9 +629,12 @@ def get_simulation_progress_from_out(case: "Case") -> Tuple[float, int]:
     """Get current simulation progress of a MicroHH simulation based on the
     `{case.name}.out` file generated when running the model.
     """
-    mhh_out = io.open_microhh_out(case)
+    try:
+        mhh_out = io.open_microhh_out(case)
+        current_timestep = mhh_out["TIME"].iloc[-1]
+    except FileNotFoundError:
+        current_timestep = 0.0
 
-    current_timestep = mhh_out["TIME"].iloc[-1]
     max_timestep = int(case.config["time"]["endtime"])
 
     return current_timestep, max_timestep
