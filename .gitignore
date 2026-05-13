@@ -18,3 +18,5 @@ microhhpy/
 u-cat/
 LS2D/
 microhh_py/
+pyrightconfig.json
+.pre-commit-config.yaml

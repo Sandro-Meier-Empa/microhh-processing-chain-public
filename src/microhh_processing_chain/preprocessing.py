@@ -899,7 +899,11 @@ def create_run_4x_script(
     master_job_file = Path(scratch_path, "run_microhh_4x.sbash")
 
     commands = _get_microhh_run_commands(
-        case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path
+        case_list=cases,
+        mode=RunMode.RUN,
+        jobreport_path=jobreport_path,
+        cpus_per_task_per_case=18,
+        gpus_per_task_per_case=1,
     )
 
     if not master_job_file.exists() or overwrite:

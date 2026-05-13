@@ -1,6 +1,6 @@
+import re
 import json
 import os
-import re
 import shutil
 import subprocess
 import logging
@@ -617,6 +617,34 @@ class Case:
             f"{self.name}.ini",
             f"{self.name}_input.nc",
             "microhh",
+            "van_genuchten_parameters.nc",
+            "alb_dif.0000000",
+            "alb_dir.0000000",
+            "cloud_coefficients_lw.nc",
+            "lb_dif.0000000",
+            "coefficients_sw.nc",
+            "index_veg.0000000",
+            "lambda_unstable.0000000",
+            "rs_veg_min.0000000",
+            "water_mask.0000000",
+            "alb_dir.0000000",
+            "cs_veg.0000000",
+            "lsm_input.nc",
+            "t_bot_water.0000000",
+            "z0h.0000000",
+            "cloud_coefficients_lw.nc",
+            "c_veg.0000000",
+            "theta_soil.0000000",
+            "z0m.0000000",
+            "cloud_coefficients_sw.nc",
+            "gD.0000000",
+            "lai.0000000",
+            "root_frac.0000000",
+            "coefficients_lw.nc",
+            "index_soil.0000000",
+            "lambda_stable.0000000",
+            "rs_soil_min.0000000",
+            "t_soil.0000000",
         ]
         with utils.confirm_action(
             f"Are you sure you want to clean the case at {self.file_directory}?"
