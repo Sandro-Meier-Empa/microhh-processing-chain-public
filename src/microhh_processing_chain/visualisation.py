@@ -3,7 +3,6 @@ import logging
 import re
 import matplotlib.figure
 
-from pathlib import Path
 from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable, get_cmap
@@ -62,7 +61,7 @@ class CaseViewer:
             figsize (tuple, optional): Size of the figure. Defaults to (15, 10).
             cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
         """
-        file_path = Path(self.case.file_directory) / f"{self.case.name}_input.nc"
+        file_path = self.case.initial_conditions_file_path
 
         if not file_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {file_path}")
