@@ -853,7 +853,7 @@ def _get_microhh_run_commands(
 
     Args:
         case_list: List of cases to run.
-        mode: Run mode ('run' for init+run, 'rerun' for run only).
+        mode: Run mode, determines which phases of MicroHH to execute. "run" (default) executes both "init" and "run" phases, while "rerun" and "restart" execute only the "run" phase.
         cpus_per_task_per_case: CPUs per srun step (multi-GPU only).
         gpus_per_task_per_case: GPUs per srun step (multi-GPU only).
         jobreport_path: Optional wrapper prefix for the final phase
@@ -862,6 +862,7 @@ def _get_microhh_run_commands(
     Returns:
         List of shell command strings.
     """
+
     case_list = list(case_list)
     mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
@@ -869,8 +870,10 @@ def _get_microhh_run_commands(
         phases = ["init", "run"]
     elif mode_val == RunMode.RERUN.value:
         phases = ["run"]
+    elif mode_val == RunMode.RESTART.value:
+        phases = ["run"]
     else:
-        raise ValueError("mode must be either 'run' or 'rerun'")
+        raise ValueError("mode must be either 'run', 'rerun', or 'restart'")
 
     if len(case_list) == 1:
         return _get_single_run_command(
@@ -987,25 +990,27 @@ def create_run_4x_script(
     cases: List[init.Case],
     alps_setup: cscs.AlpsSetup,
     scratch_path: str,
+    mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
 ) -> Path:
     """Run 4 prepared simulations on GPU."""
     ncases = len(cases)
+    run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
     if ncases != 4:
         logger.warning(f"Expected 4 cases, but got {len(cases)}.")
 
-    master_job_file = Path(scratch_path, f"run_microhh_{ncases}x.sbash")
+    master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbash")
 
     commands = _get_microhh_run_commands(
-        case_list=cases, mode=RunMode.RUN, jobreport_path=jobreport_path
+        case_list=cases, mode=mode, jobreport_path=jobreport_path
     )
 
     if not master_job_file.exists() or overwrite:
         master_job_file = alps_setup.create_bash_script(
             commands=commands,
-            job_name=f"run_microhh_{ncases}x",
+            job_name=f"{run_mode}_microhh_{ncases}x",
             file_path=master_job_file,
             scratch_path=scratch_path,
         )

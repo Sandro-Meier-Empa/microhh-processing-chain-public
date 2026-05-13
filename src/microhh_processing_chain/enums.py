@@ -88,6 +88,7 @@ class RunMode(str, Enum):
 
     RUN = "run"
     RERUN = "rerun"
+    RESTART = "restart"
 
 
 __all__ = [
