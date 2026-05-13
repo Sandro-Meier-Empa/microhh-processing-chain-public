@@ -130,8 +130,7 @@ class CaseViewer:
 
         elif len(dims) == 1:
             if aux_dim:
-                ax.plot(data.values, data[aux_dim], marker="x")
-                ax.set_ylabel(aux_dim)
+                data.plot(ax=ax, y=aux_dim, marker="x")  # pyright: ignore
             elif time_dim:
                 data.plot(ax=ax, marker="x")  # pyright: ignore
             else:
@@ -883,14 +882,19 @@ def compare_initial_conditions(
         x_dim = time_dims[0] if time_dims else None
         y_dim = "z" if "z" in ic_case1[var].dims else None
 
-        ic_case1[var].plot(ax=ax[0], y=y_dim, x=x_dim)  # pyright: ignore
+        plot_kwargs = {"y": y_dim, "x": x_dim}
+
+        if ic_case1[var].ndim > 1:
+            plot_kwargs["cbar_kwargs"] = {"orientation": "horizontal", "pad": 0.15}
+
+        ic_case1[var].plot(ax=ax[0], **plot_kwargs)  # pyright: ignore
         ax[0].set_title(case1.suffix)
-        ic_case2[var].plot(ax=ax[1], y=y_dim, x=x_dim)  # pyright: ignore
+        ic_case2[var].plot(ax=ax[1], **plot_kwargs)  # pyright: ignore
         ax[1].set_title(case2.suffix)
 
         if show_differences:
             diff = _compute_difference(ic_case1, ic_case2, var)
-            diff.plot(ax=ax[2], y=y_dim, x=x_dim)  # pyright: ignore
+            diff.plot(ax=ax[2], **plot_kwargs)  # pyright: ignore
             ax[2].set_title("Difference")
 
         plt.tight_layout()
