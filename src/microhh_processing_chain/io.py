@@ -51,7 +51,7 @@ def open_microhh_nc(
 
 def open_initial_cond(case: "Case") -> xr.Dataset:
     """Read the netCDF file containing the initial conditions
-    of a model run (<name>_input.nc).
+    of a model run ({case.name}_input.nc).
 
     Args:
         case (Case):
@@ -60,6 +60,7 @@ def open_initial_cond(case: "Case") -> xr.Dataset:
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
+
     return _combine_nc_groups(case.initial_conditions_file_path)
 
 
