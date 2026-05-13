@@ -868,9 +868,7 @@ def _get_microhh_run_commands(
 
     if mode_val == RunMode.RUN.value:
         phases = ["init", "run"]
-    elif mode_val == RunMode.RERUN.value:
-        phases = ["run"]
-    elif mode_val == RunMode.RESTART.value:
+    elif mode_val in (RunMode.RERUN.value, RunMode.RESTART.value):
         phases = ["run"]
     else:
         raise ValueError("mode must be either 'run', 'rerun', or 'restart'")
