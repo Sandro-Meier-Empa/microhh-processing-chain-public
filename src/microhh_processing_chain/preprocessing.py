@@ -782,13 +782,22 @@ class PreProcessing:
             ini_start_time = int(self.case.config["time"]["starttime"])
             ini_end_time = int(self.case.config["time"]["endtime"])
 
-            if ini_start_time != ic_start_time:
-                raise ValueError(
-                    f"Start time in .ini file ({ini_start_time}s) does not match the start time in initial conditions variable '{time_coord}' ({ic_start_time}s)."
+            # If times do not match exactly, log a general warning.
+            if ini_start_time != ic_start_time or ini_end_time != ic_end_time:
+                logger.warning(
+                    f"Times in .ini file do not match exactly the times in initial conditions variable '{time_coord}': "
+                    f"ini start={ini_start_time}s, ic start={ic_start_time}s; "
+                    f"ini end={ini_end_time}s, ic end={ic_end_time}s."
                 )
-            if ini_end_time != ic_end_time:
+
+            # Raise value errors for problematic mismatches
+            if ini_start_time < ic_start_time:
                 raise ValueError(
-                    f"End time in .ini file ({ini_end_time}s) does not match the end time in initial conditions variable '{time_coord}' ({ic_end_time}s)."
+                    f"Start time in .ini file ({ini_start_time}s) is earlier than the start time in initial conditions variable '{time_coord}' ({ic_start_time}s)."
+                )
+            if ini_end_time > ic_end_time:
+                raise ValueError(
+                    f"End time in .ini file ({ini_end_time}s) is later than the end time in initial conditions variable '{time_coord}' ({ic_end_time}s)."
                 )
 
     def _get_lowest_grid_level(self) -> float:
