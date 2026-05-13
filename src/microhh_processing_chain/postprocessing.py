@@ -2,6 +2,7 @@ import os
 import re
 import netCDF4 as nc4
 import scipy
+import shlex
 import shutil
 import zipfile
 import logging
@@ -179,14 +180,21 @@ class PostProcessing:
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        cmd = f"srun {python_path} {py_file_path} --file_directory {self.case.file_directory}"
+        cmd_parts = [
+            "srun",
+            str(python_path),
+            str(py_file_path),
+            "--file_directory",
+            str(self.case.file_directory),
+        ]
 
         for key, value in additional_args.items():
             if isinstance(value, list):  # convert list to string for command
-                list_string = " ".join(map(str, value))
-                cmd += f" --{key} {list_string}"
+                cmd_parts.extend([f"--{key}", *[str(item) for item in value]])
             else:
-                cmd += f" --{key} {value}"
+                cmd_parts.extend([f"--{key}", str(value)])
+
+        cmd = shlex.join(cmd_parts)
 
         # submit bash script to run post processing in parallel on alps
         job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbash")
@@ -1514,8 +1522,172 @@ def format_data_for_cdo(
     return ds
 
 
+def create_2d_3d_output_script(
+    cases: list[init.Case],
+    alps_setup: cscs.AlpsSetup,
+    scratch_path: Union[str, Path],
+    py_file_path: Union[str, Path],
+    python_path: Union[str, Path],
+    vars_3d: Union[str, list[str]],
+    vars_2d: Union[str, list[str]],
+    sample_time: Optional[int] = None,
+    job_name: str = "create_2d_3d_output",
+    overwrite: bool = False,
+) -> Path:
+    """Create a SLURM script to create 2D and 3D output for cases in parallel.
+
+    The generated script launches one unbuffered Python process per case in the
+    background and waits for all cases to finish. Running Python with ``-u``
+    ensures that logging and print output from the 2D/3D conversion functions is
+    written to the SLURM ``.out`` file while the job is still running.
+
+    Args:
+        cases (list[init.Case]):
+            Cases to post-process. All cases are launched in parallel.
+        alps_setup (cscs.AlpsSetup):
+            Alps setup used to create the SLURM script header.
+        scratch_path (Union[str, Path]):
+            Directory where the SLURM script and output file are written.
+        py_file_path (Union[str, Path]):
+            Path to the Python script that creates the 2D and 3D output.
+        python_path (Union[str, Path]):
+            Python executable to use.
+        vars_3d (Union[str, list[str]]):
+            Variables to create 3D output for.
+        vars_2d (Union[str, list[str]]):
+            Variables to create 2D output for.
+        sample_time (int, optional):
+            Sampling interval passed to the processing script.
+        job_name (str, optional):
+            Name of the SLURM job and script. Defaults to "create_2d_3d_output".
+        overwrite (bool, optional):
+            Overwrite an existing script. Defaults to False.
+
+    Returns:
+        Path:
+            Path to the created SLURM script.
+    """
+    if not cases:
+        raise ValueError("At least one case is required.")
+
+    # check if cpus_per_task in alps_setup has been set and is sufficient for
+    # the number of cases and variables
+    ncases = len(utils.object_to_list(cases))
+    nvars = len(utils.object_to_list(vars_3d))
+    ncpus_per_task = alps_setup.cpus_per_task
+
+    if ncpus_per_task is not None and ncpus_per_task < ncases * nvars:
+        logger.warning(
+            f"cpus_per_task in alps_setup is set to {ncpus_per_task}, but {ncases * nvars} "
+            f"CPUs are required to process all variables in parallel."
+            f"cpus_per_task will be set to {ncases * nvars}."
+        )
+        alps_setup.cpus_per_task = ncases * nvars
+    if ncpus_per_task is None:
+        alps_setup.cpus_per_task = ncases * nvars
+        logger.info(
+            f"cpus_per_task in alps_setup is not set. Setting it to {ncases * nvars}."
+        )
+
+    job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
+    job_file = Path(scratch_path, f"{job_name_formatted}.sbash")
+
+    if job_file.exists() and not overwrite:
+        logger.info(f"Reading existing bash script {job_file}")
+        return job_file
+
+    commands = _get_2d_3d_output_commands(
+        cases=cases,
+        py_file_path=py_file_path,
+        python_path=python_path,
+        vars_3d=[str(var) for var in utils.object_to_list(vars_3d)],
+        vars_2d=[str(var) for var in utils.object_to_list(vars_2d)],
+        sample_time=sample_time,
+    )
+
+    job_file = alps_setup.create_bash_script(
+        commands=commands,
+        job_name=job_name_formatted,
+        file_path=job_file,
+        scratch_path=scratch_path,
+    )
+
+    return Path(job_file)
+
+
+def _get_2d_3d_output_commands(
+    cases: list[init.Case],
+    py_file_path: Union[str, Path],
+    python_path: Union[str, Path],
+    vars_3d: list[str],
+    vars_2d: list[str],
+    sample_time: Optional[int] = None,
+) -> list[str]:
+    commands = [
+        "# Define post-processing script and variables",
+        f"SCRIPT={shlex.quote(str(py_file_path))}",
+        f"PY_PATH={shlex.quote(str(python_path))}",
+        "VARS_3D=(",
+    ]
+
+    for var in vars_3d:
+        commands.append(f"    {shlex.quote(var)}")
+
+    commands.extend(
+        [
+            ")",
+            "VARS_2D=(",
+        ]
+    )
+
+    for var in vars_2d:
+        commands.append(f"    {shlex.quote(var)}")
+
+    commands.extend(
+        [
+            ")",
+            "",
+            "CASE_DIRS=(",
+        ]
+    )
+
+    for case in cases:
+        commands.append(f"    {shlex.quote(str(case.file_directory))}")
+
+    commands.extend(
+        [
+            ")",
+            "",
+            f"# Launch all {len(cases)} cases in the background",
+            'for CASE_DIR in "${CASE_DIRS[@]}"; do',
+            '    "$PY_PATH" -u "$SCRIPT" \\',
+            '        --file_directory "$CASE_DIR" \\',
+            '        --vars_3d "${VARS_3D[@]}" \\',
+            '        --vars_2d "${VARS_2D[@]}" \\',
+        ]
+    )
+
+    if sample_time is not None:
+        commands.append(f"        --sample_time {sample_time} &")
+    else:
+        commands[-1] = '        --vars_2d "${VARS_2D[@]}" &'
+
+    commands.extend(
+        [
+            "done",
+            "",
+            "# Wait for all background jobs to finish",
+            "wait",
+            'echo "All cases completed."',
+        ]
+    )
+
+    return commands
+
+
 __all__ = [
     "PostProcessing",
+    "create_2d_3d_output_script",
     "merge_restart_statistics",
     "format_data_for_cdo",
     "add_gaussian_noise",
