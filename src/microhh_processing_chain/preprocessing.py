@@ -6,14 +6,15 @@ import subprocess
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional, List
+from typing import Union, Optional, List
 
+import ls2d
 import numpy as np
+import xarray as xr
 
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.cscs as cscs
-import microhh_processing_chain.io as io
-from microhh_processing_chain import utils
+from microhh_processing_chain import io, utils
 from microhh_processing_chain.enums import RunMode
 
 logger = logging.getLogger(__name__)
@@ -200,14 +201,14 @@ class PreProcessing:
             restart_time (int):
                 Time in seconds from which the simulation is restarted.
         """
-        start_time = self.case.ini_file["time"]["starttime"]
+        start_time = self.case.config["time"]["starttime"]
 
         if start_time != restart_time:
             raise ValueError(
                 f"start time ({start_time}s) in .ini file does not match "
                 f"the specified restart_time ({restart_time}s)."
             )
-        end_time = self.case.ini_file["time"]["endtime"]
+        end_time = self.case.config["time"]["endtime"]
         if end_time <= restart_time:
             raise ValueError(
                 f"end time ({end_time}s) must be larger than restart_time ({restart_time}s)."
@@ -286,17 +287,13 @@ class PreProcessing:
         self._adjust_mpi_settings()
         self._check_grid_match()
         self._check_nodes_match()
-        self._check_tdep_bc()
         self._check_grid_order()
+        self._check_dump()
         self._check_thermo()
-        self._check_tdep_pbot()
         self._check_forcing()
-        self._check_tdep_geo()
-        self._check_tdep_ls_forcing()
-        self._check_dtep_wls()
-        self._check_nudging()
-        self._check_tdep_nudging()
-        self._check_nudgelists()
+        self._check_boundary_logic()
+        self._check_forcing_logic()
+        self._check_thermo_logic()
         self._check_source_position()
         self._check_source_height()
         self._check_source_sigma()
@@ -306,36 +303,35 @@ class PreProcessing:
         self._check_buffer_height()
         self._check_surface_roughness_height()
         self._check_sample_times()
+        self._check_initial_conditions_times()
 
     def _check_ini_content(self) -> None:
         """check if the .ini file is not empty"""
-        if len(self.case.ini_file.groups) == 0:
+        if len(self.case.config.groups) == 0:
             raise ValueError(f"{self.case.name}.ini is empty.")
 
     def _adjust_mpi_settings(self) -> None:
         """Adjust MPI settings if MPI is disabled."""
         if (
             self.alps_setup.processor == "gpu"
-            and not self.case.ini_file["master"]["npx"] == 1
-            and not self.case.ini_file["master"]["npy"] == 1
+            and not self.case.config["master"]["npx"] == 1
+            and not self.case.config["master"]["npy"] == 1
         ):
             for dim in ["x", "y"]:
-                self.case.ini_file.set_value(
-                    group="master", variable=f"np{dim}", value=1
-                )
-            self.case.ini_file.save(self.case.ini_path, allow_overwrite=True)
+                self.case.config.set_value(group="master", variable=f"np{dim}", value=1)
+            self.case.config.save(self.case.ini_file_path, allow_overwrite=True)
             logger.info("Overwriting 'npx' and 'npy' because MPI is disabled.")
 
     def _check_grid_match(self) -> None:
         """Check if the grid size matches the number of processes."""
         itot, jtot, ktot = (
-            self.case.ini_file["grid"]["itot"],
-            self.case.ini_file["grid"]["jtot"],
-            self.case.ini_file["grid"]["ktot"],
+            self.case.config["grid"]["itot"],
+            self.case.config["grid"]["jtot"],
+            self.case.config["grid"]["ktot"],
         )
         npx, npy = (
-            self.case.ini_file["master"]["npx"],
-            self.case.ini_file["master"]["npy"],
+            self.case.config["master"]["npx"],
+            self.case.config["master"]["npy"],
         )
 
         if itot % npx != 0:
@@ -352,7 +348,7 @@ class PreProcessing:
     def _check_nodes_match(self) -> None:
         """Check if the number of nodes matches the expected value."""
         expected_cores = (
-            self.case.ini_file["master"]["npx"] * self.case.ini_file["master"]["npy"]
+            self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
         )
         if self.alps_setup.ntasks_per_node is None:
             raise ValueError("Alps setup requires 'ntasks_per_node' to validate nodes.")
@@ -364,59 +360,11 @@ class PreProcessing:
                 f"expected cores ({expected_cores})."
             )
 
-    def _check_switch_list_vars_alignment(
-        self,
-        switch_config: Tuple[str, str, bool],
-        initial_cond_var_name: str,
-        list_config: Optional[Tuple[str, str, list]] = None,
-    ) -> None:
-        """Check if switches, variable lists, and initial condition variables align.
-
-        Args:
-            switch_config: Tuple of (group, key, default) for the switch in the ini file.
-            initial_cond_var_name: The name of the variable to check in initial conditions.
-            list_config: Optional tuple of (group, key, default) for the list in the ini file.
-        """
-        switch_group, switch_key, switch_default = switch_config
-        switch_value = self.case.ini_file.get(switch_group, switch_key, switch_default)
-
-        initial_cond = io.open_initial_cond(self.case)
-
-        # Determine if relevant variables exist in initial conditions
-        matching_vars = [
-            str(v)
-            for v in initial_cond.data_vars
-            if fnmatch.fnmatch(str(v), initial_cond_var_name)
-        ]
-        has_vars = len(matching_vars) > 0
-
-        # Check alignment
-        if list_config is not None:
-            list_group, list_key, list_default = list_config
-            list_value = self.case.ini_file.get(list_group, list_key, list_default)
-            if bool(switch_value) != bool(list_value) != has_vars:
-                raise ValueError(
-                    f"Switch '{switch_key}' in group '{switch_group}', list '{list_key}' in group '{list_group}', and initial condition variables do not align."
-                )
-        else:
-            if bool(switch_value) != has_vars:
-                raise ValueError(
-                    f"Switch '{switch_key}' in group '{switch_group}' and initial condition variables do not align."
-                )
-
-    def _check_tdep_bc(self) -> None:
-        """Check if switches for dtep boundary conditions, timedeplist and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("boundary", "swtimedep", False),
-            initial_cond_var_name="*_sbot",
-            list_config=("boundary", "timedeplist", []),
-        )
-
     def _check_grid_order(self) -> None:
         """Check that the grid order matches the orders of the advection schemes."""
-        swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
-        swpres = self.case.ini_file.get("pres", "swpres", None)
-        swadvec = str(self.case.ini_file.get("advec", "swadvec", None))
+        swspatial = self.case.config.get("grid", "swspatialorder", None)
+        swpres = self.case.config.get("pres", "swpres", None)
+        swadvec = str(self.case.config.get("advec", "swadvec", None))
 
         if swspatial is None:
             return
@@ -434,9 +382,9 @@ class PreProcessing:
     def _check_thermo(self) -> None:
         """Check if the thermo settings are valid."""
 
-        swthermo = self.case.ini_file.get("thermo", "swthermo", None)
-        swbasestate = self.case.ini_file.get("thermo", "swbasestate", None)
-        thref0 = self.case.ini_file.get("thermo", "thref0", None)
+        swthermo = self.case.config.get("thermo", "swthermo", None)
+        swbasestate = self.case.config.get("thermo", "swbasestate", None)
+        thref0 = self.case.config.get("thermo", "thref0", None)
 
         if swbasestate is None:
             return
@@ -450,7 +398,7 @@ class PreProcessing:
                     )
 
         elif swbasestate == "anelastic":
-            swspatial = self.case.ini_file.get("grid", "swspatialorder", None)
+            swspatial = self.case.config.get("grid", "swspatialorder", None)
             if swspatial == 4:
                 raise ValueError(
                     "'swbasestate'='anelastic' is not supported for 'swspatialorder'=4"
@@ -461,18 +409,11 @@ class PreProcessing:
                 "Valid options are 'boussinesq' or 'anelastic'."
             )
 
-    def _check_tdep_pbot(self) -> None:
-        """Check if switches for dtep pbot and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_pbot", False),
-            initial_cond_var_name="p_bot",
-        )
-
     def _check_forcing(self) -> None:
         """Check if the specified forcing is valid."""
-        force = self.case.ini_file.get("force", "swlspres", None)
-        fc = self.case.ini_file.get("force", "fc", None)
-        dpdx = self.case.ini_file.get("force", "dpdx", None)
+        force = self.case.config.get("force", "swlspres", None)
+        fc = self.case.config.get("force", "fc", None)
+        dpdx = self.case.config.get("force", "dpdx", None)
 
         if force is None:
             return
@@ -485,13 +426,13 @@ class PreProcessing:
                     "when using 'swlspres = geo' forcing."
                 )
         elif force == "dpdx":
-            dpdx = self.case.ini_file["force"].get("dpdx", None)
+            dpdx = self.case.config["force"].get("dpdx", None)
             if dpdx is None:
                 raise ValueError(
                     "'dpdx' must be specified when using 'swlspres = dpdx' forcing."
                 )
         elif force == "uflux":
-            uflux = self.case.ini_file["force"].get("uflux", None)
+            uflux = self.case.config["force"].get("uflux", None)
             if uflux is None:
                 raise ValueError(
                     "'uflux' must be specified when using 'swlspres = uflux' forcing."
@@ -502,74 +443,190 @@ class PreProcessing:
                 "Valid options are 'geo', 'dpdx', or 'uflux'."
             )
 
-    def _check_tdep_geo(self) -> None:
-        """Check if switches for dtep geostrophic forcing and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_geo", False),
-            initial_cond_var_name="?_geo",
+    def _check_alignment(
+        self,
+        group: str,
+        key: str,
+        default: Union[str, bool],
+        var_pattern: str,
+        nc_group: str = "init",
+        required_by_list: str = "",
+    ) -> bool:
+        """
+        Generic check: If switch is True, variables must exist in nc_group.
+        """
+        switch_val = self.case.config.get(group, key, default)
+
+        is_active = (
+            bool(switch_val)
+            and switch_val != "0"
+            and switch_val != 0
+            and str(switch_val).lower() != "false"
         )
 
-    def _check_dtep_wls(self) -> None:
-        """Check if switches for dtep wls and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_wls", False),
-            initial_cond_var_name="w_ls",
-        )
+        available_vars = self._get_vars_in_group(nc_group)
+        matching_vars = [v for v in available_vars if fnmatch.fnmatch(v, var_pattern)]
+        has_vars = len(matching_vars) > 0
 
-    def _check_tdep_ls_forcing(self) -> None:
-        """Check if switches for dtep forcing, tdep forcing list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_ls", False),
-            initial_cond_var_name="*_ls",
-            list_config=("force", "timedeplist_ls", []),
-        )
+        if is_active and not has_vars:
+            raise ValueError(
+                f"Switch [{group}] {key} is active, but no variables matching "
+                f"'{var_pattern}' found in NetCDF group '{nc_group}'."
+            )
+        if not is_active and has_vars:
+            logger.warning(
+                f"Switch [{group}] {key} is not active, but variables matching "
+                f"'{var_pattern}' were found in NetCDF group '{nc_group}'."
+            )
+        if not is_active:
+            return False
 
-    def _check_nudging(self) -> None:
-        """Check if switches for nudging, nudging list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swnudge", False),
-            initial_cond_var_name="nudgefac",
-            list_config=("force", "nudgelist", []),
-        )
-
-    def _check_tdep_nudging(self) -> None:
-        """Check if switches for dtep nudging, tdep nudging list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("force", "swtimedep_nudge", False),
-            initial_cond_var_name="*_nudge",
-            list_config=("force", "timedeplist_nudge", []),
-        )
-
-    def _check_nudgelists(self) -> None:
-        """Check if the variables specified in the tdep nudging list are also present in the nudging list."""
-        timedeplist_nudging = utils.object_to_list(
-            self.case.ini_file.get("force", "timedeplist_nudge", [])
-        )
-        nudgelist = utils.object_to_list(
-            self.case.ini_file.get("force", "nudgelist", [])
-        )
-
-        for var in timedeplist_nudging:
-            if var not in nudgelist:
+        # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
+        if required_by_list:
+            config_list = self.case.config.get(group, required_by_list, [])
+            config_list = utils.object_to_list(config_list)
+            if len(config_list) == 0:
                 raise ValueError(
-                    f"Variable '{var}' specified in 'timedeplist_nudge' is not present in 'nudgelist'."
+                    f"Switch [{group}] {key} is active, but the required list "
+                    f"[{group}] {required_by_list} is empty."
+                )
+            for item in config_list:
+                item_pattern = var_pattern.replace("*", item).replace("?", item)
+                if not any(fnmatch.fnmatch(v, item_pattern) for v in available_vars):
+                    raise ValueError(
+                        f"Variable '{item}' in [{group}] {required_by_list} "
+                        f"not found as '{item_pattern}' in group '{nc_group}'."
+                    )
+
+        return is_active
+
+    def _get_vars_in_group(self, group_name: str):
+        """Helper to get variable names from a specific NetCDF group."""
+        try:
+            initial_cond = xr.open_dataset(
+                Path(self.case.file_directory, f"{self.case.name}_input.nc"),
+                group=group_name,
+            )
+            return [str(v) for v in initial_cond.variables]
+        except Exception:
+            return []
+
+    def _check_cross(self) -> None:
+        swcross = self.case.config.get("cross", "swcross", False)
+        crosslist = self.case.config.get("cross", "crosslist", []) or []
+        if swcross and len(crosslist) == 0:
+            raise ValueError("swcross is True, but crosslist is empty.")
+
+    def _check_dump(self):
+        swdump = self.case.config.get("dump", "swdump", False)
+        swdumplist = self.case.config.get("dump", "dumplist", []) or []
+        if swdump and len(swdumplist) == 0:
+            raise ValueError("swdump is True, but dumplist is empty.")
+
+    def _check_forcing_logic(self):
+        # 1. Large Scale Forcing
+        swls = self.case.config.get("force", "swls", False)
+        swtdep_ls = self.case.config.get("force", "swtimedep_ls", False)
+
+        if swtdep_ls and not swls:
+            raise ValueError(
+                "swtimedep_ls is True, but swls is False. swls must be enabled for LS forcing."
+            )
+
+        if swls:
+            if swtdep_ls:
+                self._check_alignment(
+                    "force", "swtimedep_ls", False, "*_ls", "timedep", "timedeplist_ls"
+                )
+            else:
+                self._check_alignment("force", "swls", False, "*_ls", "init", "lslist")
+
+        # 2. Geostrophic Forcing
+        swlspres = self.case.config.get("force", "swlspres", False)
+        swtdep_geo = self.case.config.get("force", "swtimedep_geo", False)
+
+        if swtdep_geo and swlspres != "geo":
+            raise ValueError("swtimedep_geo is True, but swlspres is not 'geo'.")
+
+        if swlspres == "geo":
+            nc_grp = "timedep" if swtdep_geo else "init"
+            self._check_alignment("force", "swlspres", False, "u_geo", nc_grp)
+            self._check_alignment("force", "swlspres", False, "v_geo", nc_grp)
+
+        # 3. Subsidence (w_ls)
+        swwls = self.case.config.get("force", "swwls", False)
+        swtdep_wls = self.case.config.get("force", "swtimedep_wls", False)
+
+        if swtdep_wls and not swwls:
+            raise ValueError("swtimedep_wls is True, but swwls is disabled.")
+
+        if swwls:
+            nc_grp = "timedep" if swtdep_wls else "init"
+            self._check_alignment("force", "swwls", False, "w_ls", nc_grp)
+
+        # 4. Nudging
+        swnudge = self.case.config.get("force", "swnudge", False)
+        swtdep_nudge = self.case.config.get("force", "swtimedep_nudge", False)
+
+        if swtdep_nudge and not swnudge:
+            raise ValueError("swtimedep_nudge is True, but swnudge is False.")
+
+        # nudgefac is always required in 'init' group if nudging is on
+        self._check_alignment("force", "swnudge", False, "nudgefac", "init")
+        if swtdep_nudge:
+            self._check_alignment(
+                "force",
+                "swtimedep_nudge",
+                False,
+                "*_nudge",
+                "timedep",
+                "timedeplist_nudge",
+            )
+        else:
+            self._check_alignment(
+                "force", "swnudge", False, "*_nudge", "init", "nudgelist"
+            )
+
+    def _check_boundary_logic(self):
+        # Requires time_surface and *_sbot in timedep group
+        self._check_alignment("boundary", "swtimedep", False, "time_surface", "timedep")
+        self._check_alignment(
+            "boundary", "swtimedep", False, "*", "timedep", "timedeplist"
+        )
+
+    def _check_thermo_logic(self):
+        self._check_alignment("thermo", "swtimedep_pbot", False, "p_sbot", "timedep")
+
+    def _check_grid_logic(self):
+        """Checks spatial order consistency."""
+        spatial = self.case.config.get("grid", "swspatialorder", None)
+        if spatial is None:
+            return
+
+        # Check Pressure and Advection match Spatial order
+        for grp, key in [("pres", "swpres"), ("advec", "swadvec")]:
+            val = str(self.case.config.get(grp, key, spatial))
+            # Extract first digit for advection schemes like '2i5'
+            if int(val[0]) != int(spatial):
+                raise ValueError(
+                    f"[{grp}] {key} ({val}) must match [grid] swspatialorder ({spatial})"
                 )
 
     def _check_source_position(self) -> None:
         """Check if the source position conflicts with the domain size."""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
         for coord in ["x", "y", "z"]:
-            source_0 = np.atleast_1d(self.case.ini_file["source"][f"source_{coord}0"])
-            sigma = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            source_0 = np.atleast_1d(self.case.config["source"][f"source_{coord}0"])
+            sigma = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
 
             if len(source_0) != len(sigma):
                 raise ValueError(
                     f"source_{coord}0 and sigma_{coord} must have the same length."
                 )
 
-            grid_size = float(self.case.ini_file["grid"][f"{coord}size"])
+            grid_size = float(self.case.config["grid"][f"{coord}size"])
 
             for s0, sig in zip(source_0, sigma):
                 source_ext = s0 + 2 * sig
@@ -580,10 +637,10 @@ class PreProcessing:
 
     def _check_source_height(self) -> None:
         """Check if source height is greater than vertical resolution"""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
-        source_heights = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
+        source_heights = np.atleast_1d(self.case.config["source"]["source_z0"])
         lowest_grid_level = self._get_lowest_grid_level()
 
         for source_height in source_heights:
@@ -598,29 +655,29 @@ class PreProcessing:
         It must be >0 and between grid size/4 and grid size/2 since the source is
         simulated within 4*sigma."""
 
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
-            sigmas = np.atleast_1d(self.case.ini_file["source"][f"sigma_{coord}"])
+            sigmas = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
             if np.any(sigmas <= 0):
                 raise ValueError(f"'sigma_{coord}' cannot be <=0.")
 
     def _check_source_list(self) -> None:
         """Check if all required variables have the same length."""
-        if "source" not in self.case.ini_file.groups:
+        if "source" not in self.case.config.groups:
             return
 
-        sourcelist = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
-        source_x0 = np.atleast_1d(self.case.ini_file["source"]["source_x0"])
-        source_y0 = np.atleast_1d(self.case.ini_file["source"]["source_y0"])
-        source_z0 = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
-        sigma_x = np.atleast_1d(self.case.ini_file["source"]["sigma_x"])
-        sigma_y = np.atleast_1d(self.case.ini_file["source"]["sigma_y"])
-        sigma_z = np.atleast_1d(self.case.ini_file["source"]["sigma_z"])
-        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
-        swvmr = np.atleast_1d(self.case.ini_file["source"]["swvmr"])
+        sourcelist = np.atleast_1d(self.case.config["source"]["sourcelist"])
+        source_x0 = np.atleast_1d(self.case.config["source"]["source_x0"])
+        source_y0 = np.atleast_1d(self.case.config["source"]["source_y0"])
+        source_z0 = np.atleast_1d(self.case.config["source"]["source_z0"])
+        sigma_x = np.atleast_1d(self.case.config["source"]["sigma_x"])
+        sigma_y = np.atleast_1d(self.case.config["source"]["sigma_y"])
+        sigma_z = np.atleast_1d(self.case.config["source"]["sigma_z"])
+        strength = np.atleast_1d(self.case.config["source"]["strength"])
+        swvmr = np.atleast_1d(self.case.config["source"]["swvmr"])
 
         if not (
             len(sourcelist)
@@ -637,25 +694,31 @@ class PreProcessing:
 
     def _check_tdep_source_location(self) -> None:
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("source", "swtimedep_location", False),
-            initial_cond_var_name="source_?0_*",
+        self._check_alignment(
+            group="source",
+            key="swtimedep_location",
+            default=False,
+            var_pattern="source_?0_*",
+            nc_group="timedep",
         )
 
     def _check_tdep_source_strength(self) -> None:
         """Check if switches for dtep source, tdep source list and initial conditions align"""
-        self._check_switch_list_vars_alignment(
-            switch_config=("source", "swtimedep_strength", False),
-            initial_cond_var_name="source_strength_*",
+        self._check_alignment(
+            group="source",
+            key="swtimedep_strength",
+            default=False,
+            var_pattern="source_strength_*",
+            nc_group="timedep",
         )
 
     def _check_buffer_height(self) -> None:
         """Check if the buffer height lies within the domain."""
-        if "buffer" not in self.case.ini_file.groups:
+        if "buffer" not in self.case.config.groups:
             return
 
-        zstart = self.case.ini_file.get("buffer", "zstart", 0)
-        zsize = self.case.ini_file.get("grid", "zsize")
+        zstart = self.case.config.get("buffer", "zstart", 0)
+        zsize = self.case.config.get("grid", "zsize")
         if zsize is None:
             return
         if zstart > zsize:
@@ -670,12 +733,12 @@ class PreProcessing:
         lowest_grid_level = self._get_lowest_grid_level()
         warning_threshold = 0.9 * lowest_grid_level
 
-        if "boundary" not in self.case.ini_file.groups:
+        if "boundary" not in self.case.config.groups:
             return
 
         for roughness_type in ["z0m", "z0h"]:
-            if roughness_type in self.case.ini_file["boundary"]:
-                surface_roughness = self.case.ini_file["boundary"][roughness_type]
+            if roughness_type in self.case.config["boundary"]:
+                surface_roughness = self.case.config["boundary"][roughness_type]
                 if surface_roughness >= lowest_grid_level:
                     logger.warning(
                         f"Surface roughness ({roughness_type} = {surface_roughness} m) "
@@ -690,9 +753,9 @@ class PreProcessing:
                     )
 
     def _check_sample_times(self) -> None:
-        sample_time_3d = self.case.ini_file.get("time", "savetime", None)
-        sample_time_2d = self.case.ini_file.get("cross", "sampletime", None)
-        sample_time_stats = self.case.ini_file.get("stats", "sampletime", None)
+        sample_time_2d = self.case.config.get("cross", "sampletime", None)
+        sample_time_3d = self.case.config.get("dump", "sampletime", None)
+        sample_time_stats = self.case.config.get("stats", "sampletime", None)
 
         # Remove None values
         sample_times = [sample_time_3d, sample_time_2d, sample_time_stats]
@@ -705,6 +768,37 @@ class PreProcessing:
                 f"sample time for 3d output '{sample_time_3d:.0f}'s, 2d output '{sample_time_2d:.0f}'s, and "
                 f"statistics '{sample_time_stats:.0f}'s for postprocessing convenience."
             )
+
+    def _check_initial_conditions_times(self) -> None:
+        """Check if the times specified in the boundary conditions match the time specified in the .ini file."""
+        ic = io.open_initial_cond(self.case)
+
+        time_coords = [name for name in ic.coords if "time" in str(name)]
+
+        for time_coord in time_coords:
+            ic_start_time = int(ic[time_coord].values[0])
+            ic_end_time = int(ic[time_coord].values[-1])
+
+            ini_start_time = int(self.case.config["time"]["starttime"])
+            ini_end_time = int(self.case.config["time"]["endtime"])
+
+            # If times do not match exactly, log a general warning.
+            if ini_start_time != ic_start_time or ini_end_time != ic_end_time:
+                logger.warning(
+                    f"Times in .ini file do not match exactly the times in initial conditions variable '{time_coord}': "
+                    f"ini start={ini_start_time}s, ic start={ic_start_time}s; "
+                    f"ini end={ini_end_time}s, ic end={ic_end_time}s."
+                )
+
+            # Raise value errors for problematic mismatches
+            if ini_start_time < ic_start_time:
+                raise ValueError(
+                    f"Start time in .ini file ({ini_start_time}s) is earlier than the start time in initial conditions variable '{time_coord}' ({ic_start_time}s)."
+                )
+            if ini_end_time > ic_end_time:
+                raise ValueError(
+                    f"End time in .ini file ({ini_end_time}s) is later than the end time in initial conditions variable '{time_coord}' ({ic_end_time}s)."
+                )
 
     def _get_lowest_grid_level(self) -> float:
         """Get the lowest atmospheric grid level from the {case}_input.nc file."""
@@ -742,7 +836,7 @@ class PreProcessing:
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = self.case.ini_file.get("time", "iotimeprec", 0) or 0
+        iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
         endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
 
         return "{0:07d}".format(endtime_io)
@@ -759,7 +853,7 @@ def _get_microhh_run_commands(
 
     Args:
         case_list: List of cases to run.
-        mode: Run mode ('run' for init+run, 'rerun' for run only).
+        mode: Run mode, determines which phases of MicroHH to execute. "run" (default) executes both "init" and "run" phases, while "rerun" and "restart" execute only the "run" phase.
         cpus_per_task_per_case: CPUs per srun step (multi-GPU only).
         gpus_per_task_per_case: GPUs per srun step (multi-GPU only).
         jobreport_path: Optional wrapper prefix for the final phase
@@ -768,22 +862,23 @@ def _get_microhh_run_commands(
     Returns:
         List of shell command strings.
     """
+
     case_list = list(case_list)
     mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
     if mode_val == RunMode.RUN.value:
         phases = ["init", "run"]
-    elif mode_val == RunMode.RERUN.value:
+    elif mode_val in (RunMode.RERUN.value, RunMode.RESTART.value):
         phases = ["run"]
     else:
-        raise ValueError("mode must be either 'run' or 'rerun'")
+        raise ValueError("mode must be either 'run', 'rerun', or 'restart'")
 
     if len(case_list) == 1:
         return _get_single_run_command(
             phases, case=case_list[0], jobreport_path=jobreport_path
         )
 
-    elif len(case_list) == 4:
+    elif len(case_list) > 1 and len(case_list) <= 4:
         return _get_multi_run_commands(
             phases,
             case_list=case_list,
@@ -793,7 +888,7 @@ def _get_microhh_run_commands(
         )
     else:
         raise ValueError(
-            f"Expected either 1 or 4 cases, but got {len(case_list)}. For a "
+            f"Expected between 1 and 4 cases, but got {len(case_list)}. For a "
             f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
         )
 
@@ -830,7 +925,7 @@ def _get_multi_run_commands(
     gpus_per_task_per_case: int = 1,
     jobreport_path: Optional[str] = None,
 ) -> list[str]:
-    """Generate srun commands that launch 4 cases in parallel on a GPU node.
+    """Generate srun commands that launch up to 4 cases in parallel on a GPU node.
 
     Args:
         phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
@@ -842,6 +937,10 @@ def _get_multi_run_commands(
     Returns:
         List of shell command strings.
     """
+    if len(case_list) > 4:
+        raise ValueError(
+            f"Expected at most 4 cases for multi-GPU run, but got {len(case_list)}."
+        )
     case_name = _get_common_case_name(case_list)
     n_cases = len(case_list)
     executable = "./microhh"
@@ -889,14 +988,18 @@ def create_run_4x_script(
     cases: List[init.Case],
     alps_setup: cscs.AlpsSetup,
     scratch_path: str,
+    mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
 ) -> Path:
     """Run 4 prepared simulations on GPU."""
-    if len(cases) != 4:
-        raise ValueError(f"Expected 4 cases, but got {len(cases)}.")
+    ncases = len(cases)
+    run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
-    master_job_file = Path(scratch_path, "run_microhh_4x.sbash")
+    if ncases != 4:
+        logger.warning(f"Expected 4 cases, but got {len(cases)}.")
+
+    master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbash")
 
     commands = _get_microhh_run_commands(
         case_list=cases,
@@ -909,7 +1012,7 @@ def create_run_4x_script(
     if not master_job_file.exists() or overwrite:
         master_job_file = alps_setup.create_bash_script(
             commands=commands,
-            job_name="run_microhh_4x",
+            job_name=f"{run_mode}_microhh_{ncases}x",
             file_path=master_job_file,
             scratch_path=scratch_path,
         )
@@ -926,13 +1029,88 @@ def _get_common_case_name(cases: list[init.Case]) -> str:
 
     if len(case_names) > 1:
         raise ValueError(
-            "Cases must have the same case name for themulti-gpu setup to work."
+            "Cases must have the same case name for the multi-gpu setup to work."
         )
 
     return str(case_names[0])
 
 
+def interpolate_to_model_profile(
+    grid: Union[
+        np.ndarray,
+        ls2d.grid.Grid_equidist,
+        ls2d.grid.Grid_linear_stretched,
+        ls2d.grid.Grid_stretched,
+        ls2d.grid.Grid_stretched_manual,
+    ],
+    variable_value: Union[float, int] = 0.0,
+    variable_profile: Optional[Union[list, np.ndarray]] = None,
+    input_profile: Optional[Union[list, np.ndarray]] = None,
+) -> np.ndarray:
+    """Interpolate a vertical profile to the MicroHH model height levels.
+
+    Can also be used to create a constant profile by specifying only
+    *variable_value*.
+
+    Args:
+        grid: MicroHH grid object (from LS2D) or a height-level array.
+        variable_value: Constant value used when *variable_profile* is
+            not provided.
+        variable_profile: Vertical profile of the variable to
+            interpolate.
+        input_profile: Height levels corresponding to
+            *variable_profile*.
+
+    Returns:
+        Values interpolated (or filled) to the model height levels.
+
+    Raises:
+        ValueError: If neither *variable_value* nor *variable_profile*
+            is provided, or if *grid* is not a recognised type.
+    """
+    # check if variable value or variable profile is provided
+    if variable_value is None and variable_profile is None:
+        raise ValueError(
+            "Please provide either a variable value or a variable profile."
+        )
+
+    if isinstance(grid, np.ndarray):
+        model_profile = grid
+    elif isinstance(
+        grid,
+        (
+            ls2d.grid.Grid_equidist,
+            ls2d.grid.Grid_linear_stretched,
+            ls2d.grid.Grid_stretched,
+            ls2d.grid.Grid_stretched_manual,
+        ),
+    ):
+        model_profile = grid.z
+    else:
+        raise ValueError(
+            "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
+        )
+
+    # convert model profile and variable profile to numpy arrays
+    if variable_profile is not None:
+        variable_profile = np.array(variable_profile)
+    if input_profile is not None:
+        input_profile = np.array(input_profile)
+
+    if variable_profile is None:
+        model_var_profile = np.full(len(model_profile), variable_value)
+    else:
+        if input_profile is None:
+            raise ValueError(
+                "Please provide 'input_profile' when 'variable_profile' is given."
+            )
+        model_var_profile = np.interp(model_profile, input_profile, variable_profile)
+
+    return model_var_profile
+
+
 __all__ = [
     "PreProcessing",
     "create_run_4x_script",
+    "interpolate_to_model_profile",
 ]

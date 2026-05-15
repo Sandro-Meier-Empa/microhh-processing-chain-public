@@ -12,7 +12,7 @@ import pandas as pd
 
 from microhh_processing_chain.enums import Cluster, Processor, Partition, MailType
 from microhh_processing_chain.constants import PrintColor
-from microhh_processing_chain import utils
+from microhh_processing_chain import io, utils
 
 logger = logging.getLogger(__name__)
 
@@ -555,7 +555,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
         try:
             # read case
             case = init.read_case(job_dir)
-            current_timestep, max_timestep = get_simulation_progress(case)
+            current_timestep, max_timestep = get_simulation_progress_from_files(case)
             progress_percentage = current_timestep / max_timestep * 100
             progress_percentages.append(int(progress_percentage))
         except Exception:
@@ -570,7 +570,8 @@ def print_simulation_progress(case: "Case") -> None:
     """Print the progress of a simulation based on the saved binary output
     files of MicroHH"""
 
-    current_timestep, max_timestep = get_simulation_progress(case)
+    # current_timestep, max_timestep = get_simulation_progress_from_files(case)
+    current_timestep, max_timestep = get_simulation_progress_from_out(case)
     progress_percentage = current_timestep / max_timestep * 100
 
     if progress_percentage == 0.0:
@@ -583,11 +584,11 @@ def print_simulation_progress(case: "Case") -> None:
     end_color = PrintColor.ENDC
 
     print(
-        f"{color.value}Simulation progress of {case.name_spec}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
+        f"{color.value}Simulation progress of {case.full_name}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
     )
 
 
-def get_simulation_progress(case: "Case") -> Tuple[int, int]:
+def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
     """Get current simulation progress of a MicroHH simulation based on the
     binary grid files generated when running the model.
 
@@ -619,7 +620,22 @@ def get_simulation_progress(case: "Case") -> Tuple[int, int]:
             timestep = future.result()
             current_timestep = max(current_timestep, timestep)
 
-    max_timestep = int(case.ini_file["time"]["endtime"])
+    max_timestep = int(case.config["time"]["endtime"])
+
+    return current_timestep, max_timestep
+
+
+def get_simulation_progress_from_out(case: "Case") -> Tuple[float, int]:
+    """Get current simulation progress of a MicroHH simulation based on the
+    `{case.name}.out` file generated when running the model.
+    """
+    try:
+        mhh_out = io.open_microhh_out(case)
+        current_timestep = mhh_out["TIME"].iloc[-1]
+    except FileNotFoundError:
+        current_timestep = 0.0
+
+    max_timestep = int(case.config["time"]["endtime"])
 
     return current_timestep, max_timestep
 
@@ -710,7 +726,7 @@ __all__ = [
     "cancel_all",
     "add_progress_to_df",
     "print_simulation_progress",
-    "get_simulation_progress",
+    "get_simulation_progress_from_files",
     "extract_job_id",
     "get_sacct_info",
 ]

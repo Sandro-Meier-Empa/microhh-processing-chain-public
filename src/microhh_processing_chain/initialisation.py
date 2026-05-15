@@ -9,10 +9,8 @@ from pathlib import Path
 from typing import Union, Optional
 
 import pandas as pd
-import numpy as np
 
 import microhh_py.microhh_tools as mht
-import ls2d
 
 from microhh_processing_chain.enums import InitMethod, FileType
 from microhh_processing_chain import cscs, utils
@@ -38,8 +36,70 @@ class Case:
         """
         self.name = name
         self.suffix = suffix
-        self.name_spec = f"{name}.{suffix}" if suffix else f"{name}"
+        self.full_name = f"{name}.{suffix}" if suffix else f"{name}"
+
+        # define paths that will be set during initinitialisation
+        self._file_directory: Optional[Path] = None
+        self._ini_file_path: Optional[Path] = None
+        self._scratch_path: Optional[Path] = None
+
+        # define attributes that will be set during initialisation
+        self._config: Optional[mht.Read_namelist] = None
         self.job_id: Optional[int] = None
+
+    @property
+    def file_directory(self) -> Path:
+        if self._file_directory is None:
+            raise RuntimeError("File directory has not been set yet.")
+        return self._file_directory
+
+    @file_directory.setter
+    def file_directory(self, value: Union[str, Path]) -> None:
+        self._file_directory = Path(value)
+
+    @property
+    def ini_file_path(self) -> Path:
+        if self._ini_file_path is None:
+            raise RuntimeError("INI file path has not been set yet.")
+        return self._ini_file_path
+
+    @ini_file_path.setter
+    def ini_file_path(self, value: Union[str, Path]) -> None:
+        self._ini_file_path = Path(value)
+
+    @property
+    def scratch_path(self) -> Path:
+        if self._scratch_path is None:
+            raise RuntimeError("Scratch path has not been set yet.")
+        return self._scratch_path
+
+    @scratch_path.setter
+    def scratch_path(self, value: Union[str, Path]) -> None:
+        self._scratch_path = Path(value)
+
+    @property
+    def out_file_path(self) -> Path:
+        return Path(self.file_directory, f"{self.name}.out")
+
+    @property
+    def initial_conditions_file_path(self) -> Path:
+        return Path(self.file_directory, f"{self.name}_input.nc")
+
+    @property
+    def statistics_file_path(self) -> Path:
+        """Path to the statistics file of the case."""
+        start_time = int(self.config["time"]["starttime"])
+        return Path(self.file_directory, f"{self.name}.default.{start_time:07d}.nc")
+
+    @property
+    def config(self) -> mht.Read_namelist:
+        if self._config is None:
+            raise RuntimeError("Config has not been loaded yet.")
+        return self._config
+
+    @config.setter
+    def config(self, value: mht.Read_namelist) -> None:
+        self._config = value
 
     @property
     def run_state(self) -> str:
@@ -62,10 +122,8 @@ class Case:
         # format ini file content as string
         # read ini file and format content
         ini_content = ""
-        if not hasattr(self, "ini_path"):
-            pass
-        elif self.ini_path.exists():
-            with open(self.ini_path, "r") as f:
+        if self._ini_file_path is not None and self._ini_file_path.exists():
+            with open(self._ini_file_path, "r") as f:
                 ini_content = f.read()
 
         case_str = (
@@ -110,9 +168,9 @@ class Case:
                 Required when *method* is ``'default'`` or ``'rerun'``.
             overwrite: Whether to overwrite an existing case directory.
         """
-        self.scratch_path = Path(scratch_path, self.name_spec)
+        self.scratch_path = Path(scratch_path, self.full_name)
         self.file_directory = self.scratch_path
-        self.ini_path = Path(self.scratch_path, f"{self.name}.ini")
+        self.ini_file_path = Path(self.scratch_path, f"{self.name}.ini")
 
         self._handle_method(method, init_from)
         self._handle_scratch_dir(overwrite)
@@ -205,7 +263,7 @@ class Case:
             self._copy_ini(case_path)
             self._copy_initial(case_path)
         elif self.method == InitMethod.INTERACTIVE.value:
-            self.ini_path.touch()
+            self.ini_file_path.touch()
         elif self.method == InitMethod.RERUN.value:
             if init_from is None:
                 raise ValueError("Please provide 'init_from' for rerun initialisation.")
@@ -216,7 +274,7 @@ class Case:
             raise ValueError(
                 f"{self.method} is not available. Use 'default', 'interactive' or 'rerun'."
             )
-        self.ini_file = mht.Read_namelist(self.ini_path)
+        self.config = mht.Read_namelist(self.ini_file_path)
 
     def _get_job_id(self) -> Optional[int]:
         """Look for the job ID in the ``run_microhh*.out`` file.
@@ -384,7 +442,7 @@ class Case:
                 pairs to write.
             overwrite: Whether to allow overwriting the existing file.
         """
-        self.ini_file.groups = {}
+        self.config.groups = {}
 
         self.modify_ini(settings=settings, overwrite=overwrite)
 
@@ -403,12 +461,12 @@ class Case:
         for group, variables in settings.items():
             for variable, value in variables.items():
                 if value is None:
-                    self.ini_file.remove_value(group=group, variable=variable)
+                    self.config.remove_value(group=group, variable=variable)
                 else:
-                    self.ini_file.set_value(group=group, variable=variable, value=value)
+                    self.config.set_value(group=group, variable=variable, value=value)
 
-        self.ini_file.save(self.ini_path, allow_overwrite=overwrite)
-        self.ini_file = mht.Read_namelist(self.ini_path)
+        self.config.save(self.ini_file_path, allow_overwrite=overwrite)
+        self.config = mht.Read_namelist(self.ini_file_path)
 
     def open_mhh_in_vscode(self, filetype: Union[FileType, str]) -> None:
         """Open the specified file in VS Code.
@@ -473,13 +531,13 @@ class Case:
         simulated_time = pd.to_timedelta(simulated_time_s, unit="s")
 
         # get setup from ini file
-        itot = self.ini_file["grid"]["itot"]
-        jtot = self.ini_file["grid"]["jtot"]
-        ktot = self.ini_file["grid"]["ktot"]
+        itot = self.config["grid"]["itot"]
+        jtot = self.config["grid"]["jtot"]
+        ktot = self.config["grid"]["ktot"]
 
-        xsize = self.ini_file["grid"]["xsize"]
-        ysize = self.ini_file["grid"]["ysize"]
-        zsize = self.ini_file["grid"]["zsize"]
+        xsize = self.config["grid"]["xsize"]
+        ysize = self.config["grid"]["ysize"]
+        zsize = self.config["grid"]["zsize"]
 
         # get saccing info
         if self.job_id is None:
@@ -598,9 +656,9 @@ class Case:
         # Update the case attributes
         self.name = new_name
         self.suffix = new_suffix
-        self.name_spec = new_name_spec
-        self.file_directory = new_file_directory
-        self.ini_path = Path(new_file_directory, f"{new_name}.ini")
+        self.full_name = new_name_spec
+        self._file_directory = new_file_directory
+        self._ini_file_path = Path(new_file_directory, f"{new_name}.ini")
 
     def clean(self) -> None:
         """Clean this MicroHH case by removing all files and directories.
@@ -708,8 +766,8 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
     case2 = read_case(case_path2)
 
     # 1. Identify all unique groups involved
-    self_groups = set(case1.ini_file.groups)
-    other_groups = set(case2.ini_file.groups)
+    self_groups = set(case1.config.groups)
+    other_groups = set(case2.config.groups)
     all_groups = self_groups | other_groups
 
     for group in sorted(all_groups):
@@ -717,8 +775,8 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
         if group in self_groups and group not in other_groups:
             print(f"{RED}[Group: {group}] removed{RESET}")
             # Show all variables in this group as deleted
-            for var in case1.ini_file.groups[group]:
-                val = case1.ini_file[group][var]
+            for var in case1.config.groups[group]:
+                val = case1.config[group][var]
                 print(f"{RED}- {var} = {val}{RESET}")
             continue
 
@@ -726,14 +784,14 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
         if group not in self_groups and group in other_groups:
             print(f"{GREEN}[Group: {group}] added{RESET}")
             # Show all variables in this group as added
-            for var in case2.ini_file.groups[group]:
-                val = case2.ini_file[group][var]
+            for var in case2.config.groups[group]:
+                val = case2.config[group][var]
                 print(f"{GREEN}+ {var} = {val}{RESET}")
             continue
 
         # Case C: Group exists in both (Check for variable differences)
-        self_vars = set(case1.ini_file.groups[group])
-        other_vars = set(case2.ini_file.groups[group])
+        self_vars = set(case1.config.groups[group])
+        other_vars = set(case2.config.groups[group])
         all_vars = self_vars | other_vars
 
         # Buffer changes so we only print the group header if there is an actual difference
@@ -742,18 +800,18 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
         for var in sorted(all_vars):
             # Variable removed
             if var in self_vars and var not in other_vars:
-                val = case1.ini_file[group][var]
+                val = case1.config[group][var]
                 changes.append(f"{RED}- {var} = {val}{RESET}")
 
             # Variable added
             elif var not in self_vars and var in other_vars:
-                val = case2.ini_file[group][var]
+                val = case2.config[group][var]
                 changes.append(f"{GREEN}+ {var} = {val}{RESET}")
 
             # Variable modified
             else:
-                val_self = case1.ini_file[group][var]
-                val_other = case2.ini_file[group][var]
+                val_self = case1.config[group][var]
+                val_other = case2.config[group][var]
 
                 # Convert to string for comparison to avoid type mismatches
                 if str(val_self) != str(val_other):
@@ -833,94 +891,20 @@ def read_case(
         suffix=suffix,
     )
     case.file_directory = case_directory
-    case.ini_path = Path(case.file_directory, f"{case.name}.ini")
+    case.ini_file_path = Path(case.file_directory, f"{case.name}.ini")
     case.scratch_path = (
-        Path(scratch_path, case.name_spec) if scratch_path else case.file_directory
+        Path(scratch_path, case.full_name) if scratch_path else case.file_directory
     )
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
 
-    if not case.ini_path.exists():
+    if not case.ini_file_path.exists():
         raise FileNotFoundError(
             f".ini file for case '{case.name}' does not exist in {case.file_directory}."
         )
 
-    case.ini_file = mht.Read_namelist(case.ini_path)
+    case.config = mht.Read_namelist(case.ini_file_path)
 
     return case
-
-
-def interpolate_to_model_profile(
-    grid: Union[
-        np.ndarray,
-        ls2d.grid.Grid_equidist,
-        ls2d.grid.Grid_linear_stretched,
-        ls2d.grid.Grid_stretched,
-        ls2d.grid.Grid_stretched_manual,
-    ],
-    variable_value: Union[float, int] = 0.0,
-    variable_profile: Optional[Union[list, np.ndarray]] = None,
-    input_profile: Optional[Union[list, np.ndarray]] = None,
-) -> np.ndarray:
-    """Interpolate a vertical profile to the MicroHH model height levels.
-
-    Can also be used to create a constant profile by specifying only
-    *variable_value*.
-
-    Args:
-        grid: MicroHH grid object (from LS2D) or a height-level array.
-        variable_value: Constant value used when *variable_profile* is
-            not provided.
-        variable_profile: Vertical profile of the variable to
-            interpolate.
-        input_profile: Height levels corresponding to
-            *variable_profile*.
-
-    Returns:
-        Values interpolated (or filled) to the model height levels.
-
-    Raises:
-        ValueError: If neither *variable_value* nor *variable_profile*
-            is provided, or if *grid* is not a recognised type.
-    """
-    # check if variable value or variable profile is provided
-    if variable_value is None and variable_profile is None:
-        raise ValueError(
-            "Please provide either a variable value or a variable profile."
-        )
-
-    if isinstance(grid, np.ndarray):
-        model_profile = grid
-    elif isinstance(
-        grid,
-        (
-            ls2d.grid.Grid_equidist,
-            ls2d.grid.Grid_linear_stretched,
-            ls2d.grid.Grid_stretched,
-            ls2d.grid.Grid_stretched_manual,
-        ),
-    ):
-        model_profile = grid.z
-    else:
-        raise ValueError(
-            "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
-        )
-
-    # convert model profile and variable profile to numpy arrays
-    if variable_profile is not None:
-        variable_profile = np.array(variable_profile)
-    if input_profile is not None:
-        input_profile = np.array(input_profile)
-
-    if variable_profile is None:
-        model_var_profile = np.full(len(model_profile), variable_value)
-    else:
-        if input_profile is None:
-            raise ValueError(
-                "Please provide 'input_profile' when 'variable_profile' is given."
-            )
-        model_var_profile = np.interp(model_profile, input_profile, variable_profile)
-
-    return model_var_profile
 
 
 __all__ = [
@@ -928,5 +912,4 @@ __all__ = [
     "compare_ini",
     "initialise_case",
     "read_case",
-    "interpolate_to_model_profile",
 ]

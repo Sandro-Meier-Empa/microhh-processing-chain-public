@@ -1,6 +1,8 @@
 import os
 import re
+import netCDF4 as nc4
 import scipy
+import shlex
 import shutil
 import zipfile
 import logging
@@ -24,9 +26,8 @@ import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.spatial as spatial
-import microhh_processing_chain.wind as wind_proc
 from microhh_processing_chain import utils
-from microhh_processing_chain.enums import Precision, WindIntegrationMethod
+from microhh_processing_chain.enums import Precision
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
 
 logger = logging.getLogger(__name__)
@@ -41,104 +42,6 @@ class PostProcessing:
                 Case to post-process.
         """
         self.case = case
-
-    def run_postprocessing(
-        self,
-        py_file_path: Union[str, Path],
-        gases: Optional[Union[str, list[str]]] = None,
-        prognostic_vars: list[str] = ["u", "v", "th"],
-        precision: Union[Precision, str] = Precision.DOUBLE,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        method: Union[WindIntegrationMethod, str] = WindIntegrationMethod.HEIGHT,
-        height: Optional[float] = None,
-        profile_gas: Optional[str] = None,
-        overwrite: bool = False,
-        save: bool = True,
-        chunks: Optional[Union[str, dict[str, int]]] = None,
-    ) -> None:
-        """Run all post-processing steps to...
-            ... create netCDF files from grid output files
-            ... convert gas mixing ratios to concentrations
-            ... vertically integrate the concentrations
-            ... vertically integrate wind data
-
-        Args:
-            gases (Union[str, list]):
-                Gas or list of gases to process to concentrations and vertically integrate.
-                If not given it will process all gases specified in the .ini file.
-            prognostic_vars (list, optional):
-                Modelled variables which should be processed.
-                E.g. ["u", "v", "w", "qt", "th"]
-            precision (str, optional):
-                Precision used for the created .nc file. Defaults to "double".
-            start_time (int, optional. Default: None):
-                Start time in s of the data to process.
-            end_time (int, optional. Default: None):
-                End time in s of the data to process.
-            to_unit (str, optional):
-                Units of the trace gas columns. Defaults to "kg m-2".
-            default_p_and_t (bool, optional):
-                Indicate if the standard values for pressure and temperature should be
-                used to convert mixing ratios to concentrations or if the
-                modelled pressure and temperature should be used. Defaults to False.
-            method (str, optional):
-                Method to vertically integrate wind speeds. Available options are
-                "mean", "median", "height", "concentration_weighted". Defaults to "height".
-            height (float, optional):
-                Height at which the wind speed should be used if method = 'height'. Defaults to None.
-            profile_gas (str, optional):
-                Gas used to weight the wind speed if method = 'concentration_weighted'.
-            overwrite (bool, optional):
-                Specify if the resulting dataset should be overwritten if it exists. Defaults to False.
-            save (bool, optional):
-                Specify if the resulting dataset should be saved. Defaults to True.
-            chunks (Union[str, dict], optional):
-                Chunks used when opening the netCDF files with xarray. Defaults to None.
-        """
-        gases_list: list[str]
-        if gases is None:
-            gases_list = [
-                str(gas)
-                for gas in utils.object_to_list(self.case.ini_file["fields"]["slist"])
-            ]
-        else:
-            gases_list = [str(gas) for gas in np.atleast_1d(gases).tolist()]
-
-        vars = prognostic_vars + gases_list
-
-        logger.info(f"########## START PROCESSING OF {self.case.name_spec} ##########")
-
-        # skip post-processing if simulation failed at start
-        current_time_step, max_time_step = cscs.get_simulation_progress(self.case)
-        if current_time_step == 0:
-            logger.error("ERROR: Simulation failed. Skipped post-processing.")
-            return
-
-        self.create_3d_output(
-            vars=vars,
-            overwrite=overwrite,
-            precision=precision,
-            start_time=start_time,
-            end_time=end_time,
-        )
-
-        if profile_gas is None and method == "concentration_weighted":
-            profile_gas = gases_list[0]
-            logger.warning(
-                f"No profile_gas specified. Using '{profile_gas}' as profile_gas."
-            )
-
-        wind_processing = wind_proc.WindProcessing(self.case)
-        wind_processing.create_2D_wind(
-            method=method,
-            gas=profile_gas,
-            height=height,
-            save=save,
-            overwrite=overwrite,
-            chunks=chunks,
-        )
-        logger.info(f"########## FINISH PROCESSING OF {self.case.name_spec} ##########")
 
     def process_case_on_alps(
         self,
@@ -176,14 +79,21 @@ class PostProcessing:
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
-        cmd = f"srun {python_path} {py_file_path} --file_directory {self.case.file_directory}"
+        cmd_parts = [
+            "srun",
+            str(python_path),
+            str(py_file_path),
+            "--file_directory",
+            str(self.case.file_directory),
+        ]
 
         for key, value in additional_args.items():
             if isinstance(value, list):  # convert list to string for command
-                list_string = " ".join(map(str, value))
-                cmd += f" --{key} {list_string}"
+                cmd_parts.extend([f"--{key}", *[str(item) for item in value]])
             else:
-                cmd += f" --{key} {value}"
+                cmd_parts.extend([f"--{key}", str(value)])
+
+        cmd = shlex.join(cmd_parts)
 
         # submit bash script to run post processing in parallel on alps
         job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbash")
@@ -331,7 +241,7 @@ class PostProcessing:
             vars (Union[str, list], optional):
                 Names of the processed {var}.nc files to move. Defaults to None.
         """
-        store_path = Path(store_path) / self.case.name_spec
+        store_path = Path(store_path) / self.case.full_name
 
         # Handle target path
         if not store_path.exists():
@@ -500,7 +410,7 @@ class PostProcessing:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
         # Define the dictionary with variable attributes using a dictionary comprehension
-        swvmr = np.all(self.case.ini_file["source"]["swvmr"])
+        swvmr = np.all(self.case.config["source"]["swvmr"])
         if swvmr:
             unit = "mol mol-1"
             prefix = "volume"
@@ -727,7 +637,7 @@ class PostProcessing:
             xr.Dataset: Dataset with source information.
         """
 
-        source_list = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
+        source_list = np.atleast_1d(self.case.config["source"]["sourcelist"])
         nr_sources = len(source_list)
 
         source_names = (
@@ -737,8 +647,8 @@ class PostProcessing:
         )
         source_labels = source_labels or source_names
 
-        sigma_x = np.array(self.case.ini_file["source"]["sigma_x"])
-        sigma_y = np.array(self.case.ini_file["source"]["sigma_y"])
+        sigma_x = np.array(self.case.config["source"]["sigma_x"])
+        sigma_y = np.array(self.case.config["source"]["sigma_y"])
         source_diameter = np.maximum(sigma_x, sigma_y) * 4  # 4 sigma rule
 
         data = {
@@ -747,19 +657,19 @@ class PostProcessing:
             "source_x0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_x0"], dtype=float)
+                    np.array(self.case.config["source"]["source_x0"], dtype=float)
                 ),
             ),
             "source_y0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_y0"], dtype=float)
+                    np.array(self.case.config["source"]["source_y0"], dtype=float)
                 ),
             ),
             "source_z0": (
                 ["source"],
                 np.atleast_1d(
-                    np.array(self.case.ini_file["source"]["source_z0"], dtype=float)
+                    np.array(self.case.config["source"]["source_z0"], dtype=float)
                 ),
             ),
             "label": (
@@ -831,11 +741,11 @@ class PostProcessing:
         """
 
         # if lat/lon is defined in .ini file: use these values to convert grid
-        if "lat" in self.case.ini_file["grid"] and source is None:
-            lat_ref = self.case.ini_file["grid"]["lat"]
-            lon_ref = self.case.ini_file["grid"]["lon"]
-            grid_x_ref = self.case.ini_file["grid"]["xsize"] / 2
-            grid_y_ref = self.case.ini_file["grid"]["ysize"] / 2
+        if "lat" in self.case.config["grid"] and source is None:
+            lat_ref = self.case.config["grid"]["lat"]
+            lon_ref = self.case.config["grid"]["lon"]
+            grid_x_ref = self.case.config["grid"]["xsize"] / 2
+            grid_y_ref = self.case.config["grid"]["ysize"] / 2
         elif source is not None:
             lat_ref = source.lat.values
             lon_ref = source.lon.values
@@ -849,10 +759,10 @@ class PostProcessing:
 
         # Create domain
         domain = spatial.Domain(
-            xsize=self.case.ini_file["grid"]["xsize"],
-            ysize=self.case.ini_file["grid"]["ysize"],
-            itot=self.case.ini_file["grid"]["itot"],
-            jtot=self.case.ini_file["grid"]["jtot"],
+            xsize=self.case.config["grid"]["xsize"],
+            ysize=self.case.config["grid"]["ysize"],
+            itot=self.case.config["grid"]["itot"],
+            jtot=self.case.config["grid"]["jtot"],
             lon=lon_ref,
             lat=lat_ref,
             anchor=(grid_x_ref, grid_y_ref),
@@ -930,12 +840,12 @@ class PostProcessing:
                 The dataset with the time converted to a timestamp.
         """
         # use 'datetime_utc' if available in the .ini file
-        if "datetime_utc" in self.case.ini_file["time"] and start_date is None:
-            start_date = self.case.ini_file["time"]["datetime_utc"]
-        elif "datetime_utc" in self.case.ini_file["time"] and start_date is not None:
+        if "datetime_utc" in self.case.config["time"] and start_date is None:
+            start_date = self.case.config["time"]["datetime_utc"]
+        elif "datetime_utc" in self.case.config["time"] and start_date is not None:
             start_date = start_date
             logger.info(
-                f"Using {start_date} to overwrite {self.case.ini_file['time']['datetime_utc']} "
+                f"Using {start_date} to overwrite {self.case.config['time']['datetime_utc']} "
                 f"in .ini file"
             )
         else:
@@ -1177,23 +1087,23 @@ class PostProcessing:
         zh = stats.zh.values
         dz = zh[1:] - zh[:-1]
 
-        itot = self.case.ini_file["grid"]["itot"]
-        jtot = self.case.ini_file["grid"]["jtot"]
-        ktot = self.case.ini_file["grid"]["ktot"]
+        itot = self.case.config["grid"]["itot"]
+        jtot = self.case.config["grid"]["jtot"]
+        ktot = self.case.config["grid"]["ktot"]
 
-        xsize = self.case.ini_file["grid"]["xsize"]
-        ysize = self.case.ini_file["grid"]["ysize"]
+        xsize = self.case.config["grid"]["xsize"]
+        ysize = self.case.config["grid"]["ysize"]
 
         dx = xsize / itot
         dy = ysize / jtot
 
-        scalars = np.atleast_1d(self.case.ini_file["source"]["sourcelist"])
-        strength = np.atleast_1d(self.case.ini_file["source"]["strength"])
+        scalars = np.atleast_1d(self.case.config["source"]["sourcelist"])
+        strength = np.atleast_1d(self.case.config["source"]["strength"])
 
         time_range = np.arange(
             0,
-            int(self.case.ini_file["time"]["endtime"] + 1),
-            int(self.case.ini_file["time"]["savetime"]),
+            int(self.case.config["time"]["endtime"] + 1),
+            int(self.case.config["time"]["savetime"]),
         )
 
         def read_mass_from_binary(scalar: str, time_range: np.ndarray) -> list[float]:
@@ -1265,6 +1175,91 @@ class PostProcessing:
         den = data[variable].integrate(coord=[zdim_name, ydim_name])
 
         return num / den
+
+
+def merge_restart_statistics(
+    stat_file1: Union[str, Path],
+    stat_file2: Union[str, Path],
+    combined_stat_file: Union[str, Path],
+    split_time: int,
+) -> None:
+    """Merge two MicroHH statistics files from restarted cases into one file.
+
+    Args:
+        stat_file1 (Union[str, Path]):
+            Path to the first statistics file (before restart).
+        stat_file2 (Union[str, Path]):
+            Path to the second statistics file (after restart).
+        combined_stat_file (Union[str, Path]):
+            Path to the output file where the combined statistics will be saved.
+        split_time (int):
+            Time in seconds at which the two files should be merged. Data from
+            stat_file1 will be used for time < split_time and data from
+            stat_file2 will be used for time >= split_time.
+    """
+
+    if Path(combined_stat_file).exists():
+        logger.info(f"{combined_stat_file} already exists. Skipping...")
+        return
+
+    def clean_time(ds: xr.Dataset, times: np.ndarray) -> xr.Dataset:
+        """Assign integer-valued time coordinates without float noise."""
+        times_clean = np.rint(times).astype(np.int64)
+
+        # Drop any existing time coordinate/variable, then assign the clean one.
+        if "time" in ds.coords:
+            ds = ds.drop_vars("time")
+
+        return ds.assign_coords(time=("time", times_clean))
+
+    with xr.open_dataset(stat_file1, decode_times=False) as ds1_root:
+        times1 = np.rint(ds1_root.time.values).astype(np.int64)
+
+    with xr.open_dataset(stat_file2, decode_times=False) as ds2_root:
+        times2 = np.rint(ds2_root.time.values).astype(np.int64)
+
+    with nc4.Dataset(stat_file1, "r") as nc:
+        group_names = list(nc.groups.keys())
+
+    # Write root group first.
+    all_groups = [None] + group_names
+
+    for i, group in enumerate(all_groups):
+        ds1 = xr.open_dataset(stat_file1, group=group, decode_times=False)
+        ds2 = xr.open_dataset(stat_file2, group=group, decode_times=False)
+
+        ds1 = clean_time(ds1, times1)
+        ds2 = clean_time(ds2, times2)
+
+        ds1_sliced = ds1.where(ds1.time < split_time, drop=True)
+        ds2_sliced = ds2.where(ds2.time >= split_time, drop=True)
+
+        ds_out = xr.concat(
+            [ds1_sliced, ds2_sliced],
+            dim="time",
+            data_vars="all",
+        )
+
+        # Force the concatenated output coordinate to stay clean.
+        ds_out = ds_out.assign_coords(
+            time=("time", np.rint(ds_out.time.values).astype(np.int64))
+        )
+
+        ds_out = ds_out.transpose(*ds1.dims)
+
+        write_mode = "w" if i == 0 else "a"
+
+        ds_out.to_netcdf(
+            combined_stat_file,
+            group=group,
+            mode=write_mode,
+            engine="netcdf4",
+        )
+
+        ds1.close()
+        ds2.close()
+
+    logger.info(f"Finished merging into {combined_stat_file}")
 
 
 def add_gaussian_noise(
@@ -1426,8 +1421,173 @@ def format_data_for_cdo(
     return ds
 
 
+def create_2d_3d_output_script(
+    cases: list[init.Case],
+    alps_setup: cscs.AlpsSetup,
+    scratch_path: Union[str, Path],
+    py_file_path: Union[str, Path],
+    python_path: Union[str, Path],
+    vars_3d: Union[str, list[str]],
+    vars_2d: Union[str, list[str]],
+    sample_time: Optional[int] = None,
+    job_name: str = "create_2d_3d_output",
+    overwrite: bool = False,
+) -> Path:
+    """Create a SLURM script to create 2D and 3D output for cases in parallel.
+
+    The generated script launches one unbuffered Python process per case in the
+    background and waits for all cases to finish. Running Python with ``-u``
+    ensures that logging and print output from the 2D/3D conversion functions is
+    written to the SLURM ``.out`` file while the job is still running.
+
+    Args:
+        cases (list[init.Case]):
+            Cases to post-process. All cases are launched in parallel.
+        alps_setup (cscs.AlpsSetup):
+            Alps setup used to create the SLURM script header.
+        scratch_path (Union[str, Path]):
+            Directory where the SLURM script and output file are written.
+        py_file_path (Union[str, Path]):
+            Path to the Python script that creates the 2D and 3D output.
+        python_path (Union[str, Path]):
+            Python executable to use.
+        vars_3d (Union[str, list[str]]):
+            Variables to create 3D output for.
+        vars_2d (Union[str, list[str]]):
+            Variables to create 2D output for.
+        sample_time (int, optional):
+            Sampling interval passed to the processing script.
+        job_name (str, optional):
+            Name of the SLURM job and script. Defaults to "create_2d_3d_output".
+        overwrite (bool, optional):
+            Overwrite an existing script. Defaults to False.
+
+    Returns:
+        Path:
+            Path to the created SLURM script.
+    """
+    if not cases:
+        raise ValueError("At least one case is required.")
+
+    # check if cpus_per_task in alps_setup has been set and is sufficient for
+    # the number of cases and variables
+    ncases = len(utils.object_to_list(cases))
+    nvars = len(utils.object_to_list(vars_3d))
+    ncpus_per_task = alps_setup.cpus_per_task
+
+    if ncpus_per_task is not None and ncpus_per_task < ncases * nvars:
+        logger.warning(
+            f"cpus_per_task in alps_setup is set to {ncpus_per_task}, but {ncases * nvars} "
+            f"CPUs are required to process all variables in parallel."
+            f"cpus_per_task will be set to {ncases * nvars}."
+        )
+        alps_setup.cpus_per_task = ncases * nvars
+    if ncpus_per_task is None:
+        alps_setup.cpus_per_task = ncases * nvars
+        logger.info(
+            f"cpus_per_task in alps_setup is not set. Setting it to {ncases * nvars}."
+        )
+
+    job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
+    job_file = Path(scratch_path, f"{job_name_formatted}.sbash")
+
+    if job_file.exists() and not overwrite:
+        logger.info(f"Reading existing bash script {job_file}")
+        return job_file
+
+    commands = _get_2d_3d_output_commands(
+        cases=cases,
+        py_file_path=py_file_path,
+        python_path=python_path,
+        vars_3d=[str(var) for var in utils.object_to_list(vars_3d)],
+        vars_2d=[str(var) for var in utils.object_to_list(vars_2d)],
+        sample_time=sample_time,
+    )
+
+    job_file = alps_setup.create_bash_script(
+        commands=commands,
+        job_name=job_name_formatted,
+        file_path=job_file,
+        scratch_path=scratch_path,
+    )
+
+    return Path(job_file)
+
+
+def _get_2d_3d_output_commands(
+    cases: list[init.Case],
+    py_file_path: Union[str, Path],
+    python_path: Union[str, Path],
+    vars_3d: list[str],
+    vars_2d: list[str],
+    sample_time: Optional[int] = None,
+) -> list[str]:
+    commands = [
+        "# Define post-processing script and variables",
+        f"SCRIPT={shlex.quote(str(py_file_path))}",
+        f"PY_PATH={shlex.quote(str(python_path))}",
+        "VARS_3D=(",
+    ]
+
+    for var in vars_3d:
+        commands.append(f"    {shlex.quote(var)}")
+
+    commands.extend(
+        [
+            ")",
+            "VARS_2D=(",
+        ]
+    )
+
+    for var in vars_2d:
+        commands.append(f"    {shlex.quote(var)}")
+
+    commands.extend(
+        [
+            ")",
+            "",
+            "CASE_DIRS=(",
+        ]
+    )
+
+    for case in cases:
+        commands.append(f"    {shlex.quote(str(case.file_directory))}")
+
+    commands.extend(
+        [
+            ")",
+            "",
+            f"# Launch all {len(cases)} cases in the background",
+            'for CASE_DIR in "${CASE_DIRS[@]}"; do',
+            '    "$PY_PATH" -u "$SCRIPT" \\',
+            '        --file_directory "$CASE_DIR" \\',
+            '        --vars_3d "${VARS_3D[@]}" \\',
+            '        --vars_2d "${VARS_2D[@]}" \\',
+        ]
+    )
+
+    if sample_time is not None:
+        commands.append(f"        --sample_time {sample_time} &")
+    else:
+        commands[-1] = '        --vars_2d "${VARS_2D[@]}" &'
+
+    commands.extend(
+        [
+            "done",
+            "",
+            "# Wait for all background jobs to finish",
+            "wait",
+            'echo "All cases completed."',
+        ]
+    )
+
+    return commands
+
+
 __all__ = [
     "PostProcessing",
+    "create_2d_3d_output_script",
+    "merge_restart_statistics",
     "format_data_for_cdo",
     "add_gaussian_noise",
     "degrade_resolution",

@@ -3,7 +3,6 @@ import logging
 import re
 import matplotlib.figure
 
-from pathlib import Path
 from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable, get_cmap
@@ -62,7 +61,7 @@ class CaseViewer:
             figsize (tuple, optional): Size of the figure. Defaults to (15, 10).
             cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
         """
-        file_path = Path(self.case.file_directory) / f"{self.case.name}_input.nc"
+        file_path = self.case.initial_conditions_file_path
 
         if not file_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {file_path}")
@@ -130,8 +129,7 @@ class CaseViewer:
 
         elif len(dims) == 1:
             if aux_dim:
-                ax.plot(data.values, data[aux_dim], marker="x")
-                ax.set_ylabel(aux_dim)
+                data.plot(ax=ax, y=aux_dim, marker="x")  # pyright: ignore
             elif time_dim:
                 data.plot(ax=ax, marker="x")  # pyright: ignore
             else:
@@ -466,7 +464,7 @@ class CaseViewer:
         # Information about sources
         try:
             source_strength = src.get_source_strength(self.case, to_unit="kg/h")
-            source_height = np.atleast_1d(self.case.ini_file["source"]["source_z0"])
+            source_height = np.atleast_1d(self.case.config["source"]["source_z0"])
             if len(source_strength) > 1:
                 # Multiple sources
                 text.append("\nSources")
@@ -595,7 +593,7 @@ class CaseViewer:
 
         u_prof = wind_proc.get_wind_profile(
             z=initial_cond.z.values,
-            z0=self.case.ini_file["boundary"]["z0m"],
+            z0=self.case.config["boundary"]["z0m"],
             u_star=ustar,
             T=mean_temp,
             L=obuk,
@@ -883,14 +881,19 @@ def compare_initial_conditions(
         x_dim = time_dims[0] if time_dims else None
         y_dim = "z" if "z" in ic_case1[var].dims else None
 
-        ic_case1[var].plot(ax=ax[0], y=y_dim, x=x_dim)  # pyright: ignore
+        plot_kwargs = {"y": y_dim, "x": x_dim}
+
+        if ic_case1[var].ndim > 1:
+            plot_kwargs["cbar_kwargs"] = {"orientation": "horizontal", "pad": 0.15}
+
+        ic_case1[var].plot(ax=ax[0], **plot_kwargs)  # pyright: ignore
         ax[0].set_title(case1.suffix)
-        ic_case2[var].plot(ax=ax[1], y=y_dim, x=x_dim)  # pyright: ignore
+        ic_case2[var].plot(ax=ax[1], **plot_kwargs)  # pyright: ignore
         ax[1].set_title(case2.suffix)
 
         if show_differences:
             diff = _compute_difference(ic_case1, ic_case2, var)
-            diff.plot(ax=ax[2], y=y_dim, x=x_dim)  # pyright: ignore
+            diff.plot(ax=ax[2], **plot_kwargs)  # pyright: ignore
             ax[2].set_title("Difference")
 
         plt.tight_layout()

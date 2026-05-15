@@ -29,12 +29,12 @@ def get_source_strength(
     Returns:
         np.ndarray: Array of source strengths in desired units
     """
-    swtimedep_strength = case.ini_file["source"]["swtimedep_strength"]
+    swtimedep_strength = case.config["source"]["swtimedep_strength"]
 
     if swtimedep_strength:
         source_strength_arr = _get_dynamic_source_strength(case, time_s=time_s)
     else:
-        source_strength_arr = np.array(case.ini_file["source"]["strength"])
+        source_strength_arr = np.array(case.config["source"]["strength"])
 
     from_unit_arr, gas_mass_arr = _get_emission_units(case)
 
@@ -101,8 +101,8 @@ def _get_dynamic_source_strength(
 
 
 def _get_emission_units(case: init.Case) -> tuple[np.ndarray, np.ndarray]:
-    swvmr_list = case.ini_file["source"]["swvmr"]
-    sourcelist_list = case.ini_file["source"]["sourcelist"]
+    swvmr_list = case.config["source"]["swvmr"]
+    sourcelist_list = case.config["source"]["sourcelist"]
 
     from_unit = np.where(swvmr_list, "kmol/s", "kg/s")
     gas_mass = np.where(swvmr_list, sourcelist_list, "")
