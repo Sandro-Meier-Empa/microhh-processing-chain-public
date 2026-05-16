@@ -8,7 +8,7 @@ import zipfile
 import logging
 
 from pathlib import Path
-from typing import Union, Tuple, Optional, Literal
+from typing import Union, Tuple, Optional, Literal, cast
 from tqdm.auto import tqdm
 
 import pandas as pd
@@ -843,13 +843,10 @@ class PostProcessing:
         if "datetime_utc" in self.case.config["time"] and start_date is None:
             start_date = self.case.config["time"]["datetime_utc"]
         elif "datetime_utc" in self.case.config["time"] and start_date is not None:
-            start_date = start_date
             logger.info(
                 f"Using {start_date} to overwrite {self.case.config['time']['datetime_utc']} "
                 f"in .ini file"
             )
-        else:
-            pass
 
         if start_date is None:
             raise ValueError(
@@ -857,32 +854,38 @@ class PostProcessing:
             )
 
         tz = "UTC"
-        # Check if start_date is a string and convert it to a Timestamp if necessary
+
         if isinstance(start_date, str):
-            start_date = pd.to_datetime(start_date, format=format)
-        # if it is a pd.Timestamp, make tz naive
+            converted = pd.to_datetime(start_date, format=format)
+            if pd.isna(converted):
+                raise ValueError(f"Could not parse start_date: {start_date}")
+            start_date = cast(pd.Timestamp, converted)
+
         if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
             start_date = start_date.tz_convert("UTC").tz_localize(None)
 
-        # check if the time coordinate is already given as datetime:
-        if data["time"].dtype == "<M8[ns]":
-            # overwrite datetime
-            time_diff = pd.Timestamp(data["time"].values[0]) - start_date
-            data = data.assign_coords(
-                time=pd.to_datetime(data["time"].values) - time_diff
-            )
+        # Force ns precision for the reference timestamp as well.
+        ts_start_date = pd.Timestamp(start_date).as_unit("ns")
+
+        if np.issubdtype(data["time"].dtype, np.datetime64):
+            time_values = pd.to_datetime(data["time"].values).astype("datetime64[ns]")
+            first_time = cast(pd.Timestamp, pd.to_datetime(time_values[0]))
+            time_diff = first_time - ts_start_date
+            new_time = time_values - time_diff
 
         elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
             data["time"].dtype, np.floating
         ):
-            # convert time to timedelta
-            time_delta = pd.to_timedelta(data["time"].values, unit="s")
-            # add Timedelta to the start date
-            data = data.assign_coords(time=start_date + time_delta)
+            # convert MicroHH seconds to timedelta, then add to start date
+            time_delta = pd.to_timedelta(data["time"].to_numpy(), unit="s")
+            new_time = pd.DatetimeIndex(start_date + time_delta).astype(
+                "datetime64[ns]"
+            )
 
         else:
             raise ValueError("Data type of 'time' was not recognized.")
 
+        data = data.assign_coords(time=new_time)
         data["time"].attrs.update({"timezone": tz})
 
         return data
