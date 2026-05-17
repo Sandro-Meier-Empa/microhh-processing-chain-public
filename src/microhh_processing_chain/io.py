@@ -27,15 +27,15 @@ def open_microhh_nc(
         chunks (Union[str, dict], optional):
             Chunking strategy for dask. Defaults to None.
     """
-    file_path = Path(case.file_directory, f"{variable}.nc")
+    file_path = Path(case.directory, f"{variable}.nc")
 
     if not file_path.exists():
         # List all .nc files in the directory
-        nc_files = [f.name for f in Path(case.file_directory).glob("*.nc")]
+        nc_files = [f.name for f in Path(case.directory).glob("*.nc")]
         nc_list = ", ".join(nc_files) if nc_files else "No .nc files found."
 
         raise FileNotFoundError(
-            f"Variable '{variable}' not found in {case.file_directory}. "
+            f"Variable '{variable}' not found in {case.directory}. "
             f"Available .nc files: {nc_list}"
         )
 

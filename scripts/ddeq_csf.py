@@ -42,9 +42,9 @@ def main():
     # 1) Initialization
     # -------------------------------------------------------------------------
     args = parse_args()
-    logging.info(f"Processing case: {args.file_directory}")
+    logging.info(f"Processing case: {args.directory}")
 
-    case = init.read_case(args.file_directory)
+    case = init.read_case(args.directory)
     post_processing = post.PostProcessing(case)
 
     # -------------------------------------------------------------------------
@@ -144,11 +144,11 @@ def main():
         stoplon=float(data_coord_subset.lon.max()),
     )
 
-    results_file_path = case.file_directory / "results_csf.nc"
+    results_file_path = case.directory / "results_csf.nc"
     if results_file_path.exists():
         logging.info(
             "Results file already exists for case %s. Skipping processing.",
-            args.file_directory,
+            args.directory,
         )
         return
 

@@ -84,7 +84,7 @@ class PostProcessing:
             str(python_path),
             str(py_file_path),
             "--file_directory",
-            str(self.case.file_directory),
+            str(self.case.directory),
         ]
 
         for key, value in additional_args.items():
@@ -151,7 +151,7 @@ class PostProcessing:
         if vars:
             convert_3d_to_nc.run_conversion(
                 filename=f"{self.case.name}.ini",
-                directory=self.case.file_directory,
+                directory=self.case.directory,
                 variables=vars,
                 precision=(
                     precision.value if isinstance(precision, Precision) else precision
@@ -209,7 +209,7 @@ class PostProcessing:
         if vars:
             cross_to_nc.run_conversion(
                 filename=f"{self.case.name}.ini",
-                directory=self.case.file_directory,
+                directory=self.case.directory,
                 modes=modes,
                 variables=vars,
                 indexes=indexes,
@@ -291,7 +291,7 @@ class PostProcessing:
                 Specify if existing files or folders should be overwritten.
         """
 
-        for item in self.case.file_directory.glob(pattern):
+        for item in self.case.directory.glob(pattern):
             dest_item = Path(store_path, item.name)
 
             if item.is_dir():
@@ -331,7 +331,7 @@ class PostProcessing:
         zip_filename = (
             f"{file_pattern}.zip" if file_pattern != "^.*" else "binary_files.zip"
         )
-        zip_file_path = Path(self.case.file_directory, zip_filename)
+        zip_file_path = Path(self.case.directory, zip_filename)
 
         if zip_file_path.exists():
             logger.info(f"{zip_file_path} already exists. Skipping...")
@@ -339,9 +339,7 @@ class PostProcessing:
 
         pattern = re.compile(rf"{file_pattern}\.\d{{7}}$")
         matching_files = [
-            file
-            for file in self.case.file_directory.iterdir()
-            if pattern.match(file.name)
+            file for file in self.case.directory.iterdir() if pattern.match(file.name)
         ]
 
         if not matching_files:
@@ -362,17 +360,17 @@ class PostProcessing:
 
     def unzip_binary_files(self, remove_zip_file: bool = False) -> None:
         """Unzip the binary grid files to scratch"""
-        zip_filename = Path(self.case.file_directory, "binary_grid_files.zip")
+        zip_filename = Path(self.case.directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
             logger.warning(f"{zip_filename} does not exist. Skipping...")
             return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
-            zip_ref.extractall(self.case.file_directory)
+            zip_ref.extractall(self.case.directory)
 
         logger.info(
-            f"Files from '{zip_filename}' successfully extracted to '{self.case.file_directory}'"
+            f"Files from '{zip_filename}' successfully extracted to '{self.case.directory}'"
         )
 
         if remove_zip_file:
@@ -390,7 +388,7 @@ class PostProcessing:
         Returns:
             xr.Dataset: 3D netCDF file from model output.
         """
-        file_path = Path(self.case.file_directory, f"{variable.lower()}.nc")
+        file_path = Path(self.case.directory, f"{variable.lower()}.nc")
 
         if not file_path.exists():
             self.create_3d_output(vars=variable.lower())
@@ -494,7 +492,7 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with combined variables.
         """
-        file_path = Path(self.case.file_directory, f"{filename}.nc")
+        file_path = Path(self.case.directory, f"{filename}.nc")
 
         # Check if the output file already exists
         if file_path.exists() and not overwrite:
@@ -1113,9 +1111,7 @@ class PostProcessing:
             mass_array = []
             dtype = get_dtype()
             for time in time_range:
-                fld = np.fromfile(
-                    f"{self.case.file_directory}/{scalar}.{time:07d}", dtype
-                )
+                fld = np.fromfile(f"{self.case.directory}/{scalar}.{time:07d}", dtype)
                 fld = fld.reshape((ktot, jtot, itot))
                 mass = np.sum(rhoref[:, None, None] * fld * dx * dy * dz[:, None, None])
                 mass_array.append(float(mass))
@@ -1554,7 +1550,7 @@ def _get_2d_3d_output_commands(
     )
 
     for case in cases:
-        commands.append(f"    {shlex.quote(str(case.file_directory))}")
+        commands.append(f"    {shlex.quote(str(case.directory))}")
 
     commands.extend(
         [

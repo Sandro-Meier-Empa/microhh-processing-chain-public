@@ -34,7 +34,7 @@ class WindProcessing:
 
         self.post = post.PostProcessing(case)
         self.case = case
-        self.file_directory = case.file_directory
+        self.directory = case.directory
 
     def create_wind_dataset(
         self,
@@ -182,7 +182,7 @@ class WindProcessing:
         wind_vars = self._get_wind_vars(method)
 
         # load wind.nc if it exists
-        wind_nc_path = Path(self.file_directory, "wind_2D.nc")
+        wind_nc_path = Path(self.directory, "wind_2D.nc")
         if os.path.exists(wind_nc_path):
             if overwrite:
                 os.remove(wind_nc_path)
