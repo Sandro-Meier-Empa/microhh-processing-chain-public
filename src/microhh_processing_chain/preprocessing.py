@@ -185,7 +185,7 @@ class PreProcessing:
 
         # copy microHH restart files
         restart_str = self.get_restart_str(restart_time)
-        self.copy_restart_files(origin=restart_case.file_directory, timestr=restart_str)
+        self.copy_restart_files(origin=restart_case.directory, timestr=restart_str)
 
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode=RunMode.RERUN)
@@ -504,7 +504,7 @@ class PreProcessing:
         """Helper to get variable names from a specific NetCDF group."""
         try:
             initial_cond = xr.open_dataset(
-                Path(self.case.file_directory, f"{self.case.name}_input.nc"),
+                Path(self.case.directory, f"{self.case.name}_input.nc"),
                 group=group_name,
             )
             return [str(v) for v in initial_cond.variables]

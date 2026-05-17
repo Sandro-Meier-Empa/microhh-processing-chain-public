@@ -79,17 +79,17 @@ class Case:
 
     @property
     def out_file_path(self) -> Path:
-        return Path(self.file_directory, f"{self.name}.out")
+        return Path(self.directory, f"{self.name}.out")
 
     @property
     def initial_conditions_file_path(self) -> Path:
-        return Path(self.file_directory, f"{self.name}_input.nc")
+        return Path(self.directory, f"{self.name}_input.nc")
 
     @property
     def statistics_file_path(self) -> Path:
         """Path to the statistics file of the case."""
         start_time = int(self.config["time"]["starttime"])
-        return Path(self.file_directory, f"{self.name}.default.{start_time:07d}.nc")
+        return Path(self.directory, f"{self.name}.default.{start_time:07d}.nc")
 
     @property
     def config(self) -> mht.Read_namelist:
@@ -130,7 +130,7 @@ class Case:
             f"Case(\n"
             f"  name='{self.name}',\n"
             f"  suffix='{self.suffix}',\n"
-            f"  path='{self.file_directory}'\n"
+            f"  path='{self.directory}'\n"
         )
 
         if self.job_id is not None:
@@ -169,7 +169,7 @@ class Case:
             overwrite: Whether to overwrite an existing case directory.
         """
         self.scratch_path = Path(scratch_path, self.full_name)
-        self.file_directory = self.scratch_path
+        self.directory = self.scratch_path
         self.ini_file_path = Path(self.scratch_path, f"{self.name}.ini")
 
         self._handle_method(method, init_from)
@@ -283,7 +283,7 @@ class Case:
             The SLURM job ID extracted from the output filename,
             or ``None`` if no output file is found.
         """
-        out_files = list(Path(self.file_directory).glob("run_microhh*.out"))
+        out_files = list(Path(self.directory).glob("run_microhh*.out"))
 
         if not out_files:
             return None
@@ -494,7 +494,7 @@ class Case:
             filename = "run_microhh.sbash"
         elif filetype_val == FileType.SBASH_OUT.value:
             # Use wildcard matching
-            matches = list(Path(self.file_directory).glob("run_microhh*.out"))
+            matches = list(Path(self.directory).glob("run_microhh*.out"))
             if not matches:
                 raise FileNotFoundError("No sbash_out files found.")
             filename = max(matches, key=lambda f: f.stat().st_mtime)
@@ -503,7 +503,7 @@ class Case:
                 f"{filetype} is not available. Use 'ini', 'out', 'sbash' or 'sbash_out'."
             )
 
-        file_path = self.file_directory / filename
+        file_path = self.directory / filename
 
         if file_path.exists():
             utils.open_in_vscode(file_path)
@@ -567,7 +567,7 @@ class Case:
 
         if save:
             # Save benchmark information as a .json file
-            json_file_path = self.file_directory / f"{self.name}_benchmark.json"
+            json_file_path = self.directory / f"{self.name}_benchmark.json"
             with open(json_file_path, "w") as f:
                 json.dump(benchmark, f, indent=4)
 
@@ -582,7 +582,7 @@ class Case:
         Raises:
             FileNotFoundError: If the benchmark JSON file does not exist.
         """
-        json_file_path = self.file_directory / f"{self.name}_benchmark.json"
+        json_file_path = self.directory / f"{self.name}_benchmark.json"
 
         if not json_file_path.exists():
             raise FileNotFoundError(
@@ -614,7 +614,7 @@ class Case:
         Raises:
             FileNotFoundError: If the ``.out`` file does not exist.
         """
-        out_file_path = self.file_directory / f"{self.name}.out"
+        out_file_path = self.directory / f"{self.name}.out"
 
         if not out_file_path.exists():
             raise FileNotFoundError(f"{out_file_path} does not exist.")
@@ -645,13 +645,13 @@ class Case:
         new_name = new_name if new_name is not None else self.name
         new_suffix = new_suffix if new_suffix is not None else self.suffix
         new_name_spec = f"{new_name}.{new_suffix}" if new_suffix else f"{new_name}"
-        new_file_directory = self.file_directory.parent / new_name_spec
+        new_file_directory = self.directory.parent / new_name_spec
 
         if new_file_directory.exists():
             raise FileExistsError(f"Directory '{new_file_directory}' already exists.")
 
         # Rename the directory
-        shutil.move(str(self.file_directory), str(new_file_directory))
+        shutil.move(str(self.directory), str(new_file_directory))
 
         # Update the case attributes
         self.name = new_name
@@ -705,16 +705,16 @@ class Case:
             "t_soil.0000000",
         ]
         with utils.confirm_action(
-            f"Are you sure you want to clean the case at {self.file_directory}?"
+            f"Are you sure you want to clean the case at {self.directory}?"
         ) as confirmed:
             if confirmed:
-                for item in self.file_directory.iterdir():
+                for item in self.directory.iterdir():
                     if item.name not in files_to_keep:
                         if item.is_file():
                             item.unlink()
                         elif item.is_dir():
                             shutil.rmtree(item)
-                logger.info(f"Cleaned case at {self.file_directory}.")
+                logger.info(f"Cleaned case at {self.directory}.")
 
     def delete(self) -> None:
         """Delete this MicroHH case by removing its directory.
@@ -724,17 +724,17 @@ class Case:
         Raises:
             FileNotFoundError: If the case directory does not exist.
         """
-        if not self.file_directory.exists():
+        if not self.directory.exists():
             raise FileNotFoundError(
-                f"Case directory '{self.file_directory}' does not exist."
+                f"Case directory '{self.directory}' does not exist."
             )
 
         with utils.confirm_action(
-            f"Are you sure you want to delete the case at {self.file_directory}?"
+            f"Are you sure you want to delete the case at {self.directory}?"
         ) as confirmed:
             if confirmed:
-                shutil.rmtree(self.file_directory)
-                logger.info(f"Deleted case at {self.file_directory}.")
+                shutil.rmtree(self.directory)
+                logger.info(f"Deleted case at {self.directory}.")
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
@@ -890,16 +890,16 @@ def read_case(
         name=name,
         suffix=suffix,
     )
-    case.file_directory = case_directory
-    case.ini_file_path = Path(case.file_directory, f"{case.name}.ini")
+    case.directory = case_directory
+    case.ini_file_path = Path(case.directory, f"{case.name}.ini")
     case.scratch_path = (
-        Path(scratch_path, case.full_name) if scratch_path else case.file_directory
+        Path(scratch_path, case.full_name) if scratch_path else case.directory
     )
     case.job_id = case.job_id if case.job_id is not None else case._get_job_id()
 
     if not case.ini_file_path.exists():
         raise FileNotFoundError(
-            f".ini file for case '{case.name}' does not exist in {case.file_directory}."
+            f".ini file for case '{case.name}' does not exist in {case.directory}."
         )
 
     case.config = mht.Read_namelist(case.ini_file_path)

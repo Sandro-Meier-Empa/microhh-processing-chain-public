@@ -613,8 +613,7 @@ def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
     # Using ThreadPoolExecutor to parallelize the file processing
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [
-            executor.submit(process_file, file)
-            for file in case.file_directory.iterdir()
+            executor.submit(process_file, file) for file in case.directory.iterdir()
         ]
         for future in concurrent.futures.as_completed(futures):
             timestep = future.result()
@@ -645,7 +644,7 @@ def extract_job_id(case: "Case") -> int | None:
     Extracts the number represented by '*' in a pattern like 'run_microhh_*.out'.
     Returns the number as an integer, or None if not found.
     """
-    files = case.file_directory.glob("run_microhh_*.out")
+    files = case.directory.glob("run_microhh_*.out")
     for file in files:
         match = re.search(r"run_microhh_(\d+)\.out", file.name)
         if match:
