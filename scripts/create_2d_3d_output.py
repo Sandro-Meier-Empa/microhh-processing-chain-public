@@ -12,7 +12,7 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--file_directory",
+        "--directory",
         type=str,
         required=True,
         help="Path to the MicroHH case directory...",

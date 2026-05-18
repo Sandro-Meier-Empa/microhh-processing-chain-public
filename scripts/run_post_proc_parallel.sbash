@@ -34,7 +34,7 @@ CASE_DIRS=(
 # Launch all 4 cases in the background, each using 3 parallel workers
 for CASE_DIR in "${CASE_DIRS[@]}"; do
     $PY_PATH -u "$SCRIPT" \
-        --file_directory "$CASE_DIR" \
+        --directory "$CASE_DIR" \
         --vars_3d $VARS \
         --sample_time 20 &
 done

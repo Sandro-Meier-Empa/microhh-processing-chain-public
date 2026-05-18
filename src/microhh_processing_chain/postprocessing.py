@@ -83,7 +83,7 @@ class PostProcessing:
             "srun",
             str(python_path),
             str(py_file_path),
-            "--file_directory",
+            "--directory",
             str(self.case.directory),
         ]
 
@@ -1559,7 +1559,7 @@ def _get_2d_3d_output_commands(
             f"# Launch all {len(cases)} cases in the background",
             'for CASE_DIR in "${CASE_DIRS[@]}"; do',
             '    "$PY_PATH" -u "$SCRIPT" \\',
-            '        --file_directory "$CASE_DIR" \\',
+            '        --directory "$CASE_DIR" \\',
             '        --vars_3d "${VARS_3D[@]}" \\',
             '        --vars_2d "${VARS_2D[@]}" \\',
         ]
