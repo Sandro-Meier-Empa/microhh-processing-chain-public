@@ -40,7 +40,7 @@ class Case:
         self.full_name = f"{name}.{suffix}" if suffix else f"{name}"
 
         # define paths that will be set during initinitialisation
-        self._file_directory: Optional[Path] = None
+        self._directory: Optional[Path] = None
         self._ini_file_path: Optional[Path] = None
         self._scratch_path: Optional[Path] = None
 
@@ -49,14 +49,14 @@ class Case:
         self.job_id: Optional[int] = None
 
     @property
-    def file_directory(self) -> Path:
-        if self._file_directory is None:
+    def directory(self) -> Path:
+        if self._directory is None:
             raise RuntimeError("File directory has not been set yet.")
-        return self._file_directory
+        return self._directory
 
-    @file_directory.setter
-    def file_directory(self, value: Union[str, Path]) -> None:
-        self._file_directory = Path(value)
+    @directory.setter
+    def directory(self, value: Union[str, Path]) -> None:
+        self._directory = Path(value)
 
     @property
     def ini_file_path(self) -> Path:
@@ -659,7 +659,7 @@ class Case:
         self.name = new_name
         self.suffix = new_suffix
         self.full_name = new_name_spec
-        self._file_directory = new_file_directory
+        self._directory = new_file_directory
         self._ini_file_path = Path(new_file_directory, f"{new_name}.ini")
 
     def clean(self) -> None:
