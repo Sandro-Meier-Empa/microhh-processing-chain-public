@@ -7,6 +7,7 @@ import logging
 
 from pathlib import Path
 from typing import Union, Optional
+from collections import defaultdict
 
 import pandas as pd
 
@@ -707,6 +708,85 @@ class Case:
             if confirmed:
                 shutil.rmtree(self.directory)
                 logger.info(f"Deleted case at {self.directory}.")
+
+    def summarise_files(self):
+        """Summarise output files in the case directory."""
+        files = [f.name for f in self.directory.iterdir() if f.is_file()]
+
+        # Regex patterns for timestamped files
+        # Pattern 1: name.XXXXXXX  (e.g. ch4.0000000, u.0000020)
+        # Pattern 2: name.XXX.XXXXXXX (e.g. ch4_path.xy.000.0000000)
+        # Special: name.nc (e.g. u.nc, v.nc)
+        ts_pattern = re.compile(r"^(.+?)\.(\d{7})$")
+        ts2_pattern = re.compile(
+            r"^(.+\.\d{3})\.(\d{7})$"
+        )  # for ch4_path.xy.NNN.TTTTTTT
+        nc_pattern = re.compile(r"^(.+?)\.nc$")
+
+        timestamped = defaultdict(list)  # base_name -> [timestamps]
+        nc_files = []
+        other_files = []
+
+        for fname in sorted(files):
+            # Try the two-level timestamp pattern first (more specific)
+            m2 = ts2_pattern.match(fname)
+            m1 = ts_pattern.match(fname)
+            mn = nc_pattern.match(fname)
+
+            if m2:
+                timestamped[m2.group(1)].append(int(m2.group(2)))
+            elif m1:
+                timestamped[m1.group(1)].append(int(m1.group(2)))
+            elif mn and not fname.endswith("_input.nc") and fname != "fftwplan.0000000":
+                nc_files.append(fname)
+            else:
+                other_files.append(fname)
+
+        # --- Print summary ---
+        print(f"Case directory: {self.directory}\n")
+
+        print("=" * 60)
+        print("TIMESTAMPED FILE SERIES")
+        print("=" * 60)
+        for base in sorted(timestamped):
+            ts = sorted(timestamped[base])
+            n = len(ts)
+            t0, t1 = ts[0], ts[-1]
+            # Detect uniform step
+            steps = set(ts[i + 1] - ts[i] for i in range(len(ts) - 1)) if n > 1 else {0}
+            if len(steps) == 1:
+                dt = steps.pop()
+                step_str = f"step={dt}"
+            else:
+                step_str = "irregular steps"
+            print(f"  {base:<40s}  {n:>4d} files  [{t0:07d} – {t1:07d}]  {step_str}")
+
+        if nc_files:
+            print()
+            print("=" * 60)
+            print("NETCDF FILES")
+            print("=" * 60)
+            for f in sorted(nc_files):
+                print(f"  {f}")
+
+        log_files = [f for f in other_files if f.endswith((".out", ".sbash"))]
+        other_files = [f for f in other_files if not f.endswith((".out", ".sbash"))]
+
+        if log_files:
+            print()
+            print("=" * 60)
+            print("LOGS & JOB SCRIPTS")
+            print("=" * 60)
+            for f in sorted(log_files):
+                print(f"  {f}")
+
+        if other_files:
+            print()
+            print("=" * 60)
+            print("OTHER FILES")
+            print("=" * 60)
+            for f in sorted(other_files):
+                print(f"  {f}")
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
