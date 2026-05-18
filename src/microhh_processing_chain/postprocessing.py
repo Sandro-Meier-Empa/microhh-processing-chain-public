@@ -739,7 +739,11 @@ class PostProcessing:
         """
 
         # if lat/lon is defined in .ini file: use these values to convert grid
-        if "lat" in self.case.config["grid"] and source is None:
+        if (
+            "lat" in self.case.config["grid"]
+            and "lon" in self.case.config["grid"]
+            and source is None
+        ):
             lat_ref = self.case.config["grid"]["lat"]
             lon_ref = self.case.config["grid"]["lon"]
             grid_x_ref = self.case.config["grid"]["xsize"] / 2
