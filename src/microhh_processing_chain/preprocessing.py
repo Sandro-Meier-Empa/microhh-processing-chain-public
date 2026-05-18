@@ -256,7 +256,7 @@ class PreProcessing:
     def create_run_script(
         self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
     ) -> Path:
-        job_file = Path(self.case.scratch_path, "run_microhh.sbash")
+        job_file = Path(self.case.scratch_path, "run_microhh.sbatch")
 
         commands = _get_microhh_run_commands(
             case_list=[self.case],
@@ -999,7 +999,7 @@ def create_run_4x_script(
     if ncases != 4:
         logger.warning(f"Expected 4 cases, but got {len(cases)}.")
 
-    master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbash")
+    master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbatch")
 
     commands = _get_microhh_run_commands(
         case_list=cases, mode=mode, jobreport_path=jobreport_path
