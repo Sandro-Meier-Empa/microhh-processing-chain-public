@@ -474,14 +474,15 @@ class Case:
 
         Args:
             filetype: File type to open. Can be a :class:`FileType` enum
-                member or one of ``'ini'``, ``'out'``, ``'sbash'``,
-                ``'sbash_out'``.
+                member or one of ``'ini'``, ``'out'``, ``'sbatch'``,
+                ``'sbatch_out'``.
 
         Raises:
             FileNotFoundError: If no matching file is found (for
-                ``'sbash_out'``).
+                ``'sbatch_out'``).
             ValueError: If *filetype* is not a recognised value.
         """
+
         # Normalize filetype to string
         filetype_val = (
             filetype.value if isinstance(filetype, FileType) else str(filetype).lower()
@@ -491,17 +492,17 @@ class Case:
             filename = f"{self.name}.ini"
         elif filetype_val == FileType.OUT.value:
             filename = f"{self.name}.out"
-        elif filetype_val == FileType.SBASH.value:
-            filename = "run_microhh.sbash"
-        elif filetype_val == FileType.SBASH_OUT.value:
+        elif filetype_val == FileType.SBATCH.value:
+            filename = "run_microhh.sbatch"
+        elif filetype_val == FileType.SBATCH_OUT.value:
             # Use wildcard matching
             matches = list(Path(self.directory).glob("run_microhh*.out"))
             if not matches:
-                raise FileNotFoundError("No sbash_out files found.")
+                raise FileNotFoundError("No sbatch_out files found.")
             filename = max(matches, key=lambda f: f.stat().st_mtime)
         else:
             raise ValueError(
-                f"{filetype} is not available. Use 'ini', 'out', 'sbash' or 'sbash_out'."
+                f"{filetype} is not available. Use 'ini', 'out', 'sbatch' or 'sbatch_out'."
             )
 
         file_path = self.directory / filename
@@ -797,8 +798,8 @@ class Case:
             for f in sorted(nc_files):
                 print(f"  {f}")
 
-        log_files = [f for f in other_files if f.endswith((".out", ".sbash"))]
-        other_files = [f for f in other_files if not f.endswith((".out", ".sbash"))]
+        log_files = [f for f in other_files if f.endswith((".out", ".sbatch"))]
+        other_files = [f for f in other_files if not f.endswith((".out", ".sbatch"))]
 
         if log_files:
             print()

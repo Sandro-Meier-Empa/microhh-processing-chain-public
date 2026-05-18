@@ -79,8 +79,8 @@ class FileType(str, Enum):
 
     INI = "ini"
     OUT = "out"
-    SBASH = "sbash"
-    SBASH_OUT = "sbash_out"
+    SBATCH = "sbatch"
+    SBATCH_OUT = "sbatch_out"
 
 
 class RunMode(str, Enum):

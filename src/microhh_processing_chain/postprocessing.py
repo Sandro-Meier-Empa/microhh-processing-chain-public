@@ -96,7 +96,7 @@ class PostProcessing:
         cmd = shlex.join(cmd_parts)
 
         # submit bash script to run post processing in parallel on alps
-        job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbash")
+        job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbatch")
 
         if job_file.exists() and overwrite:
             os.remove(job_file)
@@ -259,7 +259,7 @@ class PostProcessing:
             "*" + self.case.name + ".default.*.nc",
             "init_microhh_*.out",
             "run_microhh_*.out",
-            "run_microhh.sbash",
+            "run_microhh.sbatch",
             "microhh",
             "jobreport_*",
             "*_benchmark.json",
@@ -1488,7 +1488,7 @@ def create_2d_3d_output_script(
         )
 
     job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
-    job_file = Path(scratch_path, f"{job_name_formatted}.sbash")
+    job_file = Path(scratch_path, f"{job_name_formatted}.sbatch")
 
     if job_file.exists() and not overwrite:
         logger.info(f"Reading existing bash script {job_file}")
