@@ -1158,27 +1158,6 @@ class PostProcessing:
 
         return mass_dict
 
-    def calculate_centerline_position(
-        self,
-        data: xr.Dataset,
-        variable: str,
-        dim: str,
-        ydim_name: str = "y",
-        zdim_name: str = "z",
-    ) -> xr.DataArray:
-        """Calculate the centerline position of the plume in the dataset.
-        According to Raznjevic et al. (2022)"""
-
-        if dim not in [ydim_name, zdim_name]:
-            raise ValueError(f"Dimension '{dim}' not recognized.")
-
-        dim_data = data[dim]
-
-        num = (data[variable] * dim_data).integrate(coord=[zdim_name, ydim_name])
-        den = data[variable].integrate(coord=[zdim_name, ydim_name])
-
-        return num / den
-
 
 def merge_restart_statistics(
     stat_file1: Union[str, Path],
@@ -1357,13 +1336,14 @@ def degrade_resolution(
 
 
 def format_data_for_cdo(
-    data_coord: xr.Dataset, out_path: Union[str, Path]
+    data_coord: xr.Dataset, out_path: Union[str, Path], save: bool = True
 ) -> xr.Dataset:
     """Format the data for use with the CDO library
 
     Args:
         data_coord (xr.Dataset): Dataset with coordinates to format for CDO compatibility.
         out_path (Union[str, Path]): Path where the formatted dataset should be saved.
+        save (bool, optional): Whether to save the formatted dataset to out_path. Defaults to True.
 
     Returns:
         xr.Dataset: Formatted dataset.
@@ -1419,7 +1399,8 @@ def format_data_for_cdo(
             ds[bnd].encoding["coordinates"] = None
             ds[bnd].attrs.pop("coordinates", None)
 
-    ds.to_netcdf(out_path)
+    if save:
+        ds.to_netcdf(out_path)
 
     return ds
 
@@ -1589,9 +1570,9 @@ def _get_2d_3d_output_commands(
 
 __all__ = [
     "PostProcessing",
-    "create_2d_3d_output_script",
     "merge_restart_statistics",
-    "format_data_for_cdo",
     "add_gaussian_noise",
     "degrade_resolution",
+    "format_data_for_cdo",
+    "create_2d_3d_output_script",
 ]
