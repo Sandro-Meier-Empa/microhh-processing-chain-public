@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from cartopy.mpl.geoaxes import GeoAxes
 import cartopy.crs as ccrs
+import xarray as xr
+
+import ddeq
 
 __all__ = [
     "Domain",
@@ -43,6 +46,22 @@ class Domain:
     ) -> None:
         """Initialize the Domain object.
         Adapted from https://github.com/microhh/microhhpy
+
+        Args:
+            xsize (int): Size of the domain in the x-direction (meters).
+            ysize (int): Size of the domain in the y-direction (meters).
+            itot (int): Number of grid points in the x-direction.
+            jtot (int): Number of grid points in the y-direction.
+            lon (float): Longitude of the reference point (degrees). Must be in the
+                same coordinate reference system as the provided EPSG code (if any).
+            lat (float): Latitude of the reference point (degrees). Must be in the
+                same coordinate reference system as the provided EPSG code (if any).
+            anchor (str or tuple): Anchor point for the reference coordinates. Can be a string
+                ("center", "lower left", "lower right", "upper left", "upper right", "lower center",
+                "upper center", "center left", "center right") or a tuple of relative offsets
+                (x_rel, y_rel) in meters from the reference point.
+            epsg_code (str, optional): EPSG code for the coordinate reference system. If None,
+                it will be determined automatically based on the provided latitude and longitude.
         """
 
         if epsg_code is None:
@@ -196,6 +215,48 @@ class Domain:
         gl.right_labels = False
 
         return fig
+
+    def create_grid_nc(self) -> xr.Dataset:
+        """Create an xarray Dataset containing the grid information.
+        The dataset can be used to remap data to the same grid as the MicroHH simulation.
+        """
+
+        lon_grid, lat_grid = self.to_lonlat(self.x, self.y, meshgrid=True)
+
+        data = xr.Dataset(
+            coords={
+                "lon": (
+                    ["nrows", "nobs"],
+                    lon_grid,
+                    {
+                        "units": "degrees_east",
+                        "standard_name": "longitude",
+                        "bounds": "lonc",
+                    },
+                ),
+                "lat": (
+                    ["nrows", "nobs"],
+                    lat_grid,
+                    {
+                        "units": "degrees_north",
+                        "standard_name": "latitude",
+                        "bounds": "latc",
+                    },
+                ),
+            },
+            data_vars={
+                "dummy": (["nrows", "nobs"], np.zeros_like(lon_grid)),
+            },
+            attrs={},
+        )
+        data_corner = ddeq.misc.add_corners(data)
+        data_corner["lonc"].attrs = {"units": "degrees_east"}
+        data_corner["latc"].attrs = {"units": "degrees_north"}
+
+        if "vertices" not in data_corner.dims and "corners" in data_corner.dims:
+            data_corner = data_corner.rename({"corners": "vertices"})
+
+        return data_corner
 
 
 def get_epsg_from_pyproj(lat: float, lon: float) -> str:
