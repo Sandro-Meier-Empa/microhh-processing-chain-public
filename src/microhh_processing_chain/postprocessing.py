@@ -80,7 +80,7 @@ class PostProcessing:
 
         # create command for bash script
         cmd_parts = [
-            "srun",
+            # "srun",
             str(python_path),
             str(py_file_path),
             "--directory",
@@ -707,7 +707,7 @@ class PostProcessing:
     def convert_microhh_grid_to_coords(
         self,
         data: xr.Dataset,
-        source: Optional[xr.DataArray] = None,
+        source: Optional[xr.Dataset] = None,
         target_crs: str = "epsg:4326",
         microhh_crs: str = "epsg:32632",
     ) -> xr.Dataset:
