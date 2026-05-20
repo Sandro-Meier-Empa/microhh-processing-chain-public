@@ -1,24 +1,31 @@
 import argparse
 import logging
 
+import numpy as np
 import cartopy.crs as ccrs
 import pandas as pd
 import xarray as xr
 from tqdm.auto import tqdm
+from enum import StrEnum
 
 import ddeq
+import ddeq.gui
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.postprocessing as post
 from microhh_processing_chain import io
 
 logging.basicConfig(level=logging.INFO)
 
-WIND_METHOD = "Assume 1 m/s and 90 degrees wind direction"
-
 
 # =============================================================================
-# Argument Parsing
+# Argument Parsing and other Helper Functions
 # =============================================================================
+class RunPhase(StrEnum):
+    SPINUP = "spinup"
+    RELEASE = "release"
+    FULL = "full"
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Process MicroHH simulation output and generate 2D/3D datasets."
@@ -34,6 +41,62 @@ def parse_args():
     return parser.parse_args()
 
 
+def get_case_times(case_df: pd.DataFrame, run_phase: RunPhase, savetime_seconds: int):
+    """
+    Calculates start/end times and durations based on the run phase.
+
+    Args:
+        case_df (pd.DataFrame): DataFrame containing release timestamps.
+        run_phase (RunPhase): Enum or value defining the simulation phase.
+        savetime_seconds (int): The interval used for rounding durations.
+    """
+    # 1. Calculate the absolute baseline boundaries
+    case_start_time_full = pd.to_datetime(
+        case_df["Release Start (UTC)"].iloc[0]
+    ).tz_localize(None) - pd.Timedelta(hours=1, minutes=15)
+
+    case_end_time_full = pd.to_datetime(
+        case_df["Release End (UTC)"].iloc[0]
+    ).tz_localize(None) + pd.Timedelta(minutes=5)
+
+    one_hour = pd.Timedelta(hours=1)
+
+    # 2. Determine offsets based on the phase
+    if run_phase == RunPhase.SPINUP:
+        start_offset = pd.Timedelta(0)
+        end_offset = one_hour
+    elif run_phase == RunPhase.RELEASE:
+        start_offset = one_hour
+        end_offset = case_end_time_full - case_start_time_full
+    elif run_phase == RunPhase.FULL:
+        start_offset = pd.Timedelta(0)
+        end_offset = case_end_time_full - case_start_time_full
+    else:
+        raise ValueError(
+            f"Unknown run phase: {run_phase}. Use SPINUP, RELEASE, or FULL."
+        )
+
+    # 3. Calculate phase-specific windows
+    case_start_time = case_start_time_full + start_offset
+    # case_end_time = case_start_time_full + end_offset
+
+    case_start_sec = int(start_offset.total_seconds())
+    case_end_sec = int(end_offset.total_seconds())
+
+    # 4. Handle rounding to the next savetime
+    duration = case_end_time_full - case_start_time
+    rounded_duration = duration.ceil(pd.Timedelta(seconds=savetime_seconds))
+    final_end_time = case_start_time + rounded_duration
+
+    return {
+        "start_time": case_start_time,
+        "end_time": final_end_time,
+        "start_sec": case_start_sec,
+        "end_sec": case_end_sec,
+        "duration_rounded": rounded_duration,
+    }
+
+
 # =============================================================================
 # Main Processing Pipeline
 # =============================================================================
@@ -45,21 +108,16 @@ def main():
     logging.info(f"Processing case: {args.directory}")
 
     case = init.read_case(args.directory)
-    post_processing = post.PostProcessing(case)
+    stats = io.open_statistics(case)
+    case_df = pd.read_csv(case.directory / f"{case.name}_case_info.csv")
+    sources = xr.open_dataset(case.directory / f"{case.name}_sources.nc")
 
-    # -------------------------------------------------------------------------
-    # 2) Variables and Configuration
-    # -------------------------------------------------------------------------
-    raise NotImplementedError(
-        "This script is a template and requires further implementation."
-    )
-    noise_lvl = 450  # ppmv
-    lat_list = None  # TODO: fill in source latitudes
-    lon_list = None  # TODO: fill in source longitudes
-    crs = ccrs.epsg(32630)
-    start_timestamp = pd.Timestamp("2024-09-16 09:00:00")
-    release_start_timestamp = pd.Timestamp("2024-09-16 10:00:00")
-    release_end_timestamp = pd.Timestamp("2024-09-16 10:45:00")
+    sampletime = case.config.cross.sampletime
+    case_times = get_case_times(case_df, RunPhase.FULL, sampletime)
+    noise_lvl = 280  # ppmv m, based on coarsened data with 1m resolution
+    crs = ccrs.epsg(32630)  # UTM zone 30N
+
+    post_processing = post.PostProcessing(case)
 
     # -------------------------------------------------------------------------
     # 3) GUI Parameters
@@ -68,81 +126,84 @@ def main():
     gui_color = "black"
     gui_headless = True
     gui_detection_method = "Threshold"
-    gui_thr = 0.0005
+    gui_thr = 0.0003
     gui_filter_size = 1
     gui_center_line = True
-    gui_node = 2
+    gui_node_nr = 2
     gui_plume_area = True
     gui_fix_plume_width = True
     gui_emissions = True
     gui_emissions_method = "csf"
     gui_background = "linear"
-    gui_lmax = 20
+    gui_lmax = 50
     gui_delta = 3
     gui_plume_width = 50
 
     # -------------------------------------------------------------------------
     # 4) Generate Synthetic Wind Field
     # -------------------------------------------------------------------------
-    coords = {"source": ["source1"]}
-
-    # Create dataset with only the required variables
-    winds = xr.Dataset(
-        data_vars={
-            "speed": (["source"], [1.0], {"units": "m s-1"}),
-            "speed_precision": (["source"], [0.1], {"units": "m s-1"}),
-            "direction": (["source"], [90.0], {"units": "degrees"}),
-        },
-        coords=coords,
+    stats = post_processing.convert_microhh_timestep_to_date(
+        stats, start_date=case_times["start_time"]
     )
-    winds.attrs.update({"wind method": WIND_METHOD})
+
+    plume_height = case_df["Z (m)"].iloc[0] + case_df["plume_rise (m)"].iloc[0]
+    winds = stats.sel(z=plume_height, method="nearest")[["u", "v"]]
+
+    winds["direction"] = ddeq.wind.calculate_wind_direction(winds.u, winds.v)
+    winds["speed"] = np.sqrt(winds.u**2 + winds.v**2)
+    winds["speed_precision"] = (
+        0.1 * winds["speed"]
+    )  # Assume 10% uncertainty in wind speed
+
+    winds["direction"].attrs["units"] = "degrees"
+    winds["speed"].attrs["units"] = "m s-1"
+    winds["speed_precision"].attrs["units"] = "m s-1"
+    winds.attrs.update({"METHOD": "Calculated from MicroHH simulation at plume height"})
+    winds = winds.assign_coords(source=["source1"])
 
     # -------------------------------------------------------------------------
     # 5) Read Input and Pre-process
     # -------------------------------------------------------------------------
-    post_processing = post.PostProcessing(case)
-    dd_ch4_path = io.open_microhh_nc(case, "ch4_path.xy")
+    dd_ch4 = io.open_microhh_nc(case, "ch4_path.xy")
 
     # rename variable to CH4
-    dd_ch4_path = dd_ch4_path.rename({"ch4_path": "CH4"})
-    dd_ch4_path.CH4.attrs["units"] = "kg m-2"
-    sources = post_processing.create_sources_dataset(
-        lat=lat_list,
-        lon=lon_list,
-    )
+    dd_ch4 = dd_ch4.rename({"ch4_path": "CH4"})
+    dd_ch4.CH4.attrs["units"] = "kg m-2"
+
     dd_coord = post_processing.convert_microhh_grid_to_coords(
-        dd_ch4_path, sources.isel(source=0), microhh_crs="epsg:32630"
+        dd_ch4, sources.isel(source=0), microhh_crs="epsg:32630"
     )
     dd_coord = post_processing.convert_microhh_timestep_to_date(
-        dd_coord, start_timestamp
+        dd_coord,
+        case_times["start_time"],
     )
     data_coord = ddeq.misc.add_corners(dd_coord)
     data_coord = data_coord.rename({"CH4": "CH4_mass"})
 
-    data_coord = post.add_gaussian_noise(
-        data_coord,
-        var_name="CH4_mass",
-        gas="CH4",
-        std=noise_lvl,
-        noise_units="ppmv m",
-    )
-
     data_coord = ddeq.plume_coords.compute_pixel_areas(data_coord, crs)
 
-    # -------------------------------------------------------------------------
-    # 6) Estimate Emissions
-    # -------------------------------------------------------------------------
-    data_coord_subset = data_coord.sel(
-        time=slice(release_start_timestamp, release_end_timestamp)
+    data_coord_noisy = post.add_gaussian_noise(
+        data_coord, var_name="CH4_mass", gas="CH4", std=noise_lvl, noise_units="ppmv m"
+    )
+
+    data_coord_noisy_slice = data_coord_noisy.sel(
+        time=slice(
+            pd.Timestamp(case_df["Release Start (UTC)"].iloc[0]).tz_convert(None),
+            pd.Timestamp(case_df["Release End (UTC)"].iloc[0]).tz_convert(None),
+        )
     )
 
     domain = ddeq.misc.Domain(
         name="Pau",
-        startlat=float(data_coord_subset.lat.min()),
-        stoplat=float(data_coord_subset.lat.max()),
-        startlon=float(data_coord_subset.lon.min()),
-        stoplon=float(data_coord_subset.lon.max()),
+        startlat=float(data_coord.lat.min()),
+        stoplat=float(data_coord.lat.max()),
+        startlon=float(data_coord.lon.min()),
+        stoplon=float(data_coord.lon.max()),
     )
+
+    # -------------------------------------------------------------------------
+    # 6) Estimate Emissions
+    # -------------------------------------------------------------------------
 
     results_file_path = case.directory / "results_csf.nc"
     if results_file_path.exists():
@@ -156,8 +217,12 @@ def main():
     # 7) Time-Step Loop and CSF Statistics
     # -------------------------------------------------------------------------
     results_arr = []
-    for t in tqdm(data_coord_subset.time, desc="Processing timesteps"):
-        data_coord_subset_t = data_coord_subset.sel(time=t)
+    for t in tqdm(data_coord_noisy_slice.time, desc="Processing timesteps"):
+        data_coord_subset_t = data_coord_noisy_slice.sel(time=t)
+        _tolerance = pd.Timedelta(seconds=sampletime)
+        winds_subset_t = winds.sel(
+            time=t, method="nearest", tolerance=_tolerance.total_seconds()
+        )
 
         try:
             ui = ddeq.gui.UserInterface(
@@ -166,7 +231,7 @@ def main():
                 variable_std="CH4_mass_precision",
                 data=data_coord_subset_t,
                 sources=sources.sel(source=["source1"]),
-                winds=winds,
+                winds=winds_subset_t,
                 crs=crs,
                 domain=domain,
                 cmap=gui_cmap,
@@ -174,19 +239,26 @@ def main():
                 headless=gui_headless,
             )
 
-            ui.detection_dropdown.value = gui_detection_method
-            ui.thr_value_slider.value = gui_thr
-            ui.filter_size_slider.value = gui_filter_size
-            ui.center_line_button.value = gui_center_line
-            ui.node_dropdown.value = gui_node
-            ui.plume_area_button.value = gui_plume_area
-            ui.fix_plume_width_checkbox.value = gui_fix_plume_width
-            ui.emissions_button.value = gui_emissions
-            ui.emissions_method_dropdown.value = gui_emissions_method
-            ui.background_dropdown.value = gui_background
-            ui.lmax_slider.value = gui_lmax
-            ui.delta_slider.value = gui_delta
-            ui.plume_width_slider.value = gui_plume_width
+            ui.thr_value_slider.value = gui_thr  # pyright: ignore
+            ui.filter_size_slider.value = gui_filter_size  # pyright: ignore
+            ui.detection_dropdown.value = gui_detection_method  # pyright: ignore
+            ui.node_dropdown.value = gui_node_nr  # pyright: ignore
+            ui.plume_area_button.value = gui_plume_area  # pyright: ignore
+            ui.fix_plume_width_checkbox.value = gui_fix_plume_width  # pyright: ignore
+            ui.plume_width_slider.value = gui_plume_width  # pyright: ignore
+            ui.center_line_button.value = gui_center_line  # pyright: ignore
+            ui.emissions_method_dropdown.value = gui_emissions_method  # pyright: ignore
+            ui.background_dropdown.value = gui_background  # pyright: ignore
+            ui.lmax_slider.value = gui_lmax  # pyright: ignore
+            ui.delta_slider.value = gui_delta  # pyright: ignore
+            ui.emissions_button.value = gui_emissions  # pyright: ignore
+
+            if ui.results is None:
+                logging.warning(
+                    "No results returned by the GUI for time %s. Skipping this timestep.",
+                    t.values,
+                )
+                continue
 
             results_stats = ddeq.csf.compute_fit_statistics(
                 ui.results,
@@ -196,6 +268,7 @@ def main():
             )
 
             results_arr.append(results_stats)
+
         except Exception as e:
             logging.exception("Error processing time %s: %s", t.values, e)
             continue
@@ -210,8 +283,11 @@ def main():
     # 8) Merge and Save Results
     # -------------------------------------------------------------------------
     results_arr_merged = xr.concat(results_arr, dim="time", join="outer")
-    results_arr_merged.attrs.update({"wind method": WIND_METHOD})
     results_arr_merged.to_netcdf(results_file_path)
+
+    logging.info(
+        f"Processing complete for case {args.directory}. Results saved to {results_file_path}"
+    )
 
 
 if __name__ == "__main__":
