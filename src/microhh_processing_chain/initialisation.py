@@ -817,6 +817,22 @@ class Case:
             for f in sorted(other_files):
                 print(f"  {f}")
 
+    def copy_files_to_case(self, case: "Case", files: list) -> None:
+        """Copy given files from this case to another case.
+
+        Args:
+            case: Target case to which the files will be copied.
+            files: List of filenames to copy to the target case.
+        """
+        for file in files:
+            src = self.directory / file
+            dst = case.directory / file
+            if src.exists():
+                shutil.copy(str(src), str(dst))
+                logger.info(f"Copied {file} to {case.directory}")
+            else:
+                logger.warning(f"File {src} does not exist.")
+
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
     """Compare two ``.ini`` files in a Git-diff style.
