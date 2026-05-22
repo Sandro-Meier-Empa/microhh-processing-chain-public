@@ -1,15 +1,14 @@
-import numpy as np
+from typing import Literal, Optional, Tuple, Union, cast
 
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+import numpy as np
+import xarray as xr
+from cartopy.mpl.geoaxes import GeoAxes
+from matplotlib.figure import Figure
 from pyproj import Transformer
-from typing import Optional, Union, Literal, Tuple, cast
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
-
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from cartopy.mpl.geoaxes import GeoAxes
-import cartopy.crs as ccrs
-import xarray as xr
 
 import ddeq
 

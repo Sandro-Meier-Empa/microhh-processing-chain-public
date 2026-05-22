@@ -1,6 +1,6 @@
 import numpy as np
-from scipy import fftpack
 import xarray as xr
+from scipy import fftpack
 
 
 def calculate_plume_centerline(

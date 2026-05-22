@@ -1,18 +1,16 @@
 import concurrent.futures
-import os
-import subprocess
-import re
 import logging
-
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, Tuple, Optional
+import os
+import re
+import subprocess
 from io import StringIO
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
 
 import pandas as pd
-
-from microhh_processing_chain.enums import Cluster, Processor, Partition, MailType
-from microhh_processing_chain.constants import PrintColor
 from microhh_processing_chain import io, utils
+from microhh_processing_chain.constants import PrintColor
+from microhh_processing_chain.enums import Cluster, MailType, Partition, Processor
 
 logger = logging.getLogger(__name__)
 

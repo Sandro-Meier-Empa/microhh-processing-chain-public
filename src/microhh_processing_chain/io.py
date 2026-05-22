@@ -1,10 +1,10 @@
-import xarray as xr
-import netCDF4 as nc4
-import pandas as pd
-
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
-from functools import wraps
+
+import netCDF4 as nc4
+import pandas as pd
+import xarray as xr
 
 import microhhpy  # pyright: ignore[reportMissingImports]
 

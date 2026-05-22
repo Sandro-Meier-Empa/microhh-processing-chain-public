@@ -1,15 +1,12 @@
-from typing import List, cast, Union, Optional
-
 import logging
+from typing import List, Optional, Union, cast
 
-import numpy as np
-import pandas as pd
-
-
-import ucat
-import xarray as xr
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
+import numpy as np
+import pandas as pd
+import ucat
+import xarray as xr
 from microhh_processing_chain.enums import Stability
 
 logger = logging.getLogger(__name__)

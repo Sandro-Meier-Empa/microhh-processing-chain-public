@@ -1,34 +1,30 @@
+import logging
 import os
 import re
-import netCDF4 as nc4
-import scipy
 import shlex
 import shutil
 import zipfile
-import logging
-
 from pathlib import Path
-from typing import Union, Tuple, Optional, Literal, cast
-from tqdm.auto import tqdm
-
-import pandas as pd
-import xarray as xr
-import numpy as np
-
-import ucat
-
-import microhh_py.microhh_tools as mht
-import microhh_py.convert_3d_to_nc as convert_3d_to_nc
-import microhh_py.cross_to_nc as cross_to_nc
+from typing import Literal, Optional, Tuple, Union, cast
 
 import microhh_processing_chain.cscs as cscs
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.spatial as spatial
+import microhh_py.convert_3d_to_nc as convert_3d_to_nc
+import microhh_py.cross_to_nc as cross_to_nc
+import microhh_py.microhh_tools as mht
+import netCDF4 as nc4
+import numpy as np
+import pandas as pd
+import scipy
+import ucat
+import xarray as xr
 from microhh_processing_chain import utils
-from microhh_processing_chain.enums import Precision
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
+from microhh_processing_chain.enums import Precision
+from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
