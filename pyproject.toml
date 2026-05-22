@@ -29,6 +29,7 @@ dependencies = [
     "xarray",
     "scipy",
     "dask",
+    "bokeh",
     "pyproj",
     "netCDF4",
     "matplotlib",
