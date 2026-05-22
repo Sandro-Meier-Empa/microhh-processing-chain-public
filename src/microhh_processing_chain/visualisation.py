@@ -1,26 +1,23 @@
-# import cartopy
 import logging
 import re
-import matplotlib.figure
-
 from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
-from matplotlib.axes import Axes
-from matplotlib.cm import ScalarMappable, get_cmap
-from matplotlib.lines import Line2D
-from matplotlib.colors import Normalize, TwoSlopeNorm
-from IPython.display import display
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-import pandas as pd
-import xarray as xr
-import matplotlib.pyplot as plt
-import numpy as np
 import ipywidgets as widgets
-
+import matplotlib.figure
+import matplotlib.pyplot as plt
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.wind as wind_proc
+import numpy as np
+import pandas as pd
+import xarray as xr
+from IPython.display import display
+from matplotlib.axes import Axes
+from matplotlib.cm import ScalarMappable, get_cmap
+from matplotlib.colors import Normalize, TwoSlopeNorm
+from matplotlib.lines import Line2D
 from microhh_processing_chain import io, utils
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from ddeq.gui import interactions
 

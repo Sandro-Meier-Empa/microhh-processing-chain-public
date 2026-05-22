@@ -1,10 +1,10 @@
 """Utility functions for the microhh_processing_chain package."""
 
 import subprocess
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Union, List, Any, Optional
+from typing import Any, List, Optional, Union
 
 import numpy as np
 import xarray as xr

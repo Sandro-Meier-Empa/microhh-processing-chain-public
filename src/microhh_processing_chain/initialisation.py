@@ -1,20 +1,17 @@
 import re
 import json
+import logging
 import os
 import shutil
 import subprocess
-import logging
-
-from pathlib import Path
-from typing import Union, Optional
 from collections import defaultdict
-
-import pandas as pd
+from pathlib import Path
+from typing import Optional, Union
 
 import microhh_py.microhh_tools as mht
-
-from microhh_processing_chain.enums import InitMethod, FileType
+import pandas as pd
 from microhh_processing_chain import cscs, utils
+from microhh_processing_chain.enums import FileType, InitMethod
 
 logger = logging.getLogger(__name__)
 

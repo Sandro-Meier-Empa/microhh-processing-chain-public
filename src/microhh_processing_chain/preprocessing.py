@@ -1,19 +1,17 @@
 import fnmatch
+import logging
 import os
 import platform
 import shutil
 import subprocess
-import logging
-
 from pathlib import Path
-from typing import Union, Optional, List
+from typing import List, Optional, Union
 
 import ls2d
+import microhh_processing_chain.cscs as cscs
+import microhh_processing_chain.initialisation as init
 import numpy as np
 import xarray as xr
-
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.cscs as cscs
 from microhh_processing_chain import io, utils
 from microhh_processing_chain.enums import RunMode
 
