@@ -1,18 +1,18 @@
 import argparse
 import logging
+from enum import StrEnum
 
-import numpy as np
 import cartopy.crs as ccrs
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.postprocessing as post
+import numpy as np
 import pandas as pd
 import xarray as xr
+from microhh_processing_chain import io
 from tqdm.auto import tqdm
-from enum import StrEnum
 
 import ddeq
 import ddeq.gui
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.postprocessing as post
-from microhh_processing_chain import io
 
 logging.basicConfig(level=logging.INFO)
 
@@ -204,11 +204,11 @@ def main():
     # -------------------------------------------------------------------------
     # 6) Estimate Emissions
     # -------------------------------------------------------------------------
-
+    data_file_path = case.directory / "data_csf.nc"
     results_file_path = case.directory / "results_csf.nc"
-    if results_file_path.exists():
+    if data_file_path.exists() and results_file_path.exists():
         logging.info(
-            "Results file already exists for case %s. Skipping processing.",
+            "Data and results files already exists for case %s. Skipping processing.",
             args.directory,
         )
         return
@@ -216,6 +216,7 @@ def main():
     # -------------------------------------------------------------------------
     # 7) Time-Step Loop and CSF Statistics
     # -------------------------------------------------------------------------
+    data_arr = []
     results_arr = []
     for t in tqdm(data_coord_noisy_slice.time, desc="Processing timesteps"):
         data_coord_subset_t = data_coord_noisy_slice.sel(time=t)
@@ -267,6 +268,7 @@ def main():
                 variable_std="CH4_mass_precision",
             )
 
+            data_arr.append(ui.data)
             results_arr.append(results_stats)
 
         except Exception as e:
@@ -282,8 +284,13 @@ def main():
     # -------------------------------------------------------------------------
     # 8) Merge and Save Results
     # -------------------------------------------------------------------------
+    data_arr_merged = xr.concat(data_arr, dim="time", join="outer")
+    if not data_file_path.exists():
+        data_arr_merged.to_netcdf(data_file_path)
+
     results_arr_merged = xr.concat(results_arr, dim="time", join="outer")
-    results_arr_merged.to_netcdf(results_file_path)
+    if not results_file_path.exists():
+        results_arr_merged.to_netcdf(results_file_path)
 
     logging.info(
         f"Processing complete for case {args.directory}. Results saved to {results_file_path}"
