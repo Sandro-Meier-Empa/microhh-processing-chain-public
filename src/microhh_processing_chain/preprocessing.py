@@ -238,9 +238,10 @@ class PreProcessing:
             self.case.job_id = None
             return
 
-        self.case.job_id = cscs.execute_bash_script(
-            self.job_file, wait, ssh_connect=self.alps_setup.ssh_connect
+        self.slurm_job = cscs.SlurmJob(
+            self.job_file, ssh_connect=self.alps_setup.ssh_connect
         )
+        self.case.job_id = self.slurm_job.start(wait=wait)
 
     def cancel_simulation(self) -> None:
         # check if self has attribute "job_id"
