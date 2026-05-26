@@ -109,7 +109,9 @@ class PostProcessing:
 
         if start_jobs:
             # Launch the job on alps
-            cscs.execute_bash_script(job_file, wait=False)
+            cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect).start(
+                wait=False
+            )
 
         return job_file
 

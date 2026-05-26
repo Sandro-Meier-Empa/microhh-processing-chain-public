@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import os
 import re
+import shlex
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -16,6 +17,209 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from microhh_processing_chain.initialisation import Case
+
+
+class SlurmJob:
+    """Handle a SLURM batch script and its output file."""
+
+    def __init__(
+        self,
+        path: Union[str, Path],
+        id: Optional[int] = None,
+        ssh_connect: Optional[str] = None,
+    ) -> None:
+        self.path = Path(path)
+        self._id: Optional[int] = id
+        self.ssh_connect = ssh_connect
+
+    @property
+    def id(self) -> Optional[int]:
+        """SLURM job ID, inferred from the output file when possible."""
+        if self._id is None:
+            self._id = self._get_id_from_output_file()
+
+        return self._id
+
+    @id.setter
+    def id(self, value: Optional[int]) -> None:
+        self._id = None if value is None else int(value)
+
+    @property
+    def directory(self) -> Path:
+        """Directory containing the sbatch script."""
+        return self.path.parent
+
+    @property
+    def output_path(self) -> Path:
+        """Path of the SLURM output file associated with this job."""
+        output_pattern, chdir = self._read_sbatch_paths()
+        base_path = self._resolve_base_path(chdir)
+
+        if self._id is not None:
+            output_path = Path(output_pattern.replace("%j", str(self._id)))
+            return output_path if output_path.is_absolute() else base_path / output_path
+
+        output_path = Path(output_pattern)
+        if "%j" not in output_pattern:
+            return output_path if output_path.is_absolute() else base_path / output_path
+
+        output_path = self._find_output_file(output_pattern, base_path)
+
+        if output_path is None:
+            raise FileNotFoundError(
+                f"No SLURM output file found for {self.path} matching "
+                f"{output_pattern.replace('%j', '*')!r}."
+            )
+
+        self.id = self._extract_id_from_output_path(
+            output_path=output_path,
+            output_pattern=output_pattern,
+            base_path=base_path,
+        )
+
+        return output_path
+
+    def __repr__(self) -> str:
+        if self.id is None:
+            return f"SlurmJob(path={self.path!r}, id=None)"
+
+        return f"SlurmJob(path={self.path!r}, id={self.id!r})"
+
+    def status(self) -> pd.DataFrame:
+        if self.id is None:
+            raise ValueError("Cannot fetch status: job has no Slurm id yet.")
+
+        return get_sacct_info(self.id, ssh_connect=self.ssh_connect)
+
+    def start(self, wait: bool = True) -> int:
+        """Submit the sbatch script and store the returned SLURM job ID."""
+        cmd = ["ssh", self.ssh_connect, "sbatch"] if self.ssh_connect else ["sbatch"]
+
+        if wait:
+            cmd.append("--wait")
+
+        cmd.append(str(self.path))
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, cwd=self.directory
+        )
+        logger.info(f"Starting {str(self.path)}")
+
+        self.id = self._get_job_id(result=result)
+
+        if self._id is None:
+            raise ValueError(f"Could not determine SLURM job ID for {self.path}.")
+
+        return self._id
+
+    def _get_job_id(self, result: subprocess.CompletedProcess[str]) -> int:
+
+        output = result.stdout.strip()
+
+        # Parse the job ID
+        if output.startswith("Submitted batch job"):
+            job_id = output.split()[-1]
+            return int(job_id)
+
+        raise ValueError(f"Could not parse SLURM job ID from output: {output!r}")
+
+    def view(self) -> None:
+        """Open the SLURM script in VS Code"""
+        utils.open_in_vscode(self.path)
+
+    def view_output(self) -> None:
+        """Open this job's SLURM output file in VS Code."""
+        output_path = self.output_path
+
+        if not output_path.exists():
+            raise FileNotFoundError(f"SLURM output file {output_path} does not exist.")
+
+        utils.open_in_vscode(output_path)
+
+    def _get_id_from_output_file(self) -> Optional[int]:
+        output_pattern, chdir = self._read_sbatch_paths()
+        if "%j" not in output_pattern:
+            return None
+
+        base_path = self._resolve_base_path(chdir)
+        output_path = self._find_output_file(output_pattern, base_path)
+        if output_path is None:
+            return None
+
+        return self._extract_id_from_output_path(
+            output_path=output_path,
+            output_pattern=output_pattern,
+            base_path=base_path,
+        )
+
+    def _find_output_file(self, output_pattern: str, base_path: Path) -> Optional[Path]:
+        glob_pattern = output_pattern.replace("%j", "*")
+        search_path = Path(glob_pattern)
+        if search_path.is_absolute():
+            matches = list(search_path.parent.glob(search_path.name))
+        else:
+            matches = list(base_path.glob(glob_pattern))
+
+        if not matches:
+            return None
+
+        return max(matches, key=lambda file_path: file_path.stat().st_mtime)
+
+    def _extract_id_from_output_path(
+        self, output_path: Path, output_pattern: str, base_path: Path
+    ) -> Optional[int]:
+        pattern_path = Path(output_pattern)
+        if pattern_path.is_absolute():
+            path_str = output_path.as_posix()
+            pattern_str = pattern_path.as_posix()
+        else:
+            path_str = output_path.relative_to(base_path).as_posix()
+            pattern_str = pattern_path.as_posix()
+
+        regex = re.escape(pattern_str).replace("%j", r"(?P<id>\d+)")
+        match = re.fullmatch(regex, path_str)
+        if match is None:
+            return None
+
+        return int(match.group("id"))
+
+    def _read_sbatch_paths(self) -> tuple[str, Optional[str]]:
+        output_path: Optional[str] = None
+        chdir: Optional[str] = None
+
+        with open(self.path) as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if not line.startswith("#SBATCH"):
+                    continue
+
+                tokens = shlex.split(line.removeprefix("#SBATCH").strip())
+                for index, token in enumerate(tokens):
+                    if token.startswith("--output="):
+                        output_path = token.split("=", 1)[1]
+                    elif token == "--output" and index + 1 < len(tokens):
+                        output_path = tokens[index + 1]
+                    elif token.startswith("--chdir="):
+                        chdir = token.split("=", 1)[1]
+                    elif token == "--chdir" and index + 1 < len(tokens):
+                        chdir = tokens[index + 1]
+                    elif token == "-o" and index + 1 < len(tokens):
+                        output_path = tokens[index + 1]
+
+        if output_path is None:
+            raise ValueError(f"No #SBATCH --output directive found in {self.path}.")
+
+        return output_path, chdir
+
+    def _resolve_base_path(self, chdir: Optional[str]) -> Path:
+        if chdir is None:
+            return self.directory
+
+        chdir_path = Path(chdir)
+        if not chdir_path.is_absolute():
+            chdir_path = self.directory / chdir_path
+
+        return chdir_path.resolve()
 
 
 class AlpsSetup:
@@ -390,57 +594,6 @@ class AlpsSetup:
         return file_path
 
 
-def execute_bash_script(
-    job_file: Union[str, Path], wait: bool = True, ssh_connect: Optional[str] = None
-) -> int:
-    """Run a simulation using sbatch
-
-    Args:
-        job_file (Union[str, Path]):
-            Specify the path of the bash script which should be run.
-        wait (bool, optional. Default: False):
-            Specify if the next job should only be submitted
-            after the previous one has stopped.
-        ssh_connect (str):
-            If specified, the command will be executed on a remote server via ssh.
-            The string should be in the format "user@hostname" or
-            "hostname" if the remote machine is configured for passwordless ssh access.
-
-    Returns:
-        int: The job ID of the submitted job.
-
-    """
-    job_file = Path(job_file)
-
-    cmd = ["ssh", ssh_connect, "sbatch"] if ssh_connect else ["sbatch"]
-
-    if wait:
-        cmd.append("--wait")
-
-    cmd.append(str(job_file))
-
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, check=True, cwd=job_file.parent
-    )
-    logger.info(f"Starting {str(job_file)}")
-
-    job_id = _get_job_id(result=result)
-
-    return job_id
-
-
-def _get_job_id(result: subprocess.CompletedProcess[str]) -> int:
-
-    output = result.stdout.strip()
-
-    # Parse the job ID
-    if output.startswith("Submitted batch job"):
-        job_id = output.split()[-1]
-        return int(job_id)
-
-    raise ValueError(f"Could not parse SLURM job ID from output: {output!r}")
-
-
 def jobs_in_queue(
     omit: list[str] = [
         "TRES_PER_NODE",
@@ -717,8 +870,8 @@ def calculate_expected_runtime(
 
 
 __all__ = [
+    "SlurmJob",
     "AlpsSetup",
-    "execute_bash_script",
     "jobs_in_queue",
     "cancel_all",
     "add_progress_to_df",
