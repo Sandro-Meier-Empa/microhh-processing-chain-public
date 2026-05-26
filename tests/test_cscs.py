@@ -112,6 +112,9 @@ def test_slurm_job_output_opens_resolved_file(tmp_path: Path, monkeypatch) -> No
     job = cscs.SlurmJob(job_file, id=7890)
 
     assert job.output_path == out_file
+
+    job.view_output()
+
     assert opened == [out_file]
 
 
