@@ -23,13 +23,6 @@ from ddeq.gui import interactions
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "CaseViewer",
-    "VariableViewer",
-    "plot_gas_weight",
-    "plot_case_comparison",
-]
-
 
 class CaseViewer:
     wind_dims = {
