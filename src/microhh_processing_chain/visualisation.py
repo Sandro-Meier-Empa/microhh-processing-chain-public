@@ -3,7 +3,6 @@ import re
 from typing import Any, List, Literal, Optional, Sequence, Union, cast
 
 import ipywidgets as widgets
-import matplotlib.figure
 import matplotlib.pyplot as plt
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.sources as src
@@ -15,6 +14,7 @@ from IPython.display import display
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable, get_cmap
 from matplotlib.colors import Normalize, TwoSlopeNorm
+from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from microhh_processing_chain import io, utils
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -46,13 +46,16 @@ class CaseViewer:
         ncols: int = 4,
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
-    ) -> None:
+    ) -> list[Figure]:
         """Plot all variables from the initial conditions file, grouped by their dimensions.
 
         Args:
             ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
             figsize (tuple, optional): Size of the figure. Defaults to (10, 6).
             cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
+
+        Returns:
+            list[Figure]: Figures created for each group of variables.
         """
         file_path = self.case.initial_conditions_file_path
 
@@ -65,13 +68,18 @@ class CaseViewer:
         if not data_tree.groups:
             raise ValueError(f"No data groups found in {file_path}")
 
+        figures: list[Figure] = []
         for node in data_tree.subtree:
             group = node.path.strip("/")
             group_ds = node.dataset
             sharey = group != "timedep"
-            self._plot_group_variables(
-                group_ds, ncols, figsize=figsize, cmap=cmap, sharey=sharey
+            figures.extend(
+                self._plot_group_variables(
+                    group_ds, ncols, figsize=figsize, cmap=cmap, sharey=sharey
+                )
             )
+
+        return figures
 
     def _plot_group_variables(
         self,
@@ -80,13 +88,14 @@ class CaseViewer:
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
         sharey: bool = True,
-    ) -> None:
+    ) -> list[Figure]:
 
         # Group variables by their dimension signature
         dim_groups = {}
         for var in ds.data_vars:
             dim_groups.setdefault(ds[var].dims, []).append(var)
 
+        figures: list[Figure] = []
         for dims, vars_list in dim_groups.items():
             n_vars = len(vars_list)
             nrows = int(np.ceil(n_vars / ncols))
@@ -110,7 +119,9 @@ class CaseViewer:
             for ax in axs.flat[n_vars:]:
                 ax.axis("off")
 
-            plt.show()
+            figures.append(fig)
+
+        return figures
 
     def _plot_variable(
         self, data: xr.DataArray, ax: Axes, cmap: str = "viridis"
@@ -147,7 +158,7 @@ class CaseViewer:
         time_format: str = "h",
         plot_format: Literal["line", "shaded"] = "line",
         color_init: str = "k",
-    ) -> matplotlib.figure.Figure:
+    ) -> Figure:
         """Plot the prognostic variables."""
         variables = [str(variable) for variable in utils.object_to_list(variables)]
         time_factor = self._get_time_factor(time_format)
@@ -313,7 +324,7 @@ class CaseViewer:
         figsize: tuple[float, float] = (10, 6),
         cbar_width: float = 0.01,
         cmap: str = "viridis",
-    ) -> matplotlib.figure.Figure:
+    ) -> Figure:
         """Plot 3D Model output in a figure with 3 subplots.
             1. YZ-View (integrated along x axis)
             2. XY-View (integrated along z axis)
@@ -333,7 +344,7 @@ class CaseViewer:
                 Width of colorbar.
 
         Returns:
-            matplotlib.figure.Figure: Figure with subplots and text
+            Figure: Figure with subplots and text
         """
 
         time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
@@ -484,7 +495,7 @@ class CaseViewer:
         variables: Union[str, list],
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
-    ) -> None:
+    ) -> list[Figure]:
         """
         Plot variables from the statistics netcdf file.
 
@@ -495,12 +506,15 @@ class CaseViewer:
                 Figure size for the plot.
             cmap: str:
                 Colormap to use for plotting.
+
+        Returns:
+            list[Figure]: Figures created for each requested variable.
         """
         stats = io.open_statistics(self.case)
 
-        if isinstance(variables, str):
-            variables = list(variables)
+        variables = utils.object_to_list(variables)
 
+        figures: list[Figure] = []
         for var in variables:
             fig, axs = plt.subplots(1, 1, figsize=figsize)
 
@@ -514,14 +528,16 @@ class CaseViewer:
                 stats[var].plot(ax=axs, **kwargs)
 
             plt.tight_layout()
-            plt.show()
+            figures.append(fig)
+
+        return figures
 
     def compare_nudge(
         self,
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "RdBu_r",
         percent: bool = False,
-    ) -> None:
+    ) -> Figure:
 
         stats = io.open_statistics(self.case)
         initial_cond = io.open_initial_cond(self.case)
@@ -557,6 +573,7 @@ class CaseViewer:
         )
 
         fig, axs = plt.subplots(ncols=len(nudge_vars), figsize=figsize, sharey=True)
+        axes = np.atleast_1d(axs)
         for c, nudge_var in enumerate(nudge_vars):
             stat_var = nudge_var.replace("_nudge", "")
             values = stats_sub[stat_var] - initial_cond_sub_interp[nudge_var]
@@ -571,7 +588,7 @@ class CaseViewer:
             norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
 
             values.T.plot(  # pyright: ignore
-                ax=axs[c],
+                ax=axes[c],
                 cmap=cmap,
                 norm=norm,
                 cbar_kwargs={
@@ -579,14 +596,14 @@ class CaseViewer:
                     "orientation": "horizontal",
                 },
             )
-            axs[c].set_title(stat_var)
+            axes[c].set_title(stat_var)
 
         plt.tight_layout()
-        plt.show()
+        return fig
 
     def compare_wind_profiles(
         self, timestep: int, figsize: tuple[float, float] = (10, 6)
-    ) -> matplotlib.figure.Figure:
+    ) -> Figure:
 
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
@@ -845,14 +862,14 @@ class VariableViewer:
         display(self.ui)
 
 
-def compare_initial_conditions(
+def plot_initial_conditions_comparison(
     case1: init.Case,
     case2: init.Case,
     variables: Optional[Union[str, list]] = None,
     show_differences: bool = False,
     figsize: tuple[float, float] = (10, 6),
     subset_kwargs: Optional[dict] = None,
-) -> None:
+) -> list[Figure]:
     """Compare the initial conditions of two cases by plotting the difference of
     specified variables.
 
@@ -865,19 +882,23 @@ def compare_initial_conditions(
         subset_kwargs: Optional dictionary of keyword arguments to subset the initial
             conditions datasets (e.g., {"z": slice(0, 10)} to select the first 10 z-levels).
             This will be applied to both cases before comparison.
+
+    Returns:
+        list[Figure]: Figures created for each compared variable.
     """
     # compare initial conditions of the two cases
     ic_case1 = io.open_initial_cond(case1).sel(subset_kwargs)
     ic_case2 = io.open_initial_cond(case2).sel(subset_kwargs)
 
     vars = (
-        variables
+        utils.object_to_list(variables)
         if variables is not None
         else list(set(ic_case1.data_vars).intersection(ic_case2.data_vars))
     )
 
     ncols = 2 if not show_differences else 3
 
+    figures: list[Figure] = []
     for var in vars:
         fig, ax = plt.subplots(ncols=ncols, figsize=figsize, sharey=True)
         time_dims = [dim for dim in ic_case1[var].dims if "time" in str(dim)]
@@ -901,7 +922,9 @@ def compare_initial_conditions(
             ax[2].set_title("Difference")
 
         plt.tight_layout()
-        plt.show()
+        figures.append(fig)
+
+    return figures
 
 
 def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataArray:
@@ -934,7 +957,7 @@ def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataAr
 
 def plot_gas_weight(
     data: xr.Dataset, gas: str = "CH4", figsize: tuple[float, float] = (10, 6)
-) -> None:
+) -> Figure:
     """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
@@ -997,7 +1020,7 @@ def plot_gas_weight(
     ax[1].legend()
 
     plt.tight_layout()
-    plt.show()
+    return fig
 
 
 def plot_case_comparison(
@@ -1007,7 +1030,7 @@ def plot_case_comparison(
     default_case_index: int = 0,
     figsize: tuple[float, float] = (10, 6),
     cmap: str = "RdBu_r",
-) -> None:
+) -> list[Figure]:
     """Plot a comparison of one or more variables from multiple cases.
 
     Args:
@@ -1019,6 +1042,9 @@ def plot_case_comparison(
             ``difference=True``. Defaults to 0.
         figsize: Figure size passed to ``plt.subplots``. Defaults to (10, 6).
         cmap: Colormap name passed to ``pcolormesh``. Defaults to "RdBu_r".
+
+    Returns:
+        list[Figure]: Figures created for each requested variable.
     """
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)
@@ -1057,6 +1083,7 @@ def plot_case_comparison(
     if not comp_cases_stats:
         raise ValueError("No cases to compare after excluding default case.")
 
+    figures: list[Figure] = []
     for var in variables:
         # Extract values and metadata
         ref_stats = comp_cases_stats[0][1]
@@ -1115,7 +1142,9 @@ def plot_case_comparison(
         fig.colorbar(axs[-1].collections[0], cax=cax, label=clabel)
 
         plt.tight_layout()
-        plt.show()
+        figures.append(fig)
+
+    return figures
 
 
 def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
@@ -1134,7 +1163,7 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
 __all__ = [
     "CaseViewer",
     "VariableViewer",
-    "compare_initial_conditions",
+    "plot_initial_conditions_comparison",
     "plot_gas_weight",
     "plot_case_comparison",
 ]
