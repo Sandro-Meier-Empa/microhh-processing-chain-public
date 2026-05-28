@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import microhh_processing_chain.cscs as cscs
 
 
@@ -16,10 +18,10 @@ def test_slurm_job_output_path_replaces_job_id(tmp_path: Path) -> None:
         ["#SBATCH --output=run_microhh_%j.out"],
     )
 
-    job = cscs.SlurmJob(job_file, id=12345)
+    job = cscs.SlurmJob(job_file, job_id=12345)
 
     assert job.output_path == tmp_path / "run_microhh_12345.out"
-    assert job.id == 12345
+    assert job.job_id == 12345
 
 
 def test_slurm_job_output_path_uses_chdir_for_relative_output(tmp_path: Path) -> None:
@@ -35,7 +37,7 @@ def test_slurm_job_output_path_uses_chdir_for_relative_output(tmp_path: Path) ->
         ],
     )
 
-    job = cscs.SlurmJob(job_file, id=5678)
+    job = cscs.SlurmJob(job_file, job_id=5678)
 
     assert job.output_path == scratch_dir / "logs/post_5678.out"
 
@@ -68,17 +70,19 @@ def test_slurm_job_id_is_read_from_output_file(tmp_path: Path) -> None:
 
     job = cscs.SlurmJob(job_file)
 
-    assert job.id == 31415
+    assert job.job_id == 31415
 
 
-def test_slurm_job_start_stores_job_id(tmp_path: Path, monkeypatch) -> None:
+def test_slurm_job_start_stores_job_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     job_file = _write_sbatch(
         tmp_path / "run_microhh.sbatch",
         ["#SBATCH --output=run_microhh_%j.out"],
     )
     calls = []
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: tuple, **kwargs: dict) -> subprocess.CompletedProcess:
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(
             args=args[0],
@@ -93,12 +97,14 @@ def test_slurm_job_start_stores_job_id(tmp_path: Path, monkeypatch) -> None:
     job_id = job.start(wait=False)
 
     assert job_id == 4567
-    assert job.id == 4567
+    assert job.job_id == 4567
     assert calls[0][0][0] == ["sbatch", str(job_file)]
     assert calls[0][1]["cwd"] == tmp_path
 
 
-def test_slurm_job_output_opens_resolved_file(tmp_path: Path, monkeypatch) -> None:
+def test_slurm_job_output_opens_resolved_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     job_file = _write_sbatch(
         tmp_path / "run_microhh.sbatch",
         ["#SBATCH --output=run_microhh_%j.out"],
@@ -109,7 +115,7 @@ def test_slurm_job_output_opens_resolved_file(tmp_path: Path, monkeypatch) -> No
 
     monkeypatch.setattr(cscs.utils, "open_in_vscode", lambda path: opened.append(path))
 
-    job = cscs.SlurmJob(job_file, id=7890)
+    job = cscs.SlurmJob(job_file, job_id=7890)
 
     assert job.output_path == out_file
 
@@ -124,8 +130,8 @@ def test_slurm_job_job_id_alias_sets_id(tmp_path: Path) -> None:
         ["#SBATCH --output=run_microhh_%j.out"],
     )
 
-    job = cscs.SlurmJob(job_file, id=2468)
-    job.id = 1357
+    job = cscs.SlurmJob(job_file, job_id=2468)
+    job.job_id = 1357
 
-    assert job.id == 1357
+    assert job.job_id == 1357
     assert job.output_path == tmp_path / "run_microhh_1357.out"

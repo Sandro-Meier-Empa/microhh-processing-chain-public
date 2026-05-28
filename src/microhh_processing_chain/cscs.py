@@ -6,9 +6,10 @@ import shlex
 import subprocess
 from io import StringIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import pandas as pd
+
 from microhh_processing_chain import io, utils
 from microhh_processing_chain.constants import PrintColor
 from microhh_processing_chain.enums import Cluster, MailType, Partition, Processor
@@ -25,23 +26,23 @@ class SlurmJob:
     def __init__(
         self,
         path: Union[str, Path],
-        id: Optional[int] = None,
+        job_id: Optional[int] = None,
         ssh_connect: Optional[str] = None,
     ) -> None:
         self.path = Path(path)
-        self._id: Optional[int] = id
+        self._id: Optional[int] = job_id
         self.ssh_connect = ssh_connect
 
     @property
-    def id(self) -> Optional[int]:
+    def job_id(self) -> Optional[int]:
         """SLURM job ID, inferred from the output file when possible."""
         if self._id is None:
             self._id = self._get_id_from_output_file()
 
         return self._id
 
-    @id.setter
-    def id(self, value: Optional[int]) -> None:
+    @job_id.setter
+    def job_id(self, value: Optional[int]) -> None:
         self._id = None if value is None else int(value)
 
     @property
@@ -71,7 +72,7 @@ class SlurmJob:
                 f"{output_pattern.replace('%j', '*')!r}."
             )
 
-        self.id = self._extract_id_from_output_path(
+        self.job_id = self._extract_id_from_output_path(
             output_path=output_path,
             output_pattern=output_pattern,
             base_path=base_path,
@@ -80,16 +81,18 @@ class SlurmJob:
         return output_path
 
     def __repr__(self) -> str:
-        if self.id is None:
-            return f"SlurmJob(path={self.path!r}, id=None)"
+        """String representation of the SlurmJob."""
+        if self.job_id is None:
+            return f"SlurmJob(path={self.path!r}, job_id=None)"
 
-        return f"SlurmJob(path={self.path!r}, id={self.id!r})"
+        return f"SlurmJob(path={self.path!r}, job_id={self.job_id!r})"
 
     def status(self) -> pd.DataFrame:
-        if self.id is None:
+        """Fetch the current status of this job from SLURM."""
+        if self.job_id is None:
             raise ValueError("Cannot fetch status: job has no Slurm id yet.")
 
-        return get_sacct_info(self.id, ssh_connect=self.ssh_connect)
+        return get_sacct_info(self.job_id, ssh_connect=self.ssh_connect)
 
     def start(self, wait: bool = True) -> int:
         """Submit the sbatch script and store the returned SLURM job ID."""
@@ -103,9 +106,9 @@ class SlurmJob:
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=True, cwd=self.directory
         )
-        logger.info(f"Starting {str(self.path)}")
+        logger.info("Starting %s.", self.path)
 
-        self.id = self._get_job_id(result=result)
+        self.job_id = self._get_job_id(result=result)
 
         if self._id is None:
             raise ValueError(f"Could not determine SLURM job ID for {self.path}.")
@@ -124,7 +127,7 @@ class SlurmJob:
         raise ValueError(f"Could not parse SLURM job ID from output: {output!r}")
 
     def view(self) -> None:
-        """Open the SLURM script in VS Code"""
+        """Open the SLURM script in VS Code."""
         utils.open_in_vscode(self.path)
 
     def view_output(self) -> None:
@@ -187,7 +190,7 @@ class SlurmJob:
         output_path: Optional[str] = None
         chdir: Optional[str] = None
 
-        with open(self.path) as file:
+        with self.path.open() as file:
             for raw_line in file:
                 line = raw_line.strip()
                 if not line.startswith("#SBATCH"):
@@ -223,27 +226,56 @@ class SlurmJob:
 
 
 class AlpsSetup:
-    # define number of cores used on Alps
-    PROCESSOR_VERSIONS = {
-        # no gpu feature, cpu = cores per socket (64) * sockets (2)
-        "eiger": {"cpu": 128},
-        # no cpu frature, gpu = cores per socket (72) * sockets (4)
-        "santis": {"gpu": 288},
-        # not implemented
-        "daint": {None},
-        # not implemented
-        "clariden": {None},
-        # not implemented
-        "todi": {None},
-    }
+    """A class handling everything around the workflow on CSCS's supercomputers.
 
-    PARTITION_CONDITIONS = {
-        "debug": {"time_limit": 30 * 60, "max_nodes": 10},
-        "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
-        "xfer": {"time_limit": 24 * 60 * 60, "max_nodes": 1},
-        "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
-        "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
-    }
+    Used to create and submit job scripts.
+
+    Args:
+        cluster (Union[Cluster, str]):
+            Cluster on which to run jobs.
+            Options: 'clariden', 'daint', 'eiger', 'santis', 'todi'.
+        processor (Union[Processor, str]):
+            Processor version to be used to run the model.
+            Options: 'cpu', 'gpu'.
+        account (str):
+            Account on which the job should be submitted from.
+        mail_type (Union[MailType, str], optional):
+            Specify which events should trigger a mail to the user.
+            Options: 'NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'.
+            Defaults to MailType.NONE.
+        email (str, optional):
+            E-mail address of the user. Defaults to None.
+        run_time (str, optional):
+            Specify the job duration. Determines the queuing time.
+            Format: "HH:MM:SS". Defaults to "00:30:00".
+        nodes (int, optional):
+            Number of nodes to use for running MicroHH. Defaults to 1.
+        ntasks (int, optional):
+            Total number of tasks. Defaults to None.
+        ntasks_per_node (int, optional):
+            Number of tasks per node. Defaults to None.
+        ntasks_per_core (int, optional):
+            Number of tasks per core. If > 1, hyperthreading is turned on.
+            Defaults to None.
+        cpus_per_task (int, optional):
+            Number of CPUs per task. Defines the number of OpenMP threads
+            per MPI rank. The maximum value depends on the number of tasks
+            per node. Defaults to None.
+        gpus_per_task (int, optional):
+            Number of GPUs per task. Defaults to None.
+        partition (Union[Partition, str], optional):
+            Queue to be used on Alps.
+            Options: 'debug', 'normal', 'prepost', 'low'.
+            Defaults to Partition.DEBUG.
+        multithread (bool, optional):
+            Enable or disable multithreading. Defaults to False.
+        uenv (str, optional):
+            User environment to be used for running a job,
+            e.g. 'prgenv-gnu' or 'prgenv-gnu/24.11:v2'. Defaults to "".
+        view (str, optional):
+            User environment view to be used for running a job,
+            e.g. 'default'. Defaults to 'default'.
+    """
 
     def __init__(
         self,
@@ -264,56 +296,27 @@ class AlpsSetup:
         uenv: str = "",
         view: str = "default",
     ) -> None:
-        """A class handling everything around the workflow on CSCS's supercomputers.
+        # define number of cores used on Alps
+        self.PROCESSOR_VERSIONS = {
+            # no gpu feature, cpu = cores per socket (64) * sockets (2)
+            "eiger": {"cpu": 128},
+            # no cpu frature, gpu = cores per socket (72) * sockets (4)
+            "santis": {"gpu": 288},
+            # not implemented
+            "daint": {None},
+            # not implemented
+            "clariden": {None},
+            # not implemented
+            "todi": {None},
+        }
 
-        Used to create and submit job scripts.
-
-        Args:
-            cluster (Union[Cluster, str]):
-                Cluster on which to run jobs.
-                Options: 'clariden', 'daint', 'eiger', 'santis', 'todi'.
-            processor (Union[Processor, str]):
-                Processor version to be used to run the model.
-                Options: 'cpu', 'gpu'.
-            account (str):
-                Account on which the job should be submitted from.
-            mail_type (Union[MailType, str], optional):
-                Specify which events should trigger a mail to the user.
-                Options: 'NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL'.
-                Defaults to MailType.NONE.
-            email (str, optional):
-                E-mail address of the user. Defaults to None.
-            run_time (str, optional):
-                Specify the job duration. Determines the queuing time.
-                Format: "HH:MM:SS". Defaults to "00:30:00".
-            nodes (int, optional):
-                Number of nodes to use for running MicroHH. Defaults to 1.
-            ntasks (int, optional):
-                Total number of tasks. Defaults to None.
-            ntasks_per_node (int, optional):
-                Number of tasks per node. Defaults to None.
-            ntasks_per_core (int, optional):
-                Number of tasks per core. If > 1, hyperthreading is turned on.
-                Defaults to None.
-            cpus_per_task (int, optional):
-                Number of CPUs per task. Defines the number of OpenMP threads
-                per MPI rank. The maximum value depends on the number of tasks
-                per node. Defaults to None.
-            gpus_per_task (int, optional):
-                Number of GPUs per task. Defaults to None.
-            partition (Union[Partition, str], optional):
-                Queue to be used on Alps.
-                Options: 'debug', 'normal', 'prepost', 'low'.
-                Defaults to Partition.DEBUG.
-            multithread (bool, optional):
-                Enable or disable multithreading. Defaults to False.
-            uenv (str, optional):
-                User environment to be used for running a job,
-                e.g. 'prgenv-gnu' or 'prgenv-gnu/24.11:v2'. Defaults to "".
-            view (str, optional):
-                User environment view to be used for running a job,
-                e.g. 'default'. Defaults to 'default'.
-        """
+        self.PARTITION_CONDITIONS = {
+            "debug": {"time_limit": 30 * 60, "max_nodes": 10},
+            "normal": {"time_limit": 24 * 60 * 60, "max_nodes": 480},
+            "xfer": {"time_limit": 24 * 60 * 60, "max_nodes": 1},
+            "prepost": {"time_limit": 30 * 60, "max_nodes": 1},
+            "low": {"time_limit": 24 * 30 * 60, "max_nodes": 124},
+        }
         self._cluster = cluster
         self._processor = processor
         self.account = account
@@ -347,6 +350,7 @@ class AlpsSetup:
 
     @property
     def cluster(self) -> str:
+        """Get cluster value as string for dictionary lookups."""
         cluster_val = (
             self._cluster.value
             if isinstance(self._cluster, Cluster)
@@ -354,7 +358,7 @@ class AlpsSetup:
         )
         if cluster_val in ["santis", "eiger"]:
             return cluster_val
-        elif cluster_val in self.PROCESSOR_VERSIONS.keys():
+        elif cluster_val in self.PROCESSOR_VERSIONS:
             raise NotImplementedError(
                 f"Cluster '{cluster_val}' is not yet implemented."
             )
@@ -363,6 +367,7 @@ class AlpsSetup:
 
     @property
     def processor(self) -> str:
+        """Get processor value as string for dictionary lookups."""
         processor_val = (
             self._processor.value
             if isinstance(self._processor, Processor)
@@ -383,7 +388,9 @@ class AlpsSetup:
         )
 
     def _check_wall_time_valid(self) -> None:
-        """Checks if the setup is valid to be run on alps based
+        """Checks if the wall time setup is valid.
+
+        Check if the specified wall time is valid to be run on alps based
         on the selected queue, wall time and number of nodes.
 
         Raises:
@@ -422,11 +429,10 @@ class AlpsSetup:
             )
 
     def _check_uenv_setup_valid(self) -> None:
-        if self.uenv:
-            if "--view=" in self.uenv:
-                raise ValueError(
-                    "Please provide the view as a separate argument, not in uenv."
-                )
+        if self.uenv and "--view=" in self.uenv:
+            raise ValueError(
+                "Please provide the view as a separate argument, not in uenv."
+            )
 
     def _set_ssh_connect(self) -> None:
         # get name of the current machine
@@ -434,12 +440,12 @@ class AlpsSetup:
         if current_cluster != self.cluster:
             user = os.environ["USER"]
             self.ssh_connect = f"{user}@{self.cluster}"
-            logger.info(f"SSH connection set to {self.ssh_connect}")
+            logger.info("SSH connection set to %s", self.ssh_connect)
         else:
             self.ssh_connect = None
 
     def _parse_run_time(self, run_time: str) -> pd.Timedelta:
-        """Parse the run_time string and return a timedelta object
+        """Parse the run_time string and return a timedelta object.
 
         Args:
             run_time (str):
@@ -452,11 +458,10 @@ class AlpsSetup:
         Returns:
             pd.Timedelta: Timedelta of the wall clock time.
         """
-
         try:
             return pd.to_timedelta(run_time)
-        except ValueError:
-            raise ValueError("Invalid run_time format. Use HH:MM:SS")
+        except ValueError as err:
+            raise ValueError("Invalid run_time format. Use HH:MM:SS") from err
 
     def _build_sbatch_header(
         self,
@@ -466,6 +471,8 @@ class AlpsSetup:
         extra_sbatch: Optional[dict] = None,
     ) -> str:
         """Build the SBATCH header block for a SLURM script.
+
+        Documentation:
         - https://docs.cscs.ch/running/slurm/
         - https://slurm.schedmd.com/sbatch.html
 
@@ -520,7 +527,7 @@ class AlpsSetup:
                 f"#SBATCH --constraint={self.constraint}",
                 f"#SBATCH --hint={self.multithread}",
                 f"#SBATCH --output={output_file}",
-                f"#SBATCH --chdir={str(scratch_path)}",
+                f"#SBATCH --chdir={scratch_path!s}",
             ]
         )
 
@@ -545,7 +552,7 @@ class AlpsSetup:
 
         return "\n".join(lines) + "\n"
 
-    def create_bash_script(
+    def create_sbatch_script(
         self,
         commands: Union[str, list],
         job_name: str,
@@ -586,7 +593,7 @@ class AlpsSetup:
             extra_sbatch=extra_sbatch,
         )
 
-        with open(file_path, "w") as f:
+        with Path(file_path).open("w") as f:
             f.write(header)
             for command in commands:
                 f.write(f"{command}\n")
@@ -595,38 +602,7 @@ class AlpsSetup:
 
 
 def jobs_in_queue(
-    omit: list[str] = [
-        "TRES_PER_NODE",
-        "MIN_CPUS",
-        "MIN_TMP_DISK",
-        "GROUP",
-        "OVER_SUBSCRIBE",
-        "COMMENT",
-        "MIN_MEMORY",
-        "REQ_NODES",
-        "COMMAND",
-        "PRIORITY",
-        "QOS",
-        "ST",
-        "RESERVATION",
-        "WCKEY",
-        "EXC_NODES",
-        "NICE",
-        "S:C:T",
-        "EXEC_HOST",
-        "DEPENDENCY",
-        "ARRAY_JOB_ID",
-        "SOCKETS_PER_NODE",
-        "CORES_PER_SOCKET",
-        "THREADS_PER_CORE",
-        "ARRAY_TASK_ID",
-        "CONTIGUOUS",
-        "NODELIST(REASON)",
-        "UID",
-        "LICENSES",
-        "CORE_SPEC",
-        "SCHEDNODES",
-    ],
+    omit: Optional[list[str]] = None,
     add_progress: bool = False,
     ssh_connect: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -635,13 +611,53 @@ def jobs_in_queue(
     Args:
         omit (list, optional):
             Specify which columns of the output should be omitted.
+        add_progress (bool, optional):
+            Whether to add a column with the simulation progress of MicroHH jobs.
+            Defaults to False.
+        ssh_connect (str, optional):
+            If provided, the squeue command will be executed via ssh on the
+            specified machine, e.g. "user@cluster". Defaults to None.
 
     Returns:
         pd.DataFrame: Information about jobs in the queue.
     """
-
     # get the user name
     user = os.environ["USER"]
+
+    # default omit list defined here to avoid mutable default argument
+    if omit is None:
+        omit = [
+            "TRES_PER_NODE",
+            "MIN_CPUS",
+            "MIN_TMP_DISK",
+            "GROUP",
+            "OVER_SUBSCRIBE",
+            "COMMENT",
+            "MIN_MEMORY",
+            "REQ_NODES",
+            "COMMAND",
+            "PRIORITY",
+            "QOS",
+            "ST",
+            "RESERVATION",
+            "WCKEY",
+            "EXC_NODES",
+            "NICE",
+            "S:C:T",
+            "EXEC_HOST",
+            "DEPENDENCY",
+            "ARRAY_JOB_ID",
+            "SOCKETS_PER_NODE",
+            "CORES_PER_SOCKET",
+            "THREADS_PER_CORE",
+            "ARRAY_TASK_ID",
+            "CONTIGUOUS",
+            "NODELIST(REASON)",
+            "UID",
+            "LICENSES",
+            "CORE_SPEC",
+            "SCHEDNODES",
+        ]
 
     # call squeue returning only all variables of the jobs
     cmd = ["ssh", ssh_connect] if ssh_connect else []
@@ -681,13 +697,13 @@ def jobs_in_queue(
 
 
 def cancel_all() -> None:
-
+    """Cancel all jobs of the user in the queue."""
     user = os.environ["USER"]
     subprocess.run(["scancel -u", user], check=True)
 
 
 def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Add MicroHH simulation progress to the DataFrame containing the jobs in the queue.
+    """Add MicroHH simulation progress to the DataFrame containing the queued jobs.
 
     Args:
         df (pd.DataFrame):
@@ -701,7 +717,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
 
     progress_percentages = []
 
-    for index, row in df.iterrows():
+    for _, row in df.iterrows():
         job_dir = str(row["WORK_DIR"])
         try:
             # read case
@@ -718,9 +734,15 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def print_simulation_progress(case: "Case") -> None:
-    """Print the progress of a simulation based on the saved binary output
-    files of MicroHH"""
+    """Print the progress of a MicroHH simulation.
 
+    Read the current time step from the `.out` file and the maximum time step
+    from the case configuration, calculate the progress percentage.
+
+    Args:
+        case (init.Case):
+            Case for which the simulation progress should be printed.
+    """
     # current_timestep, max_timestep = get_simulation_progress_from_files(case)
     current_timestep, max_timestep = get_simulation_progress_from_out(case)
     progress_percentage = current_timestep / max_timestep * 100
@@ -735,12 +757,16 @@ def print_simulation_progress(case: "Case") -> None:
     end_color = PrintColor.ENDC
 
     print(
-        f"{color.value}Simulation progress of {case.full_name}: {progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s){end_color.value}"
+        f"{color.value}Simulation progress of {case.full_name}: "
+        f"{progress_percentage:.1f}% ({current_timestep}s out of {max_timestep}s)"
+        f"{end_color.value}"
     )
 
 
-def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
-    """Get current simulation progress of a MicroHH simulation based on the
+def get_simulation_progress_from_files(case: "Case") -> tuple[int, int]:
+    """Get current simulation progress from binary grid files.
+
+    Get the current and maximum time steps of a MicroHH simulation based on the
     binary grid files generated when running the model.
 
     Args:
@@ -748,7 +774,7 @@ def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
             Case for which the simulation progress should be returned.
 
     Returns:
-        Tuple[int, int]:
+        tuple[int, int]:
             Current and max time step of a simulation.
     """
     current_timestep = 0
@@ -775,8 +801,10 @@ def get_simulation_progress_from_files(case: "Case") -> Tuple[int, int]:
     return current_timestep, max_timestep
 
 
-def get_simulation_progress_from_out(case: "Case") -> Tuple[float, int]:
-    """Get current simulation progress of a MicroHH simulation based on the
+def get_simulation_progress_from_out(case: "Case") -> tuple[float, int]:
+    """Get current simulation progress from the .out file.
+
+    Get the current and maximum time steps of a MicroHH simulation based on the
     `{case.name}.out` file generated when running the model.
     """
     try:
@@ -791,7 +819,8 @@ def get_simulation_progress_from_out(case: "Case") -> Tuple[float, int]:
 
 
 def extract_job_id(case: "Case") -> int | None:
-    """
+    """Extract job ID from SLURM job files.
+
     Extracts the number represented by '*' in a pattern like 'run_microhh_*.out'.
     Returns the number as an integer, or None if not found.
     """
@@ -837,8 +866,8 @@ def get_sacct_info(
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Error running sacct: {e.stderr.strip()}")
+    except subprocess.CalledProcessError as err:
+        raise RuntimeError(f"Error running sacct: {err.stderr.strip()}") from err
 
     # Load into pandas
     data = StringIO(result.stdout.strip())
@@ -860,7 +889,11 @@ def get_sacct_info(
 def calculate_expected_runtime(
     benchmark: dict[str, Any], simulation_time: pd.Timedelta
 ) -> pd.Timedelta:
-    """Calculate the expected runtime based on a benchmark and a given time to be simulated."""
+    """Calculate the expected runtime.
+
+    Calculate the expected runtime based on a benchmark and the time to
+    be simulated.
+    """
     simulation_time_s = simulation_time.total_seconds()
     simulated_time_s = float(benchmark["simulated_time_s"])
     elapsed_time_s = float(benchmark["elapsed_time_s"])
@@ -870,13 +903,13 @@ def calculate_expected_runtime(
 
 
 __all__ = [
-    "SlurmJob",
     "AlpsSetup",
-    "jobs_in_queue",
-    "cancel_all",
+    "SlurmJob",
     "add_progress_to_df",
-    "print_simulation_progress",
-    "get_simulation_progress_from_files",
+    "cancel_all",
     "extract_job_id",
     "get_sacct_info",
+    "get_simulation_progress_from_files",
+    "jobs_in_queue",
+    "print_simulation_progress",
 ]

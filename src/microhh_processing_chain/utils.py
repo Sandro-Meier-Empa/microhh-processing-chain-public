@@ -4,7 +4,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import xarray as xr
@@ -20,7 +20,7 @@ def open_in_vscode(file_path: Union[str, Path]) -> None:
     subprocess.run(["code", str(file_path)], cwd=file_path.parent)
 
 
-def object_to_list(var: Any) -> List:
+def object_to_list(var: Any) -> list:  # noqa: ANN401
     """Convert various input types to a list.
 
     Handles strings (comma-separated), xarray DataArrays, numpy arrays,
@@ -38,20 +38,19 @@ def object_to_list(var: Any) -> List:
     if var is None:
         raise ValueError("Input should not be 'None'")
 
-    match var:
-        case str():
-            return _parse_string_to_list(var)
-        case xr.DataArray():
-            return var.values.tolist()
-        case np.ndarray():
-            return var.tolist()
-        case list():
-            return var
-        case _:
-            return [var]
+    if isinstance(var, str):
+        return _parse_string_to_list(var)
+    elif isinstance(var, xr.DataArray):
+        return var.values.tolist()
+    elif isinstance(var, np.ndarray):
+        return var.tolist()
+    elif isinstance(var, list):
+        return var
+    else:
+        return [var]
 
 
-def _parse_string_to_list(var: str) -> List:
+def _parse_string_to_list(var: str) -> list:
     """Parse a comma-separated string into a list with type conversion.
 
     Args:
@@ -76,7 +75,7 @@ def _parse_string_to_list(var: str) -> List:
 
 
 def to_comma_separated_list(
-    lst: Union[List, np.ndarray], n: int = 1, ndecimals: Optional[int] = None
+    lst: Union[list, np.ndarray], n: int = 1, ndecimals: Optional[int] = None
 ) -> str:
     """Convert a Python iterable to a comma-separated string.
 
@@ -93,7 +92,7 @@ def to_comma_separated_list(
         Comma-separated string representation.
     """
 
-    def clean_fmt(x: Any) -> str:
+    def clean_fmt(x: Union[float, np.floating]) -> str:
         if isinstance(x, (float, np.floating)):
             if ndecimals is not None:
                 return f"{x:.{ndecimals}f}"
@@ -120,8 +119,8 @@ def confirm_action(prompt: str) -> Iterator[bool]:
 
 
 __all__ = [
-    "open_in_vscode",
-    "object_to_list",
-    "to_comma_separated_list",
     "confirm_action",
+    "object_to_list",
+    "open_in_vscode",
+    "to_comma_separated_list",
 ]

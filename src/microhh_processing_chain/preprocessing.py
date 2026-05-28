@@ -1,17 +1,17 @@
 import fnmatch
 import logging
-import os
 import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import ls2d
-import microhh_processing_chain.cscs as cscs
-import microhh_processing_chain.initialisation as init
 import numpy as np
 import xarray as xr
+
+import microhh_processing_chain.cscs as cscs
+import microhh_processing_chain.initialisation as init
 from microhh_processing_chain import io, utils
 from microhh_processing_chain.enums import RunMode
 
@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 
 
 class PreProcessing:
+    """Class used for pre-processing and running MicroHH cases.
+
+    Args:
+        case (init.Case):
+            Case to pre-process and run.
+        alps_setup (cscs.AlpsSetup):
+            Object containing the setup variables used for creating a bash
+            script to run the MicroHH simulations.
+        microhh_executable_path (Union[str, Path]):
+            Path to the MicroHH executable or the directory containing the
+            MicroHH executable.
+        jobreport_path (Optional[Union[str, Path]]):
+            Path to the GPU job report executable. Only supported on GPU.
+    """
+
     def __init__(
         self,
         case: init.Case,
@@ -26,18 +41,6 @@ class PreProcessing:
         microhh_executable_path: Union[str, Path],
         jobreport_path: Optional[Union[str, Path]] = None,
     ) -> None:
-        """Class used for pre-processing and running MicroHH cases
-
-        Args:
-            case (init.Case):
-                Case to pre-process and run.
-            alps_setup (cscs.AlpsSetup):
-                Object containing the setup variables used for creating a bash script to run the MicroHH simulations.
-            microhh_executable_path (Union[str, Path]):
-                Path to the MicroHH executable or the directory containing the MicroHH executable.
-            jobreport_path (Optional[Union[str, Path]]):
-                Path to the GPU job report executable. Only supported on GPU.
-        """
         self.case = case
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
@@ -57,15 +60,16 @@ class PreProcessing:
 
         if len(mhh_files) != 1:
             raise ValueError(
-                f"Expected exactly one 'microhh' executable in {microhh_executable_path}, but found {len(mhh_files)}."
+                "Expected exactly one 'microhh' executable in "
+                f"{microhh_executable_path}, but found {len(mhh_files)}."
             )
 
         return mhh_files[0]
 
     def _check_microhh_build_architecture(self) -> None:
-        """Check if the architecture of the selected MicroHH build matches the system architecture."""
-        if not os.path.exists(self.microhh_executable_path):
-            logger.warning(f"File {self.microhh_executable_path} not found.")
+        """Check if MicroHH executable matches the system architecture."""
+        if not Path(self.microhh_executable_path).exists():
+            logger.warning("File %s not found.", self.microhh_executable_path)
 
         arch = self._get_architecture()
 
@@ -88,11 +92,13 @@ class PreProcessing:
             exec_arch = "unknown"
 
         if arch != exec_arch:
-            logger.error(f"Mismatch: System is {arch}, but binary is {exec_arch}.")
+            logger.error("Mismatch: System is %s, but binary is %s.", arch, exec_arch)
 
     def _get_architecture(self) -> Optional[str]:
         """Get the architecture of the system.
+
         If ssh_connect is provided, get the architecture of the remote system.
+
         Returns:
             str: Architecture of the system (e.g., 'x86_64', 'aarch64').
         """
@@ -105,15 +111,16 @@ class PreProcessing:
                 ).strip()
             except subprocess.CalledProcessError as e:
                 logger.warning(
-                    f"Failed to connect to {self.alps_setup.ssh_connect}. "
-                    f"SSH error:\n{e.output.strip()}"
+                    "Failed to connect to %s. SSH error:\n%s",
+                    self.alps_setup.ssh_connect,
+                    e.output.strip(),
                 )
                 return None
         else:
             return str(platform.machine())
 
     def _check_jobpreport_gpu(self) -> None:
-        """Make sure that jobreport is only provided when using GPU partition and raise an error if not."""
+        """Check if GPU jobreport is only provided when using GPU partition."""
         if self.alps_setup.processor != "gpu" and self.jobreport_path is not None:
             raise ValueError(
                 "GPU jobreport is only supported when using GPU partition."
@@ -125,7 +132,8 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ) -> None:
-        """Prepare the case for running the MicroHH simulation by
+        """Prepare the case for running the MicroHH simulation by.
+
         - checking if the .ini setup is valid,
         - copying the MicroHH executable to the scratch directory,
         - checking if all required files are present,
@@ -160,7 +168,8 @@ class PreProcessing:
             file_path = Path(self.case.scratch_path, filename)
             if not file_path.exists():
                 raise FileNotFoundError(
-                    f"Required file '{filename}' not found in '{self.case.scratch_path}'."
+                    f"Required file '{filename}' not found in "
+                    f"'{self.case.scratch_path}'."
                 )
 
     def prepare_restart_simulation(
@@ -171,7 +180,20 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ) -> None:
+        """Prepare the case for running a restart MicroHH simulation.
 
+        Args:
+            restart_case (init.Case): The case from which to restart.
+                Must have the same name as the current case.
+            restart_time (int): Time in seconds from which the simulation is restarted.
+                Must match the start time in the .ini file.
+            overwrite (bool, optional): Whether to overwrite existing files.
+                Defaults to False.
+            start_jobs (bool, optional): Whether to start the simulation after
+                preparation. Defaults to False.
+            wait (bool, optional): Whether to wait for the job to finish before
+                returning. Defaults to False.
+        """
         # Check if .ini file has been updated for restart
         self._check_restart_ini_updated(restart_time)
 
@@ -209,7 +231,8 @@ class PreProcessing:
         end_time = self.case.config["time"]["endtime"]
         if end_time <= restart_time:
             raise ValueError(
-                f"end time ({end_time}s) must be larger than restart_time ({restart_time}s)."
+                f"end time ({end_time}s) must be larger than "
+                f"restart_time ({restart_time}s)."
             )
 
     def start_simulation(self, wait: bool = False) -> None:
@@ -244,17 +267,19 @@ class PreProcessing:
         self.case.job_id = self.slurm_job.start(wait=wait)
 
     def cancel_simulation(self) -> None:
+        """Cancel the running MicroHH simulation."""
         # check if self has attribute "job_id"
         if not hasattr(self, "job_id"):
             logger.info("Case has not been submitted yet.")
 
         if self.case.job_id is not None:
             subprocess.run(["scancel", str(self.case.job_id)])
-            logger.info(f"Cancelling simulation {self.case.job_id}")
+            logger.info("Cancelling simulation %s", self.case.job_id)
 
     def create_run_script(
         self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
     ) -> Path:
+        """Create a bash script to run the MicroHH simulation."""
         job_file = Path(self.case.scratch_path, "run_microhh.sbatch")
 
         commands = _get_microhh_run_commands(
@@ -266,14 +291,14 @@ class PreProcessing:
         )
 
         if not job_file.exists() or overwrite:
-            job_file = self.alps_setup.create_bash_script(
+            job_file = self.alps_setup.create_sbatch_script(
                 commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
                 scratch_path=self.case.scratch_path,
             )
         else:
-            logger.info(f"Reading existing bash script {job_file}")
+            logger.info("Reading existing sbatch script %s", job_file)
 
         return Path(job_file)
 
@@ -305,7 +330,7 @@ class PreProcessing:
         self._check_initial_conditions_times()
 
     def _check_ini_content(self) -> None:
-        """check if the .ini file is not empty"""
+        """Check if the .ini file is not empty."""
         if len(self.case.config.groups) == 0:
             raise ValueError(f"{self.case.name}.ini is empty.")
 
@@ -313,8 +338,8 @@ class PreProcessing:
         """Adjust MPI settings if MPI is disabled."""
         if (
             self.alps_setup.processor == "gpu"
-            and not self.case.config["master"]["npx"] == 1
-            and not self.case.config["master"]["npy"] == 1
+            and self.case.config["master"]["npx"] != 1
+            and self.case.config["master"]["npy"] != 1
         ):
             for dim in ["x", "y"]:
                 self.case.config.set_value(group="master", variable=f"np{dim}", value=1)
@@ -370,17 +395,19 @@ class PreProcessing:
 
         if swpres is not None and int(swpres) != int(swspatial):
             raise ValueError(
-                f"Grid order 'swspatialorder' ({swspatial}) does not match pressure advection order 'swpres' ({swpres})."
+                "Grid order 'swspatialorder' "
+                f"({swspatial}) does not match pressure advection order "
+                f"'swpres' ({swpres})."
             )
 
         if swadvec is not None and int(swadvec[0]) != int(swspatial):
             raise ValueError(
-                f"Grid order 'swspatialorder' ({swspatial}) does not match scalar advection order 'swadvec' ({swadvec})."
+                f"Grid order 'swspatialorder' ({swspatial}) does not match "
+                f"scalar advection order 'swadvec' ({swadvec})."
             )
 
     def _check_thermo(self) -> None:
         """Check if the thermo settings are valid."""
-
         swthermo = self.case.config.get("thermo", "swthermo", None)
         swbasestate = self.case.config.get("thermo", "swbasestate", None)
         thref0 = self.case.config.get("thermo", "thref0", None)
@@ -389,12 +416,11 @@ class PreProcessing:
             return
 
         if swbasestate == "boussinesq":
-            if swthermo == "dry":
-                if thref0 is None:
-                    raise ValueError(
-                        "'thref0' must be specified when using "
-                        "'swbasestate'='boussinesq' and 'swthermo'='dry'."
-                    )
+            if swthermo == "dry" and thref0 is None:
+                raise ValueError(
+                    "'thref0' must be specified when using "
+                    "'swbasestate'='boussinesq' and 'swthermo'='dry'."
+                )
 
         elif swbasestate == "anelastic":
             swspatial = self.case.config.get("grid", "swspatialorder", None)
@@ -414,9 +440,7 @@ class PreProcessing:
         fc = self.case.config.get("force", "fc", None)
         dpdx = self.case.config.get("force", "dpdx", None)
 
-        if force is None:
-            return
-        elif force == 0:
+        if force is None or force == 0:
             return
         if force == "geo":
             if fc is None or fc == 0:
@@ -451,9 +475,7 @@ class PreProcessing:
         nc_group: str = "init",
         required_by_list: str = "",
     ) -> bool:
-        """
-        Generic check: If switch is True, variables must exist in nc_group.
-        """
+        """Generic check: If switch is True, variables must exist in nc_group."""
         switch_val = self.case.config.get(group, key, default)
 
         is_active = (
@@ -474,13 +496,17 @@ class PreProcessing:
             )
         if not is_active and has_vars:
             logger.warning(
-                f"Switch [{group}] {key} is not active, but variables matching "
-                f"'{var_pattern}' were found in NetCDF group '{nc_group}'."
+                "Switch [%s] %s is not active, but variables matching "
+                "'%s' were found in NetCDF group '%s'.",
+                group,
+                key,
+                var_pattern,
+                nc_group,
             )
         if not is_active:
             return False
 
-        # Check if items in a list (like timedeplist) actually exist as variables in initial conditions
+        # Check if items in a list (like timedeplist) exist as variables in ic
         if required_by_list:
             config_list = self.case.config.get(group, required_by_list, [])
             config_list = utils.object_to_list(config_list)
@@ -499,7 +525,7 @@ class PreProcessing:
 
         return is_active
 
-    def _get_vars_in_group(self, group_name: str):
+    def _get_vars_in_group(self, group_name: str) -> list[str]:
         """Helper to get variable names from a specific NetCDF group."""
         try:
             initial_cond = xr.open_dataset(
@@ -516,20 +542,21 @@ class PreProcessing:
         if swcross and len(crosslist) == 0:
             raise ValueError("swcross is True, but crosslist is empty.")
 
-    def _check_dump(self):
+    def _check_dump(self) -> None:
         swdump = self.case.config.get("dump", "swdump", False)
         swdumplist = self.case.config.get("dump", "dumplist", []) or []
         if swdump and len(swdumplist) == 0:
             raise ValueError("swdump is True, but dumplist is empty.")
 
-    def _check_forcing_logic(self):
+    def _check_forcing_logic(self) -> None:
         # 1. Large Scale Forcing
         swls = self.case.config.get("force", "swls", False)
         swtdep_ls = self.case.config.get("force", "swtimedep_ls", False)
 
         if swtdep_ls and not swls:
             raise ValueError(
-                "swtimedep_ls is True, but swls is False. swls must be enabled for LS forcing."
+                "swtimedep_ls is True, but swls is False. "
+                "swls must be enabled for LS forcing."
             )
 
         if swls:
@@ -586,17 +613,17 @@ class PreProcessing:
                 "force", "swnudge", False, "*_nudge", "init", "nudgelist"
             )
 
-    def _check_boundary_logic(self):
+    def _check_boundary_logic(self) -> None:
         # Requires time_surface and *_sbot in timedep group
         self._check_alignment("boundary", "swtimedep", False, "time_surface", "timedep")
         self._check_alignment(
             "boundary", "swtimedep", False, "*", "timedep", "timedeplist"
         )
 
-    def _check_thermo_logic(self):
+    def _check_thermo_logic(self) -> None:
         self._check_alignment("thermo", "swtimedep_pbot", False, "p_sbot", "timedep")
 
-    def _check_grid_logic(self):
+    def _check_grid_logic(self) -> None:
         """Checks spatial order consistency."""
         spatial = self.case.config.get("grid", "swspatialorder", None)
         if spatial is None:
@@ -608,7 +635,8 @@ class PreProcessing:
             # Extract first digit for advection schemes like '2i5'
             if int(val[0]) != int(spatial):
                 raise ValueError(
-                    f"[{grp}] {key} ({val}) must match [grid] swspatialorder ({spatial})"
+                    f"[{grp}] {key} ({val}) must match [grid] "
+                    f"swspatialorder ({spatial})."
                 )
 
     def _check_source_position(self) -> None:
@@ -635,7 +663,7 @@ class PreProcessing:
                     )
 
     def _check_source_height(self) -> None:
-        """Check if source height is greater than vertical resolution"""
+        """Check if source height is greater than vertical resolution."""
         if "source" not in self.case.config.groups:
             return
 
@@ -645,15 +673,17 @@ class PreProcessing:
         for source_height in source_heights:
             if source_height < lowest_grid_level:
                 logger.info(
-                    f"Source height of {source_height}m "
-                    f"is smaller than the lowest grid level of {lowest_grid_level}m"
+                    "Source height of %sm is smaller than the lowest grid level of %sm",
+                    source_height,
+                    lowest_grid_level,
                 )
 
     def _check_source_sigma(self) -> None:
         """Check if the source std is valid.
-        It must be >0 and between grid size/4 and grid size/2 since the source is
-        simulated within 4*sigma."""
 
+        It must be >0 and between grid size/4 and grid size/2 since the source is
+        simulated within 4*sigma.
+        """
         if "source" not in self.case.config.groups:
             return
 
@@ -692,7 +722,7 @@ class PreProcessing:
             raise ValueError("All source variables must have the same length.")
 
     def _check_tdep_source_location(self) -> None:
-        """Check if switches for dtep source, tdep source list and initial conditions align"""
+        """Check if switches for source location and initial conditions align."""
         self._check_alignment(
             group="source",
             key="swtimedep_location",
@@ -702,7 +732,7 @@ class PreProcessing:
         )
 
     def _check_tdep_source_strength(self) -> None:
-        """Check if switches for dtep source, tdep source list and initial conditions align"""
+        """Check if switches for source strength and initial conditions align."""
         self._check_alignment(
             group="source",
             key="swtimedep_strength",
@@ -727,7 +757,7 @@ class PreProcessing:
             )
 
     def _check_surface_roughness_height(self) -> None:
-        """Check if the surface roughness is smaller than the lowest vertical grid level."""
+        """Check if surface roughness is smaller than the lowest vertical grid level."""
         # read in {case}_input.nc file:
         lowest_grid_level = self._get_lowest_grid_level()
         warning_threshold = 0.9 * lowest_grid_level
@@ -740,15 +770,21 @@ class PreProcessing:
                 surface_roughness = self.case.config["boundary"][roughness_type]
                 if surface_roughness >= lowest_grid_level:
                     logger.warning(
-                        f"Surface roughness ({roughness_type} = {surface_roughness} m) "
-                        f"is larger than the lowest level of the grid (={lowest_grid_level} m). "
-                        "This will result in NaNs in the output or cause the model to crash."
+                        "Surface roughness (%s = %s m) is larger than the lowest "
+                        "level of the grid (=%s m). This will result in NaNs in "
+                        "the output or cause the model to crash.",
+                        roughness_type,
+                        surface_roughness,
+                        lowest_grid_level,
                     )
                 elif surface_roughness >= warning_threshold:
                     logger.warning(
-                        f"Surface roughness ({roughness_type} = {surface_roughness} m) "
-                        f"similar to the lowest grid level (={lowest_grid_level} m). "
-                        "This will result in NaNs in the output or cause the model to crash."
+                        "Surface roughness (%s = %s m) similar to the lowest grid "
+                        "level (=%s m). This will result in NaNs in the output or "
+                        "cause the model to crash.",
+                        roughness_type,
+                        surface_roughness,
+                        lowest_grid_level,
                     )
 
     def _check_sample_times(self) -> None:
@@ -760,16 +796,23 @@ class PreProcessing:
         sample_times = [sample_time_3d, sample_time_2d, sample_time_stats]
         sample_times = [s for s in sample_times if s is not None]
 
-        # Logic: If more than one unique value exists among the found keys, warn the user
+        # If more than one unique value exists among the found keys, warn the user
         if len(set(sample_times)) > 1:
             logger.warning(
                 "Sample times are not the same. It is recommended to have the same "
-                f"sample time for 3d output '{sample_time_3d:.0f}'s, 2d output '{sample_time_2d:.0f}'s, and "
-                f"statistics '{sample_time_stats:.0f}'s for postprocessing convenience."
+                "sample time for 3d output '%.0f's, 2d output '%.0f's, and "
+                "statistics '%.0f's for postprocessing convenience.",
+                sample_time_3d,
+                sample_time_2d,
+                sample_time_stats,
             )
 
     def _check_initial_conditions_times(self) -> None:
-        """Check if the times specified in the boundary conditions match the time specified in the .ini file."""
+        """Check if the times in boundary conditions match config.
+
+        Check if the times specified in the boundary conditions match the time
+        specified in the .ini file.
+        """
         ic = io.open_initial_cond(self.case)
 
         time_coords = [name for name in ic.coords if "time" in str(name)]
@@ -784,19 +827,28 @@ class PreProcessing:
             # If times do not match exactly, log a general warning.
             if ini_start_time != ic_start_time or ini_end_time != ic_end_time:
                 logger.warning(
-                    f"Times in .ini file do not match exactly the times in initial conditions variable '{time_coord}': "
-                    f"ini start={ini_start_time}s, ic start={ic_start_time}s; "
-                    f"ini end={ini_end_time}s, ic end={ic_end_time}s."
+                    "Times in .ini file do not match exactly the times in initial "
+                    "conditions variable '%s': ini start=%ss, ic start=%ss; "
+                    "ini end=%ss, ic end=%ss.",
+                    time_coord,
+                    ini_start_time,
+                    ic_start_time,
+                    ini_end_time,
+                    ic_end_time,
                 )
 
             # Raise value errors for problematic mismatches
             if ini_start_time < ic_start_time:
                 raise ValueError(
-                    f"Start time in .ini file ({ini_start_time}s) is earlier than the start time in initial conditions variable '{time_coord}' ({ic_start_time}s)."
+                    f"Start time in .ini file ({ini_start_time}s) is earlier "
+                    f"than the start time in initial conditions variable "
+                    f"'{time_coord}' ({ic_start_time}s)."
                 )
             if ini_end_time > ic_end_time:
                 raise ValueError(
-                    f"End time in .ini file ({ini_end_time}s) is later than the end time in initial conditions variable '{time_coord}' ({ic_end_time}s)."
+                    f"End time in .ini file ({ini_end_time}s) is later "
+                    f"than the end time in initial conditions variable "
+                    f"'{time_coord}' ({ic_end_time}s)."
                 )
 
     def _get_lowest_grid_level(self) -> float:
@@ -808,14 +860,15 @@ class PreProcessing:
         return lowest_grid_level
 
     def _copy_executable(self) -> None:
-        """Copy MicroHH executable to scratch"""
-
+        """Copy MicroHH executable to scratch."""
         shutil.copy(self.microhh_executable_path, self.case.scratch_path)
 
     def copy_restart_files(self, origin: Union[str, Path], timestr: str) -> None:
-        """Copy MicroHH restart files to scratch. The .ini and input.nc files
-        are already copied when creating the case using self.case.initialise_case()."""
+        """Copy MicroHH restart files to scratch.
 
+        The .ini and input.nc files are already copied when creating the case using
+        self.case.initialise_case().
+        """
         origin = Path(origin)
 
         file_patterns = [
@@ -836,13 +889,13 @@ class PreProcessing:
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
         iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
-        endtime_io = int(round(endtime * 10 ** (-iotimeprec)))
+        endtime_io = round(endtime * 10 ** (-iotimeprec))
 
-        return "{0:07d}".format(endtime_io)
+        return f"{endtime_io:07d}"
 
 
 def _get_microhh_run_commands(
-    case_list: List[init.Case],
+    case_list: list[init.Case],
     mode: Union[RunMode, str] = RunMode.RUN,
     cpus_per_task_per_case: int = 72,
     gpus_per_task_per_case: int = 1,
@@ -851,17 +904,18 @@ def _get_microhh_run_commands(
     """Generate the shell commands to run MicroHH.
 
     Args:
-        case_list: List of cases to run.
-        mode: Run mode, determines which phases of MicroHH to execute. "run" (default) executes both "init" and "run" phases, while "rerun" and "restart" execute only the "run" phase.
+        case_list: list of cases to run.
+        mode: Run mode, determines which phases of MicroHH to execute.
+            "run" (default) executes both "init" and "run" phases, while
+            "rerun" and "restart" execute only the "run" phase.
         cpus_per_task_per_case: CPUs per srun step (multi-GPU only).
         gpus_per_task_per_case: GPUs per srun step (multi-GPU only).
         jobreport_path: Optional wrapper prefix for the final phase
             (multi-GPU only).
 
     Returns:
-        List of shell command strings.
+        list of shell command strings.
     """
-
     case_list = list(case_list)
     mode_val = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
@@ -888,7 +942,8 @@ def _get_microhh_run_commands(
     else:
         raise ValueError(
             f"Expected between 1 and 4 cases, but got {len(case_list)}. For a "
-            f"multi-GPU run, please provide 4 cases to use compute resources efficiently."
+            "multi-GPU run, please provide 4 cases to use compute resources "
+            "efficiently."
         )
 
 
@@ -898,28 +953,30 @@ def _get_single_run_command(
     """Generate srun commands for a single-case run, e.g. on a CPU node.
 
     Args:
-        phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
+        phases: list of MicroHH phases to execute (e.g. ["init", "run"]).
         case: The case to run.
         jobreport_path: Optional jobreport wrapper for the run phase.
 
     Returns:
-        List of shell command strings.
+        list of shell command strings.
     """
     commands = []
     last_phase_idx = len(phases) - 1
     for phase_idx, phase in enumerate(phases):
         if jobreport_path and phase_idx == last_phase_idx:
-            commands.append(
-                f"srun {jobreport_path} -- {case.scratch_path}/microhh {phase} {case.name}"
+            cmd = (
+                f"srun {jobreport_path} -- "
+                f"{case.scratch_path}/microhh {phase} {case.name}"
             )
         else:
-            commands.append(f"srun {case.scratch_path}/microhh {phase} {case.name}")
+            cmd = f"srun {case.scratch_path}/microhh {phase} {case.name}"
+        commands.append(cmd)
     return commands
 
 
 def _get_multi_run_commands(
     phases: list[str],
-    case_list: List[init.Case],
+    case_list: list[init.Case],
     cpus_per_task_per_case: int = 72,
     gpus_per_task_per_case: int = 1,
     jobreport_path: Optional[str] = None,
@@ -927,14 +984,14 @@ def _get_multi_run_commands(
     """Generate srun commands that launch up to 4 cases in parallel on a GPU node.
 
     Args:
-        phases: List of MicroHH phases to execute (e.g. ["init", "run"]).
+        phases: list of MicroHH phases to execute (e.g. ["init", "run"]).
         case_list: Cases to run in parallel, one per GPU.
         cpus_per_task_per_case: CPUs per srun step.
         gpus_per_task_per_case: GPUs per srun step.
         jobreport_path: Optional wrapper prefix for the final phase.
 
     Returns:
-        List of shell command strings.
+        list of shell command strings.
     """
     if len(case_list) > 4:
         raise ValueError(
@@ -969,7 +1026,10 @@ def _get_multi_run_commands(
         )
 
         if jobreport_path and phase_idx == last_phase_idx:
-            srun_cmd = f"{srun_prefix} \\\n         {jobreport_path} -- {executable} {phase} {case_name} &"
+            srun_cmd = (
+                f"{srun_prefix} \\\n         {jobreport_path} -- "
+                f"{executable} {phase} {case_name} &"
+            )
         else:
             srun_cmd = f"{srun_prefix} \\\n         {executable} {phase} {case_name} &"
 
@@ -984,7 +1044,7 @@ def _get_multi_run_commands(
 
 
 def create_run_4x_script(
-    cases: List[init.Case],
+    cases: list[init.Case],
     alps_setup: cscs.AlpsSetup,
     scratch_path: str,
     mode: Union[RunMode, str] = RunMode.RUN,
@@ -996,7 +1056,7 @@ def create_run_4x_script(
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
     if ncases != 4:
-        logger.warning(f"Expected 4 cases, but got {len(cases)}.")
+        logger.warning("Expected 4 cases, but got %d.", len(cases))
 
     master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbatch")
 
@@ -1009,14 +1069,14 @@ def create_run_4x_script(
     )
 
     if not master_job_file.exists() or overwrite:
-        master_job_file = alps_setup.create_bash_script(
+        master_job_file = alps_setup.create_sbatch_script(
             commands=commands,
             job_name=f"{run_mode}_microhh_{ncases}x",
             file_path=master_job_file,
             scratch_path=scratch_path,
         )
     else:
-        logger.info(f"Reading existing bash script {master_job_file}")
+        logger.info("Reading existing sbatch script %s", master_job_file)
 
     return Path(master_job_file)
 
@@ -1086,7 +1146,7 @@ def interpolate_to_model_profile(
     ):
         model_profile = grid.z
     else:
-        raise ValueError(
+        raise TypeError(
             "Provided grid is not valid. Please provide a np.ndarray or ls2d.grid."
         )
 

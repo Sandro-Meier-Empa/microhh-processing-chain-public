@@ -3,16 +3,16 @@ import logging
 from enum import StrEnum
 
 import cartopy.crs as ccrs
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.postprocessing as post
+import ddeq
+import ddeq.gui
 import numpy as np
 import pandas as pd
 import xarray as xr
-from microhh_processing_chain import io
 from tqdm.auto import tqdm
 
-import ddeq
-import ddeq.gui
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.postprocessing as post
+from microhh_processing_chain import io
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,12 +21,14 @@ logging.basicConfig(level=logging.INFO)
 # Argument Parsing and other Helper Functions
 # =============================================================================
 class RunPhase(StrEnum):
+    """Enumeration for different simulation phases."""
+
     SPINUP = "spinup"
     RELEASE = "release"
     FULL = "full"
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Process MicroHH simulation output and generate 2D/3D datasets."
     )
@@ -41,9 +43,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_case_times(case_df: pd.DataFrame, run_phase: RunPhase, savetime_seconds: int):
-    """
-    Calculates start/end times and durations based on the run phase.
+def get_case_times(
+    case_df: pd.DataFrame, run_phase: RunPhase, savetime_seconds: int
+) -> dict:
+    """Calculates start/end times and durations based on the run phase.
 
     Args:
         case_df (pd.DataFrame): DataFrame containing release timestamps.
@@ -100,12 +103,12 @@ def get_case_times(case_df: pd.DataFrame, run_phase: RunPhase, savetime_seconds:
 # =============================================================================
 # Main Processing Pipeline
 # =============================================================================
-def main():
+def main() -> None:
     # -------------------------------------------------------------------------
     # 1) Initialization
     # -------------------------------------------------------------------------
     args = parse_args()
-    logging.info(f"Processing case: {args.directory}")
+    logging.info("Processing case: %s", args.directory)
 
     case = init.read_case(args.directory)
     stats = io.open_statistics(case)
@@ -256,7 +259,8 @@ def main():
 
             if ui.results is None:
                 logging.warning(
-                    "No results returned by the GUI for time %s. Skipping this timestep.",
+                    "No results returned by the GUI for time %s. "
+                    "Skipping this timestep.",
                     t.values,
                 )
                 continue
@@ -271,8 +275,8 @@ def main():
             data_arr.append(ui.data)
             results_arr.append(results_stats)
 
-        except Exception as e:
-            logging.exception("Error processing time %s: %s", t.values, e)
+        except Exception:
+            logging.exception("Error processing time %s", t.values)
             continue
 
     if not results_arr:
@@ -293,7 +297,9 @@ def main():
         results_arr_merged.to_netcdf(results_file_path)
 
     logging.info(
-        f"Processing complete for case {args.directory}. Results saved to {results_file_path}"
+        "Processing complete for case %s. Results saved to %s",
+        args.directory,
+        results_file_path,
     )
 
 

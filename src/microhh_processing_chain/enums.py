@@ -93,13 +93,13 @@ class RunMode(str, Enum):
 
 __all__ = [
     "Cluster",
-    "Processor",
-    "Partition",
-    "MailType",
-    "InitMethod",
-    "WindIntegrationMethod",
-    "Stability",
-    "Precision",
     "FileType",
+    "InitMethod",
+    "MailType",
+    "Partition",
+    "Precision",
+    "Processor",
     "RunMode",
+    "Stability",
+    "WindIntegrationMethod",
 ]

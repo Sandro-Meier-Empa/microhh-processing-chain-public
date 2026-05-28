@@ -2,9 +2,8 @@
 
 __all__ = [
     "constants",
-    "enums",
-    "utils",
     "cscs",
+    "enums",
     "initialisation",
     "io",
     "misc",
@@ -14,15 +13,15 @@ __all__ = [
     "preprocessing",
     "sources",
     "spatial",
+    "utils",
     "visualisation",
     "wind",
 ]
 
 from . import (
     constants,
-    enums,
-    utils,
     cscs,
+    enums,
     initialisation,
     io,
     misc,
@@ -32,6 +31,7 @@ from . import (
     preprocessing,
     sources,
     spatial,
+    utils,
     visualisation,
     wind,
 )

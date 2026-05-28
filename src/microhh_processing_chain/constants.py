@@ -1,8 +1,5 @@
-"""Physical and chemical constants used throughout the microhh_processing_chain package."""
-
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict
 
 
 class PrintColor(str, Enum):
@@ -33,7 +30,7 @@ class GasProperties:
 
 
 # Gas properties dictionary with molar masses
-GAS_PROPERTIES: Dict[str, GasProperties] = {
+GAS_PROPERTIES: dict[str, GasProperties] = {
     "air": GasProperties("dry air", 28.9664),
     "co": GasProperties("carbon monoxide", 28.01),
     "co2": GasProperties("carbon dioxide", 44.01),
@@ -46,7 +43,7 @@ GAS_PROPERTIES: Dict[str, GasProperties] = {
 }
 
 # Simple molar mass lookup (for backward compatibility)
-GAS_MOLAR_MASS: Dict[str, float] = {
+GAS_MOLAR_MASS: dict[str, float] = {
     key: props.molar_mass for key, props in GAS_PROPERTIES.items()
 }
 
@@ -55,9 +52,9 @@ EARTH_ROTATION_RATE = 7.2921159e-5  # rad/s - Earth's angular velocity
 
 
 __all__ = [
-    "PrintColor",
-    "GasProperties",
-    "GAS_PROPERTIES",
-    "GAS_MOLAR_MASS",
     "EARTH_ROTATION_RATE",
+    "GAS_MOLAR_MASS",
+    "GAS_PROPERTIES",
+    "GasProperties",
+    "PrintColor",
 ]

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
+import argparse
 import os
 import sys
-import argparse
 
 sys.path.append(os.path.join("/users", os.environ["USER"], "processing_chain", "src"))
 import initialisation as init

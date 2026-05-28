@@ -1,12 +1,13 @@
 import logging
-from typing import List, Optional, Union, cast
+from typing import Optional, Union, cast
 
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.io as io
 import numpy as np
 import pandas as pd
 import ucat
 import xarray as xr
+
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.io as io
 from microhh_processing_chain.enums import Stability
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,9 @@ def get_source_strength(
     Args:
         case: Case object needed to get initial conditions
         to_unit: Desired unit for source strength (e.g., "kg/s", "kmol/s")
-        time_s: Time in seconds to select source strength data. If None, use max over all times.
+        time_s: Time in seconds to select source strength data.
+            If None, use max over all times.
+
     Returns:
         np.ndarray: Array of source strengths in desired units
     """
@@ -59,7 +62,8 @@ def _get_dynamic_source_strength(
 
     Args:
         case: Case object needed to get initial conditions
-        time_s: Time in seconds to select source strength data. If None, use max over all times.
+        time_s: Time in seconds to select source strength data.
+            If None, use max over all times.
 
     Returns:
         np.ndarray: Array of source strengths
@@ -131,9 +135,9 @@ def seconds_from_midnight(
 
 
 def create_strength_profiles(
-    start_times: List[str],
-    end_times: List[str],
-    strengths: List[float],
+    start_times: list[str],
+    end_times: list[str],
+    strengths: list[float],
     reference_start: pd.Timestamp,
     reference_end: pd.Timestamp,
     from_unit: str,
@@ -145,20 +149,21 @@ def create_strength_profiles(
     """Create strength profiles with 1-second ramp up/down for each time interval.
 
     Args:
-        start_times: List of start times in format "HH:MM:SS"
-        end_times: List of end times in format "HH:MM:SS"
-        strengths: List of strength values for each interval
+        start_times: list of start times in format "HH:MM:SS"
+        end_times: list of end times in format "HH:MM:SS"
+        strengths: list of strength values for each interval
         reference_start: Reference start time of the output time series
         reference_end: Reference end time of the output time series
         from_unit: Unit of the input strengths (e.g., "kg/s", "kmol/s")
         to_unit: Desired unit for the output strengths (e.g., "kg/s", "kmol/s")
-        gas_mass: Molecular mass of the gas (float) or gas name (str) for ucat conversion
+        gas_mass: Molecular mass of the gas (float) or gas name (str)
+            for ucat conversion
+        time_format: Format of the input start/end times (default is "HH:MM:SS")
         spacing: Time spacing for the output time profile
 
     Returns:
         xr.Dataset with strength profiles, dimensions (time, source)
     """
-
     strength_values = np.array(strengths)
     strengths_converted = np.atleast_1d(
         ucat.convert_mass_per_time_unit(
@@ -235,7 +240,7 @@ def briggs_momentum_rise(
     x: Union[float, np.ndarray],
     u: Union[float, np.ndarray],
     d: float,
-    Vs: float,
+    vs: float,
     stability: Stability = Stability.NEUTRAL,
 ) -> Union[float, np.ndarray]:
     """Briggs (1969) momentum-dominated plume rise Δh(x) for neutral conditions.
@@ -243,22 +248,22 @@ def briggs_momentum_rise(
     Taken from Seinfeld and Pandis (2016), p. 868
 
     Table form used (neutral):
-        near-field: Δh = 1.44 * (d*Vs)^(2/3) * x^(1/3) / u^(2/3)
-        final:      Δh = 3 * d * Vs / u
-    with the condition Vs/u >= 4.
+        near-field: Δh = 1.44 * (d*vs)^(2/3) * x^(1/3) / u^(2/3)
+        final:      Δh = 3 * d * vs / u
+    with the condition vs/u >= 4.
 
     Args:
         x: Downwind distance (m).
         u: Wind speed at stack height (m/s).
         d: Stack diameter (m).
-        Vs: Stack exit velocity (m/s).
+        vs: Stack exit velocity (m/s).
         stability: Atmospheric stability regime.
             Only "neutral" is supported in this implementation.
 
     Returns:
         float: Plume rise above source Δh (m).
     """
-    _validate_input(x, u, d, Vs)
+    _validate_input(x, u, d, vs)
 
     if not isinstance(stability, Stability):
         stability = Stability(stability)
@@ -268,22 +273,23 @@ def briggs_momentum_rise(
             "This momentum implementation uses the Briggs neutral (1969) form."
         )
 
-    if np.any(Vs / u < 4):
+    if np.any(vs / u < 4):
         logger.warning(
-            "Briggs momentum rise is only valid for Vs/u >= 4. Invalid value will be masked as Nan."
+            "Briggs momentum rise is only valid for vs/u >= 4. "
+            "Invalid value will be masked as Nan."
         )
-        valid_mask = np.where(Vs / u >= 4, True, False)
+        valid_mask = np.where(vs / u >= 4, True, False)
     else:
-        valid_mask = np.ones_like(Vs, dtype=bool)
+        valid_mask = np.ones_like(vs, dtype=bool)
 
     if x == 0:
         return 0.0
 
     # Compute near-field and final rise
     dh_near = _generic_plume_rise_form(
-        E=1.44 * (d * Vs) ** (2.0 / 3.0), x=x, b=1.0 / 3.0, u=u, a=2.0 / 3.0
+        e=1.44 * (d * vs) ** (2.0 / 3.0), x=x, b=1.0 / 3.0, u=u, a=2.0 / 3.0
     )
-    dh_final = _generic_plume_rise_form(E=3.0 * d * Vs, x=x, b=0, u=u, a=1.0)
+    dh_final = _generic_plume_rise_form(e=3.0 * d * vs, x=x, b=0, u=u, a=1.0)
 
     # return the element wise minimum of near-field and final rise
     dh = np.minimum(dh_near, dh_final)
@@ -295,57 +301,57 @@ def asme_momentum_rise(
     x: Union[float, np.ndarray],
     u: Union[float, np.ndarray],
     d: Union[float, np.ndarray],
-    Vs: Union[float, np.ndarray],
+    vs: Union[float, np.ndarray],
 ) -> Union[float, np.ndarray]:
     """ASME (1973) momentum-dominated plume rise Δh(x) for neutral conditions.
 
     Taken from Seinfeld and Pandis (2016), p. 868
 
     Conditions for momentum-dominated rise:
-        - Vs >= 10 m/s
-        - Vs > u
+        - vs >= 10 m/s
+        - vs > u
         - ΔT < 50 K
 
     Args:
         x: Downwind distance (m).
         u: Wind speed at stack height (m/s).
         d: Stack diameter (m).
-        Vs: Stack exit velocity (m/s).
+        vs: Stack exit velocity (m/s).
 
     Returns:
         float: Plume rise above source Δh (m).
     """
-
-    _validate_input(x, u, d, Vs)
+    _validate_input(x, u, d, vs)
 
     if x == 0:
         return 0.0
 
-    if np.any(Vs < 10) or np.any(Vs <= u):
+    if np.any(vs < 10) or np.any(vs <= u):
         logger.warning(
-            "ASME momentum rise is only valid for Vs >= 10 m/s and Vs > u. Invalid value will be masked as Nan."
+            "ASME momentum rise is only valid for vs >= 10 m/s and vs > u. "
+            "Invalid value will be masked as Nan."
         )
-        valid_mask = np.where((Vs >= 10) & (Vs > u), True, False)
+        valid_mask = np.where((vs >= 10) & (vs > u), True, False)
     else:
-        valid_mask = np.ones_like(Vs, dtype=bool)
+        valid_mask = np.ones_like(vs, dtype=bool)
 
     # Compute final rise
-    dh_final = _generic_plume_rise_form(E=(d * Vs) ** 1.4, x=x, b=0, u=u, a=1.4)
+    dh_final = _generic_plume_rise_form(e=(d * vs) ** 1.4, x=x, b=0, u=u, a=1.4)
 
     return np.where(valid_mask, dh_final, np.nan)
 
 
 def _generic_plume_rise_form(
-    E: Union[float, np.ndarray],
+    e: Union[float, np.ndarray],
     x: Union[float, np.ndarray],
     b: float,
     u: Union[float, np.ndarray],
     a: float,
 ) -> Union[float, np.ndarray]:
-    """Generic form for plume rise equations: Δh = E * (x^b) * (u^-a).
+    """Generic form for plume rise equations: Δh = e * (x^b) * (u^-a).
 
     Args:
-        E: Empirical constant.
+        e: Empirical constant.
         x: Downwind distance (m).
         b: Exponent for downwind distance.
         u: Wind speed at stack height (m/s).
@@ -354,14 +360,14 @@ def _generic_plume_rise_form(
     Returns:
         float or np.ndarray: Plume rise above source Δh (m).
     """
-    return E * (x**b) * (u**-a)
+    return e * (x**b) * (u**-a)
 
 
 def _validate_input(
     x: Union[float, np.ndarray],
     u: Union[float, np.ndarray],
     d: Union[float, np.ndarray],
-    Vs: Union[float, np.ndarray],
+    vs: Union[float, np.ndarray],
 ) -> None:
     if np.array(x).any() < 0:
         raise ValueError("x must be >= 0 (m).")
@@ -369,15 +375,15 @@ def _validate_input(
         raise ValueError("u must be > 0 (m/s).")
     if np.array(d).any() <= 0:
         raise ValueError("d must be > 0 (m).")
-    if np.array(Vs).any() <= 0:
-        raise ValueError("Vs must be > 0 (m/s).")
+    if np.array(vs).any() <= 0:
+        raise ValueError("vs must be > 0 (m/s).")
 
 
 __all__ = [
+    "Stability",
+    "asme_momentum_rise",
+    "briggs_momentum_rise",
+    "create_strength_profiles",
     "get_source_strength",
     "seconds_from_midnight",
-    "create_strength_profiles",
-    "Stability",
-    "briggs_momentum_rise",
-    "asme_momentum_rise",
 ]

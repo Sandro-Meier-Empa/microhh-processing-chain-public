@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-import pandas as pd
 import os
-from tpot import TPOTRegressor
+
+import pandas as pd
 from sklearn.model_selection import train_test_split
+from tpot import TPOTRegressor
 
 # read in the data
 dd = pd.read_csv(
@@ -40,8 +41,8 @@ X = filtered_subset[
 ]
 y = filtered_subset["effective_wind_speed"]
 
-print("Shape of X: {}".format(X.shape))
-print("Shape of y: {}".format(y.shape))
+print(f"Shape of X: {X.shape}")
+print(f"Shape of y: {y.shape}")
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, random_state=42

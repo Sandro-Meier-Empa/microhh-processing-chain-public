@@ -1,45 +1,46 @@
 import logging
 import re
-from typing import Any, List, Literal, Optional, Sequence, Union, cast
+from collections.abc import Sequence
+from typing import Any, Literal, Optional, Union, cast
 
 import ipywidgets as widgets
 import matplotlib.pyplot as plt
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.sources as src
-import microhh_processing_chain.wind as wind_proc
 import numpy as np
 import pandas as pd
 import xarray as xr
+from ddeq.gui import interactions
 from IPython.display import display
 from matplotlib.axes import Axes
 from matplotlib.cm import ScalarMappable, get_cmap
 from matplotlib.colors import Normalize, TwoSlopeNorm
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from microhh_processing_chain import io, utils
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from ddeq.gui import interactions
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.sources as src
+import microhh_processing_chain.wind as wind_proc
+from microhh_processing_chain import io, utils
 
 logger = logging.getLogger(__name__)
 
 
 class CaseViewer:
-    wind_dims = {
-        "u": ["xh", "y", "z"],
-        "v": ["x", "yh", "z"],
-        "w": ["x", "y", "zh"],
-    }
+    """Visualise the model output.
+
+    Args:
+        case (init.Case):
+            Case to visualise.
+
+    """
 
     def __init__(self, case: init.Case) -> None:
-        """Visualise the model output
-
-        Args:
-            case (init.Case):
-                Case to visualise.
-
-        """
         self.case = case
+        self.wind_dims: dict[str, list[str]] = {
+            "u": ["xh", "y", "z"],
+            "v": ["x", "yh", "z"],
+            "w": ["x", "y", "zh"],
+        }
 
     def plot_initial_conditions(
         self,
@@ -47,12 +48,12 @@ class CaseViewer:
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
     ) -> list[Figure]:
-        """Plot all variables from the initial conditions file, grouped by their dimensions.
+        """Plot all variables from initial conditions, grouped by their dimensions.
 
         Args:
             ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
             figsize (tuple, optional): Size of the figure. Defaults to (10, 6).
-            cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
+            cmap (str, optional): Colormap to use for 2D variables.
 
         Returns:
             list[Figure]: Figures created for each group of variables.
@@ -96,7 +97,7 @@ class CaseViewer:
             dim_groups.setdefault(ds[var].dims, []).append(var)
 
         figures: list[Figure] = []
-        for dims, vars_list in dim_groups.items():
+        for _, vars_list in dim_groups.items():
             n_vars = len(vars_list)
             nrows = int(np.ceil(n_vars / ncols))
 
@@ -267,7 +268,8 @@ class CaseViewer:
             time_factor = 60**2
         else:
             raise ValueError(
-                f"Time format {time_format} is not supported. Use 's', 'min' or 'h' instead."
+                f"Time format {time_format} is not supported. "
+                "Use 's', 'min' or 'h' instead."
             )
 
         return time_factor
@@ -326,6 +328,7 @@ class CaseViewer:
         cmap: str = "viridis",
     ) -> Figure:
         """Plot 3D Model output in a figure with 3 subplots.
+
             1. YZ-View (integrated along x axis)
             2. XY-View (integrated along z axis)
             3. XZ-View (integrated along y axis)
@@ -342,11 +345,12 @@ class CaseViewer:
                 Size of the figure. Defaults to (10, 6).
             cbar_width (float, optional: Default 0.01.):
                 Width of colorbar.
+            cmap (str, optional: Default "viridis".):
+                Colormap to use for plotting.
 
         Returns:
             Figure: Figure with subplots and text
         """
-
         time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
         data = data.isel({time_dim: timestep})
 
@@ -354,7 +358,7 @@ class CaseViewer:
         y_max = data[ydim].max().values
         z_max = data[zdim].max().values
 
-        if variable in self.wind_dims.keys():
+        if variable in self.wind_dims:
             dd_yz = data.mean(dim=str(xdim))
             dd_xy = data.mean(dim=str(zdim))
             dd_xz = data.mean(dim=str(ydim))
@@ -428,19 +432,25 @@ class CaseViewer:
     def add_text(
         self, data: xr.Dataset, timestep: int, xdim: str, ydim: str, zdim: str
     ) -> str:
-        """Format text information of the model resolution and wind properties
-        for 'plot_side_views'
+        """Format text information of the model for plotting.
+
+        Format text on resolution and wind properties for 'plot_side_views'
 
         Args:
             data (xr.Dataset):
                 Dataset from which one time step should be plotted.
             timestep (int):
-                Time steop which should be plotted.
+                Time step which should be plotted.
+            xdim (str):
+                Name of x dimension in dataset.
+            ydim (str):
+                Name of y dimension in dataset.
+            zdim (str):
+                Name of z dimension in dataset.
 
         Returns:
             str: Formatted text.
         """
-
         text = []
 
         # Information about time
@@ -496,8 +506,7 @@ class CaseViewer:
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
     ) -> list[Figure]:
-        """
-        Plot variables from the statistics netcdf file.
+        """Plot variables from the statistics netcdf file.
 
         Args:
             variables (str, list(str)):
@@ -538,7 +547,20 @@ class CaseViewer:
         cmap: str = "RdBu_r",
         percent: bool = False,
     ) -> Figure:
+        """Compare the simulated variables with the nudged initial conditions.
 
+        Args:
+            figsize: tuple[int, int]:
+                Figure size for the plot.
+            cmap: str:
+                Colormap to use for plotting.
+            percent: bool:
+                Whether to plot the difference as a percentage of the
+                initial conditions.
+
+        Returns:
+            Figure: Figure containing the comparison plots.
+        """
         stats = io.open_statistics(self.case)
         initial_cond = io.open_initial_cond(self.case)
 
@@ -564,7 +586,7 @@ class CaseViewer:
         initial_cond_sub = initial_cond.sel({c: slice(0, min_time) for c in time_vars})
 
         # interpolate initial conditions to stats times
-        interp_dict = {t: stats.time for t in time_vars}
+        interp_dict = dict.fromkeys(time_vars, stats.time)
         initial_cond_sub_interp = initial_cond_sub.interp(
             interp_dict,
             kwargs={
@@ -604,7 +626,18 @@ class CaseViewer:
     def compare_wind_profiles(
         self, timestep: int, figsize: tuple[float, float] = (10, 6)
     ) -> Figure:
+        """Compare the simulated wind profile with theory.
 
+        Compare if the simulated wind profile matches the theoretical logarithmic
+        wind profile from Monin-Obukhov similarity theory.
+
+        Args:
+            timestep (int): Time step to compare.
+            figsize (tuple[float, float], optional): Size of the figure.
+
+        Returns:
+            Figure: Figure containing the wind profile comparison.
+        """
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
 
@@ -616,8 +649,8 @@ class CaseViewer:
             z=initial_cond.z.values,
             z0=self.case.config["boundary"]["z0m"],
             u_star=ustar,
-            T=mean_temp,
-            L=obuk,
+            t=mean_temp,
+            l_mo=obuk,
         )
 
         fig, ax = plt.subplots(ncols=1, nrows=1, figsize=figsize)
@@ -632,8 +665,13 @@ class CaseViewer:
 
 
 class VariableViewer:
-    """
-    Class to visualise variables from a microHH dataset.
+    """Class to visualise variables from a microHH dataset.
+
+    Initialise the VariableViewer with a microHH dataset.
+
+    Args:
+        data (xr.Dataset):
+            Dataset containing microHH model output.
     """
 
     def __init__(
@@ -648,12 +686,6 @@ class VariableViewer:
         vmax: Optional[float] = None,
         time_format: Literal["s", "min", "h"] = "s",
     ) -> None:
-        """Initialise the VariableViewer with a microHH dataset.
-
-        Args:
-            data (xr.Dataset):
-                Dataset containing microHH model output.
-        """
         self.data = data
         self.variable = variable
         self.time_dim = time_dim
@@ -690,7 +722,8 @@ class VariableViewer:
         """Check the shape of the data."""
         if self.data[self.variable].ndim > 3:
             raise ValueError(
-                "Data has more than 3 dimensions. Please integrate or select dimensions accordingly."
+                "Data has more than 3 dimensions. Please integrate or "
+                "select dimensions accordingly."
             )
 
     def _check_time_dim(self) -> None:
@@ -703,7 +736,7 @@ class VariableViewer:
     def _init_plot(self) -> None:
         """Initialise the plot."""
         self.fig, self.ax = plt.subplots(nrows=1, ncols=1, figsize=self.figsize)
-        setattr(self.fig.canvas, "header_visible", False)
+        self.fig.canvas.header_visible = False
 
         data_init = self.data[self.variable].isel(time=0)
         ydim, xdim = data_init.dims
@@ -745,10 +778,10 @@ class VariableViewer:
         try:
             data = self.data[self.variable].isel(time=self.time_slider.value)
             val = data.sel(x=x, y=y, method="nearest").values
-
-            return f"x={x:.1f}, y={y:.1f}, val={val:.3g}"
         except Exception:
             return f"x={x:.1f}, y={y:.1f}"
+        else:
+            return f"x={x:.1f}, y={y:.1f}, val={val:.3g}"
 
     def _handle_cbar(self) -> None:
         """Handle fixed colorbar limits."""
@@ -870,18 +903,21 @@ def plot_initial_conditions_comparison(
     figsize: tuple[float, float] = (10, 6),
     subset_kwargs: Optional[dict] = None,
 ) -> list[Figure]:
-    """Compare the initial conditions of two cases by plotting the difference of
+    """Compare initial conditions of two cases.
+
+    Compare the initial conditions of two cases by plotting the difference of
     specified variables.
 
     Args:
         case1: First case to compare.
         case2: Second case to compare.
         variables: Variables to compare. If None, all common variables will be compared.
-        show_differences: Whether to show the difference between the two cases in a third subplot.
+        show_differences: Whether to show the difference between the two cases
+            in a third subplot.
         figsize: Size of the figure for each variable.
         subset_kwargs: Optional dictionary of keyword arguments to subset the initial
-            conditions datasets (e.g., {"z": slice(0, 10)} to select the first 10 z-levels).
-            This will be applied to both cases before comparison.
+            conditions datasets (e.g., {"z": slice(0, 10)} to select the first
+            10 z-levels). This will be applied to both cases before comparison.
 
     Returns:
         list[Figure]: Figures created for each compared variable.
@@ -890,7 +926,7 @@ def plot_initial_conditions_comparison(
     ic_case1 = io.open_initial_cond(case1).sel(subset_kwargs)
     ic_case2 = io.open_initial_cond(case2).sel(subset_kwargs)
 
-    vars = (
+    variables = (
         utils.object_to_list(variables)
         if variables is not None
         else list(set(ic_case1.data_vars).intersection(ic_case2.data_vars))
@@ -899,7 +935,7 @@ def plot_initial_conditions_comparison(
     ncols = 2 if not show_differences else 3
 
     figures: list[Figure] = []
-    for var in vars:
+    for var in variables:
         fig, ax = plt.subplots(ncols=ncols, figsize=figsize, sharey=True)
         time_dims = [dim for dim in ic_case1[var].dims if "time" in str(dim)]
 
@@ -928,7 +964,9 @@ def plot_initial_conditions_comparison(
 
 
 def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataArray:
-    """Compute the difference between two initial condition datasets for a given
+    """Compute difference between two initial condition datasets.
+
+    Compute the difference between two initial condition datasets for a given
     variable, handling interpolation if needed.
 
     Args:
@@ -943,14 +981,16 @@ def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataAr
     da2 = ic2[var]
 
     # Interpolate case2 onto case1's time grid if needed
-    if "time" in da1.dims and "time" in da2.dims:
-        if not da1["time"].equals(da2["time"]):
-            da2 = da2.interp(time=da1["time"])
+    if (
+        "time" in da1.dims
+        and "time" in da2.dims
+        and not da1["time"].equals(da2["time"])
+    ):
+        da2 = da2.interp(time=da1["time"])
 
     # Interpolate case2 onto case1's z grid if needed
-    if "z" in da1.dims and "z" in da2.dims:
-        if not da1["z"].equals(da2["z"]):
-            da2 = da2.interp(z=da1["z"])
+    if "z" in da1.dims and "z" in da2.dims and not da1["z"].equals(da2["z"]):
+        da2 = da2.interp(z=da1["z"])
 
     return da1 - da2
 
@@ -958,16 +998,18 @@ def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataAr
 def plot_gas_weight(
     data: xr.Dataset, gas: str = "CH4", figsize: tuple[float, float] = (10, 6)
 ) -> Figure:
-    """Plot the vertical distribution of a gas as well as the 2D plume that
+    """Plot gas weight profile and plume contribution.
+
+    Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
-
     if "time" in data.sizes:
         raise ValueError("Select only one time step.")
 
     if f"{gas}_weight" not in data.data_vars:
         raise KeyError(
-            f"'{gas}_weight' is not available in dataset. Use 'calculate_weight_profile' from module 'wind' first."
+            f"'{gas}_weight' is not available in dataset. Use "
+            "'calculate_weight_profile' from module 'wind' first."
         )
 
     fig, ax = plt.subplots(
@@ -1025,7 +1067,7 @@ def plot_gas_weight(
 
 def plot_case_comparison(
     cases: Sequence[init.Case],
-    variables: List[str],
+    variables: list[str],
     difference: bool = True,
     default_case_index: int = 0,
     figsize: tuple[float, float] = (10, 6),
@@ -1126,15 +1168,18 @@ def plot_case_comparison(
                 cmap=cmap,
                 norm=norm,
             )
-            ax.set_xlabel(
-                f"{x_coord.attrs.get('long_name', '')} [{x_coord.attrs.get('units', '-')}]"
+            xlabel = (
+                f"{x_coord.attrs.get('long_name', '')} "
+                f"[{x_coord.attrs.get('units', '-')}]"
             )
+            ax.set_xlabel(xlabel)
             ax.set_title(case.suffix)
 
         y_coord = comp_cases_stats[0][1][dims[1]]
-        axs[0].set_ylabel(
+        ylabel = (
             f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
         )
+        axs[0].set_ylabel(ylabel)
 
         # Add colorbar
         divider = make_axes_locatable(axs[-1])
@@ -1163,7 +1208,7 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
 __all__ = [
     "CaseViewer",
     "VariableViewer",
-    "plot_initial_conditions_comparison",
-    "plot_gas_weight",
     "plot_case_comparison",
+    "plot_gas_weight",
+    "plot_initial_conditions_comparison",
 ]

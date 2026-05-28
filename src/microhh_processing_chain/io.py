@@ -2,11 +2,10 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-import netCDF4 as nc4
+import microhhpy  # pyright: ignore[reportMissingImports]
+import netCDF4
 import pandas as pd
 import xarray as xr
-
-import microhhpy  # pyright: ignore[reportMissingImports]
 
 if TYPE_CHECKING:
     from microhh_processing_chain.initialisation import Case
@@ -50,8 +49,7 @@ def open_microhh_nc(
 
 
 def open_initial_cond(case: "Case") -> xr.Dataset:
-    """Read the netCDF file containing the initial conditions
-    of a model run ({case.name}_input.nc).
+    """Read the netCDF file containing the initial conditions.
 
     Args:
         case (Case):
@@ -60,12 +58,11 @@ def open_initial_cond(case: "Case") -> xr.Dataset:
     Returns:
         xr.Dataset: netCDF of initial conditions.
     """
-
     return _combine_nc_groups(case.initial_conditions_file_path)
 
 
 def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
-    groups = [""] + list(nc4.Dataset(file_path).groups.keys())
+    groups = ["", *list(netCDF4.Dataset(file_path).groups.keys())]
     merged_dataset = xr.Dataset()
     for group in groups:
         ds = xr.open_dataset(file_path, group=group, decode_times=False)
@@ -75,8 +72,7 @@ def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
 
 
 def open_statistics(case: "Case") -> xr.Dataset:
-    """Read the netCDF file containing the statistics of a model run
-    (<name>_statistics.nc).
+    """Read the netCDF file containing the statistics of a model run.
 
     Returns:
         xr.Dataset: netCDF of initial conditions.
@@ -85,8 +81,7 @@ def open_statistics(case: "Case") -> xr.Dataset:
 
 
 def open_microhh_out(case: "Case") -> pd.DataFrame:
-    """
-    Parse a MicroHH case.out file into a pandas DataFrame.
+    """Parse a MicroHH case.out file into a pandas DataFrame.
 
     Adds:
     - CPUT: cumulative CPU time
@@ -180,10 +175,10 @@ def open_jobreport(path: Union[str, Path]) -> pd.DataFrame:
 
 
 __all__ = [
-    "open_microhh_nc",
     "open_initial_cond",
-    "open_statistics",
-    "open_microhh_out",
-    "save_case_input",
     "open_jobreport",
+    "open_microhh_nc",
+    "open_microhh_out",
+    "open_statistics",
+    "save_case_input",
 ]
