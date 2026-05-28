@@ -1,3 +1,5 @@
+"""Constants and simple value objects used across the processing chain."""
+
 from dataclasses import dataclass
 from enum import Enum
 
@@ -21,8 +23,8 @@ class GasProperties:
     """Properties of a gas species.
 
     Attributes:
-        name: Human-readable name of the gas
-        molar_mass: Molar mass in g/mol
+        name: Human-readable name of the gas.
+        molar_mass: Molar mass in g/mol.
     """
 
     name: str

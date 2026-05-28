@@ -1,3 +1,5 @@
+"""Spatial coordinate transformations for MicroHH domains."""
+
 from typing import Literal, Optional, Union, cast
 
 import cartopy.crs as ccrs
@@ -13,27 +15,21 @@ from pyproj.database import query_utm_crs_info
 
 
 class Domain:
-    """Initialize the Domain object.
+    """Represent a projected MicroHH domain and its lon/lat grid.
 
     Adapted from https://github.com/microhh/microhhpy
 
     Args:
-        xsize (int): Size of the domain in the x-direction (meters).
-        ysize (int): Size of the domain in the y-direction (meters).
-        itot (int): Number of grid points in the x-direction.
-        jtot (int): Number of grid points in the y-direction.
-        lon (float): Longitude of the reference point (degrees). Must be in the
-            same coordinate reference system as the provided EPSG code (if any).
-        lat (float): Latitude of the reference point (degrees). Must be in the
-            same coordinate reference system as the provided EPSG code (if any).
-        anchor (str or tuple): Anchor point for the reference coordinates.
-            Can be a string ("center", "lower left", "lower right", "upper left",
-            "upper right", "lower center",
-            "upper center", "center left", "center right") or a tuple of relative
-            offsets (x_rel, y_rel) in meters from the reference point.
-        epsg_code (str, optional): EPSG code for the coordinate reference system.
-            If None, it will be determined automatically based on the
-            provided latitude and longitude.
+        xsize: Domain extent in the x-direction in meters.
+        ysize: Domain extent in the y-direction in meters.
+        itot: Number of grid points in the x-direction.
+        jtot: Number of grid points in the y-direction.
+        lon: Longitude of the reference point.
+        lat: Latitude of the reference point.
+        anchor: Anchor point for the reference coordinates, either a named
+            anchor or x/y offsets in meters from the reference point.
+        epsg_code: Coordinate reference system used for metric coordinates.
+            When omitted, a matching UTM zone is inferred from the reference point.
     """
 
     def __init__(
@@ -116,6 +112,7 @@ class Domain:
             tuple[float, float],
         ],
     ) -> tuple[float, float]:
+        """Return projected offsets for the configured domain anchor."""
         if isinstance(anchor, tuple):
             x_rel, y_rel = anchor
             return ref_x - x_rel, ref_y - y_rel
@@ -149,14 +146,12 @@ class Domain:
         """Convert x/y coordinates to longitude and latitude.
 
         Args:
-            x (Union[float, list[float], np.ndarray]): x coordinates in meters.
-            y (Union[float, list[float], np.ndarray]): y coordinates in meters.
-            meshgrid (bool): Whether to return the output in meshgrid format (2D arrays
-                matching the shape of the input x and y). If False, returns 1D arrays.
-                Default is False.
+            x: Coordinates in meters along the model x-axis.
+            y: Coordinates in meters along the model y-axis.
+            meshgrid: Return coordinate grids instead of coordinate vectors.
 
         Returns:
-            tuple[np.ndarray, np.ndarray]: Tuple of (lon, lat) arrays.
+            Longitude and latitude arrays.
         """
         x = np.array(x)
         y = np.array(y)
@@ -177,11 +172,11 @@ class Domain:
         """Convert longitude and latitude to x/y coordinates.
 
         Args:
-            lon (Union[float, list[float], np.ndarray]): Longitude values.
-            lat (Union[float, list[float], np.ndarray]): Latitude values.
+            lon: Longitude values.
+            lat: Latitude values.
 
         Returns:
-            tuple[np.ndarray, np.ndarray]: Tuple of (x, y) arrays.
+            Model x and y coordinates in meters.
         """
         lon = np.array(lon)
         lat = np.array(lat)
@@ -198,17 +193,12 @@ class Domain:
         """Plot the domain boundaries and reference point.
 
         Args:
-            lon (Optional[Union[float, np.ndarray]]):
-                Optional longitude values of points to plot.
-            lat (Optional[Union[float, np.ndarray]]):
-                Optional latitude values of points to plot.
-            figsize (tuple[int, int]): Size of the figure in inches.
-                Default is (10, 8).
-                The aspect ratio will be adjusted to match the domain dimensions.
-                If None, a default size will be used without adjusting for aspect ratio.
+            lon: Optional longitude values of points to plot.
+            lat: Optional latitude values of points to plot.
+            figsize: Figure size in inches.
 
         Returns:
-            Figure: Matplotlib Figure object containing the plot.
+            Figure containing the domain plot.
         """
         fig, ax = plt.subplots(
             figsize=figsize,
@@ -252,6 +242,9 @@ class Domain:
 
         The dataset can be used to remap data to the same grid as the
         MicroHH simulation.
+
+        Returns:
+            Dataset with cell centers and cell bounds.
         """
         lon_grid, lat_grid = self.to_lonlat(self.x, self.y, meshgrid=True)
 
@@ -292,6 +285,7 @@ class Domain:
 
 
 def get_epsg_from_pyproj(lat: float, lon: float) -> str:
+    """Return the UTM EPSG code containing the given coordinate."""
     # Query for UTM CRS info based on a single point (AOI)
     utm_crs_list = query_utm_crs_info(
         datum_name="WGS 84",

@@ -84,15 +84,16 @@ def to_comma_separated_list(
 
     Args:
         lst: List or array of items to convert.
-        n: Number of times to repeat the list (default is 1).
-        ndecimals: Number of decimal places for floats. If None, uses
-            up to 15 significant digits.
+        n: Number of times to repeat the list.
+        ndecimals: Number of decimal places for floats. Uses significant
+            digits when omitted.
 
     Returns:
         Comma-separated string representation.
     """
 
     def clean_fmt(x: Union[float, np.floating]) -> str:
+        """Format numbers without exposing floating-point precision artifacts."""
         if isinstance(x, (float, np.floating)):
             if ndecimals is not None:
                 return f"{x:.{ndecimals}f}"

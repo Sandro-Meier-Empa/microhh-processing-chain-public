@@ -1,3 +1,5 @@
+"""Plume geometry and spectral diagnostics."""
+
 import numpy as np
 import xarray as xr
 from scipy import fftpack
@@ -6,9 +8,16 @@ from scipy import fftpack
 def calculate_plume_centerline(
     grid_y: np.ndarray, concentration_2d: np.ndarray
 ) -> np.ndarray:
-    """Calculates the crosswind centerline position y_m for a given x-slice.
+    """Calculate the crosswind plume centerline for each x-slice.
 
     Equation (2) in Raznevic et al., 2022, adapted for 2D.
+
+    Args:
+        grid_y: Crosswind coordinates aligned with the concentration field.
+        concentration_2d: Concentration field indexed by x and y.
+
+    Returns:
+        Centerline y-position for each x-slice.
     """
     # Numerator: sum(c * y), Denominator: sum(c)
     numerator = np.sum(concentration_2d * grid_y, axis=1)
@@ -25,9 +34,17 @@ def calculate_absolute_dispersion(
     concentration_2d: np.ndarray,
     y_mean_centerline: np.ndarray,
 ) -> np.ndarray:
-    """Calculates absolute plume dispersion (sigma_ya^2).
+    """Calculate absolute plume dispersion for each x-slice.
 
     Equation (4) in Raznevic et al., 2022, adapted for 2D.
+
+    Args:
+        grid_y: Crosswind coordinates aligned with the concentration field.
+        concentration_2d: Concentration field indexed by x and y.
+        y_mean_centerline: Centerline y-position for each x-slice.
+
+    Returns:
+        Absolute dispersion values.
     """
     dy_squared = (grid_y - y_mean_centerline[:, np.newaxis]) ** 2
 
@@ -40,9 +57,15 @@ def calculate_absolute_dispersion(
 
 
 def calculate_meandering_dispersion(y_mean_centerline: np.ndarray) -> float:
-    """Calculates meandering plume dispersion (sigma_ym^2).
+    """Calculate meandering plume dispersion.
 
     Equation (5) in Raznevic et al., 2022.
+
+    Args:
+        y_mean_centerline: Centerline y-position for each x-slice.
+
+    Returns:
+        Variance of the plume centerline.
     """
     return float(np.var(y_mean_centerline))
 
@@ -50,15 +73,14 @@ def calculate_meandering_dispersion(y_mean_centerline: np.ndarray) -> float:
 def calculate_plume_psd(
     data: xr.Dataset, variable_name: str = "CH4_mass"
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Calculates the 1D radially averaged power spectral density (PSD) of the plume.
+    """Calculate the radially averaged plume power spectral density.
 
     Args:
-        data (xr.Dataset): Input dataset containing the plume data and pixel area.
-        variable_name (str): Name of the variable in the dataset to analyze.
+        data: Dataset containing the plume mask, pixel area, and analysed variable.
+        variable_name: Variable to analyse within the plume mask.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: Tuple containing the frequency axis and the
-        corresponding 1D PSD values.
+        Frequency axis and corresponding radially averaged PSD values.
     """
     plume_data = data[variable_name].where(data.plume_area == 1, drop=True).values
 
@@ -85,13 +107,13 @@ def calculate_plume_psd(
 
 
 def apply_2d_taper(data: np.ndarray) -> np.ndarray:
-    """Applies a 2D Hanning window to the data to reduce spectral leakage in the FFT.
+    """Apply a 2D Hanning window before spectral analysis.
 
     Args:
-        data (np.ndarray): 2D array of plume concentration values.
+        data: Two-dimensional plume concentration field.
 
     Returns:
-        np.ndarray: Tapered 2D array.
+        Tapered field.
     """
     ny, nx = data.shape
     # Create 1D windows for each axis
@@ -106,14 +128,14 @@ def apply_2d_taper(data: np.ndarray) -> np.ndarray:
 
 
 def radial_profile(data: np.ndarray, center: tuple) -> np.ndarray:
-    """Calculates the average power at each radial distance from a center point.
+    """Calculate average power at each radial distance from a center point.
 
     Args:
-        data (np.ndarray): 2D array of power values (e.g., from the PSD).
-        center (tuple): (x, y) coordinates of the center point in the data array.
+        data: Two-dimensional power field.
+        center: x/y coordinates of the radial origin.
 
     Returns:
-        np.ndarray: 1D array of average power values as a function of radial distance.
+        Mean value for each integer radial distance.
     """
     y, x = np.indices(data.shape)
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
