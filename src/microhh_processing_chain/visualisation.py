@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
+from typing import Any, List, Literal, Optional, Sequence, Union, cast
 
 import ipywidgets as widgets
 import matplotlib.figure
@@ -42,13 +42,16 @@ class CaseViewer:
         self.case = case
 
     def plot_initial_conditions(
-        self, ncols: int = 4, figsize: tuple = (15, 10), cmap: str = "viridis"
+        self,
+        ncols: int = 4,
+        figsize: tuple[float, float] = (10, 6),
+        cmap: str = "viridis",
     ) -> None:
         """Plot all variables from the initial conditions file, grouped by their dimensions.
 
         Args:
             ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
-            figsize (tuple, optional): Size of the figure. Defaults to (15, 10).
+            figsize (tuple, optional): Size of the figure. Defaults to (10, 6).
             cmap (str, optional): Colormap to use for 2D variables. Defaults to "viridis".
         """
         file_path = self.case.initial_conditions_file_path
@@ -66,14 +69,16 @@ class CaseViewer:
             group = node.path.strip("/")
             group_ds = node.dataset
             sharey = group != "timedep"
-            self._plot_group_variables(group_ds, ncols, figsize, cmap, sharey=sharey)
+            self._plot_group_variables(
+                group_ds, ncols, figsize=figsize, cmap=cmap, sharey=sharey
+            )
 
     def _plot_group_variables(
         self,
         ds: xr.Dataset,
         ncols: int,
-        figsize: tuple[int, int],
-        cmap: str,
+        figsize: tuple[float, float] = (10, 6),
+        cmap: str = "viridis",
         sharey: bool = True,
     ) -> None:
 
@@ -107,7 +112,9 @@ class CaseViewer:
 
             plt.show()
 
-    def _plot_variable(self, data: xr.DataArray, ax: Axes, cmap: str) -> None:
+    def _plot_variable(
+        self, data: xr.DataArray, ax: Axes, cmap: str = "viridis"
+    ) -> None:
         dims = data.dims
         # Check if it is a height profile
         aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
@@ -134,6 +141,7 @@ class CaseViewer:
         self,
         variables: list[str],
         data: Optional[xr.Dataset] = None,
+        figsize: tuple[float, float] = (10, 6),
         n_lines: int = 5,
         colorful: bool = True,
         time_format: str = "h",
@@ -147,7 +155,7 @@ class CaseViewer:
         # read in initial conditions
         data_initial = io.open_initial_cond(self.case)
 
-        fig, ax = plt.subplots(ncols=len(variables), sharey=True)
+        fig, ax = plt.subplots(ncols=len(variables), figsize=figsize, sharey=True)
         axes = np.atleast_1d(ax)
         sm: Optional[ScalarMappable] = None
         color: Union[str, tuple[float, float, float, float]] = color_init
@@ -302,7 +310,7 @@ class CaseViewer:
         data: xr.Dataset,
         variable: str,
         timestep: int,
-        fig_width: float = 15,
+        figsize: tuple[float, float] = (10, 6),
         cbar_width: float = 0.01,
         cmap: str = "viridis",
     ) -> matplotlib.figure.Figure:
@@ -319,8 +327,8 @@ class CaseViewer:
                 Name of the variable to be plotted.
             timestep (int):
                 Time step to be plotted.
-            fig_width (float, optional. Default: 15):
-                Width of figure.
+            figsize (tuple):
+                Size of the figure. Defaults to (10, 6).
             cbar_width (float, optional: Default 0.01.):
                 Width of colorbar.
 
@@ -344,13 +352,10 @@ class CaseViewer:
             dd_xy = data.sum(dim=str(zdim))
             dd_xz = data.sum(dim=str(ydim))
 
-        aspect_ratio = (z_max + x_max) / (z_max + y_max)
-        fig_height = fig_width / aspect_ratio
-
         fig, axs = plt.subplots(
             2,
             2,
-            figsize=(fig_width, fig_height),
+            figsize=figsize,
             gridspec_kw={
                 "width_ratios": [1, x_max / z_max],
                 "height_ratios": [y_max / z_max, 1],
@@ -474,13 +479,20 @@ class CaseViewer:
 
         return "\n".join(text)
 
-    def plot_stats(self, variables: Union[str, list], cmap: str = "viridis") -> None:
+    def plot_stats(
+        self,
+        variables: Union[str, list],
+        figsize: tuple[float, float] = (10, 6),
+        cmap: str = "viridis",
+    ) -> None:
         """
         Plot variables from the statistics netcdf file.
 
         Args:
             variables (str, list(str)):
                 Variables within the statistics file to plot.
+            figsize: tuple[int, int]:
+                Figure size for the plot.
             cmap: str:
                 Colormap to use for plotting.
         """
@@ -490,7 +502,7 @@ class CaseViewer:
             variables = list(variables)
 
         for var in variables:
-            fig, axs = plt.subplots(1, 1, figsize=(12, 6))
+            fig, axs = plt.subplots(1, 1, figsize=figsize)
 
             dims = stats[var].dims
             ydim = next((d for d in dims if re.fullmatch(r"zh|z", d)), None)
@@ -506,8 +518,8 @@ class CaseViewer:
 
     def compare_nudge(
         self,
+        figsize: tuple[float, float] = (10, 6),
         cmap: str = "RdBu_r",
-        figsize: tuple[int, int] = (15, 6),
         percent: bool = False,
     ) -> None:
 
@@ -572,7 +584,9 @@ class CaseViewer:
         plt.tight_layout()
         plt.show()
 
-    def compare_wind_profiles(self, timestep: int) -> matplotlib.figure.Figure:
+    def compare_wind_profiles(
+        self, timestep: int, figsize: tuple[float, float] = (10, 6)
+    ) -> matplotlib.figure.Figure:
 
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
@@ -589,7 +603,7 @@ class CaseViewer:
             L=obuk,
         )
 
-        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(8, 6))
+        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=figsize)
 
         ax.plot(u_prof, initial_cond.z.values, label="theory")
         ax.plot(stats.isel(time=timestep).u.values, stats.z.values, label="simulation")
@@ -610,9 +624,9 @@ class VariableViewer:
         data: xr.Dataset,
         variable: str,
         time_dim: str = "time",
-        figsize: tuple = (10, 6),
-        fixed_cbar: bool = True,
+        figsize: tuple[float, float] = (10, 6),
         cmap: str = "viridis",
+        fixed_cbar: bool = True,
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
         time_format: Literal["s", "min", "h"] = "s",
@@ -836,7 +850,7 @@ def compare_initial_conditions(
     case2: init.Case,
     variables: Optional[Union[str, list]] = None,
     show_differences: bool = False,
-    figsize: Tuple[int, int] = (12, 6),
+    figsize: tuple[float, float] = (10, 6),
     subset_kwargs: Optional[dict] = None,
 ) -> None:
     """Compare the initial conditions of two cases by plotting the difference of
@@ -918,7 +932,9 @@ def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataAr
     return da1 - da2
 
 
-def plot_gas_weight(data: xr.Dataset, gas: str = "CH4", fig_width: float = 15) -> None:
+def plot_gas_weight(
+    data: xr.Dataset, gas: str = "CH4", figsize: tuple[float, float] = (10, 6)
+) -> None:
     """Plot the vertical distribution of a gas as well as the 2D plume that
     contributes to it.
     """
@@ -931,16 +947,10 @@ def plot_gas_weight(data: xr.Dataset, gas: str = "CH4", fig_width: float = 15) -
             f"'{gas}_weight' is not available in dataset. Use 'calculate_weight_profile' from module 'wind' first."
         )
 
-    x_max = data["x"].max().values
-    y_max = data["y"].max().values
-    aspect_ratio = int(x_max / y_max) + 1
-
-    fig_height = fig_width / aspect_ratio
-
     fig, ax = plt.subplots(
         nrows=1,
         ncols=2,
-        figsize=(fig_width, fig_height),
+        figsize=figsize,
         gridspec_kw={
             "width_ratios": [4, 1],
         },
@@ -995,8 +1005,8 @@ def plot_case_comparison(
     variables: List[str],
     difference: bool = True,
     default_case_index: int = 0,
+    figsize: tuple[float, float] = (10, 6),
     cmap: str = "RdBu_r",
-    figsize: Tuple[int, int] = (12, 5),
 ) -> None:
     """Plot a comparison of one or more variables from multiple cases.
 
@@ -1007,8 +1017,8 @@ def plot_case_comparison(
             If False, plot absolute values. Defaults to True.
         default_case_index: Index of the default case used when
             ``difference=True``. Defaults to 0.
+        figsize: Figure size passed to ``plt.subplots``. Defaults to (10, 6).
         cmap: Colormap name passed to ``pcolormesh``. Defaults to "RdBu_r".
-        figsize: Figure size passed to ``plt.subplots``. Defaults to (12, 5).
     """
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)
