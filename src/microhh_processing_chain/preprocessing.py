@@ -1,3 +1,5 @@
+"""Pre-processing and job-preparation helpers for MicroHH cases."""
+
 import fnmatch
 import logging
 import platform
@@ -22,15 +24,15 @@ class PreProcessing:
     """Class used for pre-processing and running MicroHH cases.
 
     Args:
-        case (init.Case):
+        case:
             Case to pre-process and run.
-        alps_setup (cscs.AlpsSetup):
+        alps_setup:
             Object containing the setup variables used for creating a bash
             script to run the MicroHH simulations.
-        microhh_executable_path (Union[str, Path]):
+        microhh_executable_path:
             Path to the MicroHH executable or the directory containing the
             MicroHH executable.
-        jobreport_path (Optional[Union[str, Path]]):
+        jobreport_path:
             Path to the GPU job report executable. Only supported on GPU.
     """
 
@@ -51,6 +53,7 @@ class PreProcessing:
         self._check_jobpreport_gpu()
 
     def _get_microhh_executable_path(self) -> Path:
+        """Resolve the MicroHH executable path from a file or containing directory."""
         microhh_executable_path = Path(self._microhh_executable_path)
 
         if microhh_executable_path.is_file():
@@ -132,13 +135,12 @@ class PreProcessing:
         start_jobs: bool = False,
         wait: bool = False,
     ) -> None:
-        """Prepare the case for running the MicroHH simulation by.
+        """Prepare the case for running the MicroHH simulation.
 
         - checking if the .ini setup is valid,
         - copying the MicroHH executable to the scratch directory,
         - checking if all required files are present,
         - creating a bash script to run the simulation
-
         """
         # check if the .ini setup is valid
         self._check_ini_setup_valid()
@@ -183,16 +185,15 @@ class PreProcessing:
         """Prepare the case for running a restart MicroHH simulation.
 
         Args:
-            restart_case (init.Case): The case from which to restart.
+            restart_case: The case from which to restart.
                 Must have the same name as the current case.
-            restart_time (int): Time in seconds from which the simulation is restarted.
+            restart_time: Time in seconds from which the simulation is restarted.
                 Must match the start time in the .ini file.
-            overwrite (bool, optional): Whether to overwrite existing files.
-                Defaults to False.
-            start_jobs (bool, optional): Whether to start the simulation after
-                preparation. Defaults to False.
-            wait (bool, optional): Whether to wait for the job to finish before
-                returning. Defaults to False.
+            overwrite: Whether to overwrite existing files.
+            start_jobs: Whether to start the simulation after
+                preparation.
+            wait: Whether to wait for the job to finish before
+                returning.
         """
         # Check if .ini file has been updated for restart
         self._check_restart_ini_updated(restart_time)
@@ -218,7 +219,7 @@ class PreProcessing:
         """Check if the .ini file has been updated for a restart simulation.
 
         Args:
-            restart_time (int):
+            restart_time:
                 Time in seconds from which the simulation is restarted.
         """
         start_time = self.case.config["time"]["starttime"]
@@ -239,7 +240,7 @@ class PreProcessing:
         """Start the MicroHH simulation by executing the bash script on CSCS Alps.
 
         Args:
-            wait (bool, optional. Default: False):
+            wait:
                 Specify if the next job should only be submitted
                 after the previous one has stopped.
         """
@@ -475,7 +476,7 @@ class PreProcessing:
         nc_group: str = "init",
         required_by_list: str = "",
     ) -> bool:
-        """Generic check: If switch is True, variables must exist in nc_group."""
+        """Check that active switches have matching variables in a NetCDF group."""
         switch_val = self.case.config.get(group, key, default)
 
         is_active = (
@@ -526,7 +527,7 @@ class PreProcessing:
         return is_active
 
     def _get_vars_in_group(self, group_name: str) -> list[str]:
-        """Helper to get variable names from a specific NetCDF group."""
+        """Get variable names from a specific NetCDF group."""
         try:
             initial_cond = xr.open_dataset(
                 Path(self.case.directory, f"{self.case.name}_input.nc"),
@@ -537,18 +538,21 @@ class PreProcessing:
             return []
 
     def _check_cross(self) -> None:
+        """Check that enabled cross-section output has a configured variable list."""
         swcross = self.case.config.get("cross", "swcross", False)
         crosslist = self.case.config.get("cross", "crosslist", []) or []
         if swcross and len(crosslist) == 0:
             raise ValueError("swcross is True, but crosslist is empty.")
 
     def _check_dump(self) -> None:
+        """Check that enabled dump output has a configured variable list."""
         swdump = self.case.config.get("dump", "swdump", False)
         swdumplist = self.case.config.get("dump", "dumplist", []) or []
         if swdump and len(swdumplist) == 0:
             raise ValueError("swdump is True, but dumplist is empty.")
 
     def _check_forcing_logic(self) -> None:
+        """Check consistency between forcing switches and initial-condition groups."""
         # 1. Large Scale Forcing
         swls = self.case.config.get("force", "swls", False)
         swtdep_ls = self.case.config.get("force", "swtimedep_ls", False)
@@ -614,6 +618,7 @@ class PreProcessing:
             )
 
     def _check_boundary_logic(self) -> None:
+        """Check consistency between boundary switches and timedep input variables."""
         # Requires time_surface and *_sbot in timedep group
         self._check_alignment("boundary", "swtimedep", False, "time_surface", "timedep")
         self._check_alignment(
@@ -621,10 +626,11 @@ class PreProcessing:
         )
 
     def _check_thermo_logic(self) -> None:
+        """Check consistency between thermo switches and timedep input variables."""
         self._check_alignment("thermo", "swtimedep_pbot", False, "p_sbot", "timedep")
 
     def _check_grid_logic(self) -> None:
-        """Checks spatial order consistency."""
+        """Check spatial-order consistency."""
         spatial = self.case.config.get("grid", "swspatialorder", None)
         if spatial is None:
             return
@@ -788,6 +794,7 @@ class PreProcessing:
                     )
 
     def _check_sample_times(self) -> None:
+        """Warn when 2D, 3D, and statistics outputs use different sample times."""
         sample_time_2d = self.case.config.get("cross", "sampletime", None)
         sample_time_3d = self.case.config.get("dump", "sampletime", None)
         sample_time_stats = self.case.config.get("stats", "sampletime", None)
@@ -1051,7 +1058,7 @@ def create_run_4x_script(
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
 ) -> Path:
-    """Run 4 prepared simulations on GPU."""
+    """Create a SLURM script that runs prepared simulations on a GPU node."""
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
 
@@ -1082,6 +1089,7 @@ def create_run_4x_script(
 
 
 def _get_common_case_name(cases: list[init.Case]) -> str:
+    """Return the common base case name required for multi-GPU runs."""
     # Check if all cases have the same base name as this is also how the
     # .ini file and initial conditions are called.
     case_names = np.unique([case.name for case in cases])

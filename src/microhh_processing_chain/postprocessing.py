@@ -1,3 +1,5 @@
+"""Post-processing utilities for MicroHH model output."""
+
 import logging
 import re
 import shlex
@@ -33,7 +35,7 @@ class PostProcessing:
     """Class used for post-processing MicroHH cases and handling the output.
 
     Args:
-        case (init.Case):
+        case:
             Case to post-process.
     """
 
@@ -56,21 +58,21 @@ class PostProcessing:
         same uenv as the one in alps_setup.
 
         Args:
-            alps_setup (cscs.AlpsSetup):
+            alps_setup:
                 Alps setup which should be used to process the case.
-            py_file_path (str):
+            py_file_path:
                 File to the python script which should be executed to process the case.
-            job_name (str):
+            job_name:
                 Name of the job. Determines the name of the resulting slurm.out script
                 and the job name in the queue.
-            python_path (str):
+            python_path:
                 Path of the python environment to use.
-            additional_args (dict, optional):
+            additional_args:
                 Additional arguments for the function called in the python script.
-            overwrite (bool, optional):
+            overwrite:
                 Specify if an existing sbatch script should be overwritten.
-            start_jobs (bool, optional):
-                Specify if the job should be started. Defaults to True.
+            start_jobs:
+                Specify if the job should be started.
 
         Returns:
             Union[str, Path]:
@@ -135,20 +137,20 @@ class PostProcessing:
         """Create 3D netCDF files for the variables specified.
 
         Args:
-            variables (Union[str, list]):
+            variables:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
-            precision (str, optional. Default: "double"):
+            precision:
                 Precision used for the created .nc file.
-            start_time (int, optional. Default: None):
+            start_time:
                 Start time in s of the data to process.
-            end_time (int, optional. Default: None):
+            end_time:
                 End time in s of the data to process.
-            sample_time (int, optional. Default: None):
+            sample_time:
                 Sample time in s of the output .nc file.
-            nprocs (int, optional. Default: None):
+            nprocs:
                 Number of worker processes for parallel processing.
-            overwrite (bool, optional. Default: False):
+            overwrite:
                 Specify if existing .nc files should be overwritten.
         """
         variables = np.atleast_1d(variables).tolist()
@@ -185,29 +187,29 @@ class PostProcessing:
         """Create cross-section netCDF files for the variables specified.
 
         Args:
-            variables (Union[str, list]):
+            variables:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
-            modes (list, optional):
+            modes:
                 Cross-section modes to process. Available options are "xy", "xz", "yz".
                 If not provided, modes are determined from the .ini file.
-            indexes (list, optional):
-                Indices of the cross-sections to process. Defaults to None.
-            start_time (int, optional. Default: None):
+            indexes:
+                Indices of the cross-sections to process.
+            start_time:
                 Start time in s of the data to process.
-            end_time (int, optional. Default: None):
+            end_time:
                 End time in s of the data to process.
-            sample_time (int, optional. Default: None):
+            sample_time:
                 Sample time in s of the cross-section output.
-            precision (str, optional. Default: "single"):
+            precision:
                 Precision used for the created .nc file.
-            nprocs (int, optional. Default: None):
+            nprocs:
                 Number of worker processes for parallel processing.
-            compression (bool, optional. Default: False):
+            compression:
                 Enable compression in the netCDF file.
-            order (int, optional. Default: None):
-                Spatial order used to read the MicroHH grid. If None, uses .ini default.
-            overwrite (bool, optional. Default: False):
+            order:
+                Spatial order used to read the MicroHH grid.
+            overwrite:
                 Specify if existing files should be overwritten.
         """
         variables_list = np.atleast_1d(variables).tolist()
@@ -239,12 +241,12 @@ class PostProcessing:
         """Move files used for running MicroHH to store for reproducibility.
 
         Args:
-            store_path (Union[str, Path]):
+            store_path:
                 Path to the folder where the files should be moved to.
-            overwrite (bool, optional):
+            overwrite:
                 Specify if existing files on 'store' should be overwritten.
-            variables (Union[str, list], optional):
-                Names of the processed {var}.nc files to move. Defaults to None.
+            variables:
+                Names of the processed {var}.nc files to move.
         """
         store_path = Path(store_path) / self.case.full_name
 
@@ -288,11 +290,11 @@ class PostProcessing:
         """Move files or folders with a certain pattern to store.
 
         Args:
-            pattern (str):
+            pattern:
                 Pattern of files or folders which should be moved.
-            store_path (Union[str, Path]):
+            store_path:
                 Path to the folder where the files or folders should be moved to.
-            overwrite (bool):
+            overwrite:
                 Specify if existing files or folders should be overwritten.
         """
         for item in self.case.directory.glob(pattern):
@@ -333,12 +335,10 @@ class PostProcessing:
         """Zip all binary files matching the given pattern together.
 
         Args:
-            file_pattern (str, optional):
+            file_pattern:
                 Pattern of files to zip.
-                Defaults to "^.*".
-            remove_files (bool, optional):
+            remove_files:
                 Specify if the grid files should be removed after zipping them together.
-                Defaults to False.
         """
         zip_filename = (
             f"{file_pattern}.zip" if file_pattern != "^.*" else "binary_files.zip"
@@ -397,13 +397,13 @@ class PostProcessing:
         """Open 3D output netCDF file of 'variable' from model output.
 
         Args:
-            variable (str):
+            variable:
                 Variable name of dataset to open.
-            chunks (Union[str, dict], optional):
+            chunks:
                 Chunks used when processing the netCDF files with xarray.
 
         Returns:
-            xr.Dataset: 3D netCDF file from model output.
+            3D NetCDF file from model output.
         """
         file_path = Path(self.case.directory, f"{variable.lower()}.nc")
 
@@ -421,7 +421,7 @@ class PostProcessing:
         FIXME: Check if swvmr is in ini file
 
         Args:
-            data (xr.Dataset):
+            data:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
         swvmr = np.all(self.case.config["source"]["swvmr"])
@@ -468,22 +468,22 @@ class PostProcessing:
         """Combine .nc files of different variables to one file.
 
         Args:
-            variables (Union[str, list]):
+            variables:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
-            filename (str):
+            filename:
                 Name of the file without path or file extension.
-            overwrite (bool. Default: False):
+            overwrite:
                 Indicate if an existing file should be overwritten.
-            save (bool. Default: True):
+            save:
                 Indicate if the created file should be saved.
-            chunks (dict):
+            chunks:
                 Chunks used when processing the netCDF files with xarray.
-            interpolate (bool. Default: True):
+            interpolate:
                 Whether to interpolate the variables to the grid midpoint.
 
         Returns:
-            xr.Dataset: Dataset with combined variables.
+            Dataset with combined variables.
         """
         file_path = Path(self.case.directory, f"{filename}.nc")
 
@@ -518,19 +518,17 @@ class PostProcessing:
         which the new variables should be added.
 
         Args:
-            variables (Union[str, list]):
+            variables:
                 Variable(s) to add together or to assign to the given dataset.
-            data (xr.Dataset):
+            data:
                 If given, the variable(s) are added to this dataset
-            chunks (Union[str, dict], optional):
+            chunks:
                 Chunks used when processing the netCDF files with xarray.
-            interpolate (bool, optional):
+            interpolate:
                 Whether to interpolate the variables to the grid midpoint.
-                Defaults to True.
 
         Returns:
-            xr.Dataset:
-                Dataset containing the combined variables.
+            Dataset containing the combined variables.
         """
         variables_list = np.atleast_1d(variables).tolist()
         datasets = [] if data is None else [data]
@@ -556,10 +554,10 @@ class PostProcessing:
         """Interpolate variables at grid edges 'h' to the middle of the grid.
 
         Args:
-            data (xr.Dataset): Dataset with the variables to interpolate.
+            data: Dataset with the variables to interpolate.
 
         Returns:
-            xr.Dataset: Dataset with the interpolated variables
+            Dataset with the interpolated variables.
         """
         dim = self._get_dims_at_grid_boundaries(data)
 
@@ -589,7 +587,7 @@ class PostProcessing:
         """Get the name of the dimension at the grid boundaries.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset which contains a dimension which is sampled at the boundaries
                 of the grid.
 
@@ -615,21 +613,21 @@ class PostProcessing:
         """Create a sources dataset used for the plume detection and in 'ddeq'.
 
         Args:
-            lat (Union[list, np.ndarray]):
+            lat:
                 List of latitudes for the locations of a source.
-            lon (Union[list, np.ndarray]):
+            lon:
                 List of longitudes for the locations of a source.
-            source_names (Union[list, np.ndarray], optional. Default: None):
+            source_names:
                 List of names of the sources. Should not contain any special
                 characters. If not specified, the sources will be numbered
                 starting with source1 etc.
-            source_labels (Union[list, np.ndarray], optional. Default: None):
+            source_labels:
                 List of names of the sources used for plotting.
                 If not specified, the sources will be numbered
                 starting with source1 etc.
 
         Returns:
-            xr.Dataset: Dataset with source information.
+            Dataset with source information.
         """
         source_list = np.atleast_1d(self.case.config["source"]["sourcelist"])
         nr_sources = len(source_list)
@@ -716,23 +714,20 @@ class PostProcessing:
         latitude and longitude specified in the 'sources' dataset.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset for which the modelled grid should be transformed to
                 a lat/lon grid.
-            source (str, optional):
-                Source simulated in the dataset 'data'.
-            sources (xr.Dataset, optional):
-                Dataset which contains information about the modelled source.
-            target_crs (str, optional. Default: 'epsg:4326'):
+            source:
+                Source metadata used as the grid anchor.
+            target_crs:
                 Coordinate reference system to which the modelled data should
                 be transformed to.
-            microhh_crs (str, optional. Default: 'epsg:32632'):
+            microhh_crs:
                 Metric coordinate reference system which matches the desired
                 lat/lon location of the source.
-                Default 'epsg:32632' is suited for sources in Europe.
 
         Returns:
-            xr.Dataset: Dataset with transformed coordinates.
+            Dataset with transformed coordinates.
         """
         # if lat/lon is defined in .ini file: use these values to convert grid
         if (
@@ -802,14 +797,13 @@ class PostProcessing:
         """Broadcast 1D x and y coordinates to a 2D grid.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset with 1D x and y coordinates.
-            coord_names (tuple[str, str]):
+            coord_names:
                 Names of the x and y coordinates in the dataset.
 
         Returns:
-            xr.Dataset:
-                Dataset with 2D x and y coordinates.
+            Dataset with 2D x and y coordinates.
         """
         # Create 2D grids for x and y
         x_2d, y_2d = np.meshgrid(data[coord_names[0]], data[coord_names[1]])
@@ -830,16 +824,15 @@ class PostProcessing:
         Use 'datetime_utc' if available in the .ini file.
 
         Args:
-            data (xr.Dataset):
+            data:
                 The dataset to convert.
-            start_date (Union[str, Timestamp], optional):
+            start_date:
                 The start date as a string or a pandas Timestamp object.
-            date_format (str, optional):
-                The format of the start_date string. Defaults to "%Y-%m-%d %H:%M:%S".
+            date_format:
+                The format of the start_date string.
 
         Returns:
-            xr.Dataset:
-                The dataset with the time converted to a timestamp.
+            Dataset with the time converted to a timestamp.
         """
         # use 'datetime_utc' if available in the .ini file
         if "datetime_utc" in self.case.config["time"] and start_date is None:
@@ -906,15 +899,14 @@ class PostProcessing:
         and potential temperature.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the variable which should be converted to
                 concentrations.
-            gas (str, optional):
-                Gas for which the columns should be computed. Defaults to "ch4".
-            to_unit (str, optional):
+            gas:
+                Gas for which the columns should be computed.
+            to_unit:
                 Concentration units to which the gas should be converted.
-                Defaults to "kg m-3".
-            chunks (Union[str, dict], optional):
+            chunks:
                 Chunks used when processing the netCDF files with xarray.
         """
         required_prognostic_vars = [gas, "th"]
@@ -964,15 +956,14 @@ class PostProcessing:
         """Add a variable from the statistics file to the given dataset.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset to which the variable should be added.
-            variable (str):
+            variable:
                 Name of the variable in the statistics file which should be added
                 to the dataset.
 
         Returns:
-            xr.Dataset:
-                Dataset with the added variable.
+            Dataset with the added variable.
         """
         # read in statistics file
         stats = io.open_statistics(case=self.case)
@@ -1010,13 +1001,14 @@ class PostProcessing:
         return data
 
     def add_absolute_temperature(self, data: xr.Dataset) -> xr.Dataset:
-        """FIXME.
+        """Add absolute temperature derived from potential temperature and pressure.
 
         Args:
-            data (xr.Dataset): _description_
+            data: Dataset containing potential temperature and pressure fields,
+                or enough metadata to add pressure fields from statistics.
 
         Returns:
-            xr.Dataset: _description_
+            Dataset with absolute temperature added as ``ta``.
         """
         required_vars = ["phydro", "phydroh"]
 
@@ -1044,7 +1036,13 @@ class PostProcessing:
     ) -> Union[xr.DataArray, np.ndarray, int, float]:
         """Calculate absolute temperature from potential temperature and pressure.
 
-        FIXME
+        Args:
+            theta: Potential temperature.
+            p: Pressure at the target level.
+            p0: Reference pressure.
+
+        Returns:
+            Absolute temperature using Poisson's equation.
         """
         # Constants
         r = scipy.constants.R  # Specific gas constant for dry air in J/(kg·K)
@@ -1061,15 +1059,14 @@ class PostProcessing:
         """Calculate the TKE based on the 3D prognostic variables of MicroHH.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the required variables. If it does not contain
                 all variables, they are added.
-            chunks (Union[str, dict], optional):
+            chunks:
                 Chunks used when processing the netCDF files with xarray.
 
         Returns:
-            xr.Dataset:
-                Dataset containing TKE as a variable.
+            Dataset containing TKE as a variable.
         """
         wind_components = ["u", "v", "w"]
 
@@ -1106,7 +1103,7 @@ class PostProcessing:
         """Calculate the mass budget of the modelled scalars.
 
         Args:
-            read_method (Literal['binary', 'netcdf'], optional. Default: 'binary'):
+            read_method:
                 Method to read the modelled scalar fields. Choose 'binary' to read
                 the binary output files or 'netcdf' to read the netCDF output files.
         """
@@ -1135,6 +1132,7 @@ class PostProcessing:
         )
 
         def read_mass_from_binary(scalar: str, time_range: np.ndarray) -> list[float]:
+            """Read scalar mass from MicroHH binary files for each output time."""
             mass_array = []
             dtype = get_dtype()
             for time in time_range:
@@ -1145,6 +1143,7 @@ class PostProcessing:
             return mass_array
 
         def read_mass_from_netcdf(scalar: str, time_range: np.ndarray) -> list[float]:
+            """Read scalar mass from NetCDF output for each output time."""
             ds = io.open_microhh_nc(self.case, variable=scalar)
             # Assume variable name matches scalar, dimensions (time, z, y, x)
             arr = ds[scalar].values
@@ -1157,6 +1156,7 @@ class PostProcessing:
             return mass_array
 
         def get_dtype() -> Union[type[np.float64], type[np.float32]]:
+            """Return the floating-point dtype used by MicroHH binary output."""
             grid = mht.Read_grid(itot, jtot, ktot)
 
             if grid.prec == "d":
@@ -1191,13 +1191,13 @@ def merge_restart_statistics(
     """Merge two MicroHH statistics files from restarted cases into one file.
 
     Args:
-        stat_file1 (Union[str, Path]):
+        stat_file1:
             Path to the first statistics file (before restart).
-        stat_file2 (Union[str, Path]):
+        stat_file2:
             Path to the second statistics file (after restart).
-        combined_stat_file (Union[str, Path]):
+        combined_stat_file:
             Path to the output file where the combined statistics will be saved.
-        split_time (int):
+        split_time:
             Time in seconds at which the two files should be merged. Data from
             stat_file1 will be used for time < split_time and data from
             stat_file2 will be used for time >= split_time.
@@ -1272,20 +1272,19 @@ def add_gaussian_noise(
     """Add Gaussian noise to a specified variable in the dataset.
 
     Args:
-        data (xr.Dataset):
+        data:
             The dataset containing the variable to which noise will be added.
-        var_name (str):
+        var_name:
             The name of the variable to which Gaussian noise will be added.
-        gas (str):
+        gas:
             The gas for which noise is being added.
-        std (float):
+        std:
             The standard deviation of the Gaussian noise distribution.
-        noise_units (str):
+        noise_units:
             Unit of the noise added.
 
     Returns:
-        xr.Dataset: The dataset with the specified variable modified to include
-        Gaussian noise.
+        Dataset with the specified variable modified to include Gaussian noise.
     """
     # Create a deep copy of the dataset to avoid modifying the original in-place
     data_copy = data.copy(deep=True)
@@ -1326,14 +1325,14 @@ def degrade_resolution(
     """Degrade resolution of 3D or 2D MicroHH output by aggregating pixels.
 
     Args:
-        data (xr.Dataset): 3D or 2D data
-        zonal_res (int):
+        data: 3D or 2D data
+        zonal_res:
             Number of pixels in zonal direction which should be aggregated.
-        meridional_res (int):
+        meridional_res:
             Number of pixels in meridional direction which should be aggregated.
 
     Returns:
-        xr.Dataset: Data with coarser resolution.
+        Data with coarser resolution.
     """
     spatial_dims = {
         ("x", "y"): ("x", "y"),
@@ -1361,14 +1360,13 @@ def format_data_for_cdo(
     """Format the data for use with the CDO library.
 
     Args:
-        data_coord (xr.Dataset): Dataset with coordinates to format for CDO
+        data_coord: Dataset with coordinates to format for CDO
             compatibility.
-        out_path (Union[str, Path]): Path where the formatted dataset should be saved.
-        save (bool, optional): Whether to save the formatted dataset to out_path.
-            Defaults to True.
+        out_path: Path where the formatted dataset should be saved.
+        save: Whether to save the formatted dataset to out_path.
 
     Returns:
-        xr.Dataset: Formatted dataset.
+        Formatted dataset.
     """
     # Ensure out_path is a Path object
     out_path = Path(out_path)
@@ -1447,30 +1445,29 @@ def create_2d_3d_output_script(
     written to the SLURM ``.out`` file while the job is still running.
 
     Args:
-        cases (list[init.Case]):
+        cases:
             Cases to post-process. All cases are launched in parallel.
-        alps_setup (cscs.AlpsSetup):
+        alps_setup:
             Alps setup used to create the SLURM script header.
-        scratch_path (Union[str, Path]):
+        scratch_path:
             Directory where the SLURM script and output file are written.
-        py_file_path (Union[str, Path]):
+        py_file_path:
             Path to the Python script that creates the 2D and 3D output.
-        python_path (Union[str, Path]):
+        python_path:
             Python executable to use.
-        vars_3d (Union[str, list[str]]):
+        vars_3d:
             Variables to create 3D output for.
-        vars_2d (Union[str, list[str]]):
+        vars_2d:
             Variables to create 2D output for.
-        sample_time (int, optional):
+        sample_time:
             Sampling interval passed to the processing script.
-        job_name (str, optional):
-            Name of the SLURM job and script. Defaults to "create_2d_3d_output".
-        overwrite (bool, optional):
-            Overwrite an existing script. Defaults to False.
+        job_name:
+            Name of the SLURM job and script.
+        overwrite:
+            Overwrite an existing script.
 
     Returns:
-        Path:
-            Path to the created SLURM script.
+        Path to the created SLURM script.
     """
     if not cases:
         raise ValueError("At least one case is required.")

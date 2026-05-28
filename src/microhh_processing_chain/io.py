@@ -1,3 +1,5 @@
+"""Input and output helpers for MicroHH case files."""
+
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -19,12 +21,15 @@ def open_microhh_nc(
     """Open a .nc file related to MicroHH output.
 
     Args:
-        case (Case):
-            The Case object containing the file directory.
-        variable (str):
-            The variable name to open (e.g., 'u', 'v', 'w', 'T', etc.).
-        chunks (Union[str, dict], optional):
-            Chunking strategy for dask. Defaults to None.
+        case: Case containing the output directory.
+        variable: Variable name to open.
+        chunks: Chunking strategy passed to xarray.
+
+    Returns:
+        Opened NetCDF dataset.
+
+    Raises:
+        FileNotFoundError: If the requested NetCDF file does not exist.
     """
     file_path = Path(case.directory, f"{variable}.nc")
 
@@ -52,16 +57,16 @@ def open_initial_cond(case: "Case") -> xr.Dataset:
     """Read the netCDF file containing the initial conditions.
 
     Args:
-        case (Case):
-            Case for which the initial conditions should be read.
+        case: Case for which the initial conditions should be read.
 
     Returns:
-        xr.Dataset: netCDF of initial conditions.
+        Initial-condition dataset with all NetCDF groups merged.
     """
     return _combine_nc_groups(case.initial_conditions_file_path)
 
 
 def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
+    """Combine all groups in a NetCDF file into one dataset."""
     groups = ["", *list(netCDF4.Dataset(file_path).groups.keys())]
     merged_dataset = xr.Dataset()
     for group in groups:
@@ -72,10 +77,10 @@ def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
 
 
 def open_statistics(case: "Case") -> xr.Dataset:
-    """Read the netCDF file containing the statistics of a model run.
+    """Read the NetCDF file containing model-run statistics.
 
     Returns:
-        xr.Dataset: netCDF of initial conditions.
+        Statistics dataset with all NetCDF groups merged.
     """
     return _combine_nc_groups(case.statistics_file_path)
 
@@ -88,10 +93,10 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     - SDPD: simulated days per day
 
     Args:
-        case (Case): The Case object containing the file directory.
+        case: Case containing the output file.
 
     Returns:
-        pd.DataFrame: DataFrame containing the parsed case.out data.
+        Parsed output table with derived runtime columns.
     """
     df = pd.read_csv(case.out_file_path, sep=r"\s+")
 
@@ -122,7 +127,7 @@ def save_case_input(
     trajectories: Optional[dict[str, Any]] = None,
     overwrite: Optional[bool] = False,
 ) -> None:
-
+    """Save a MicroHH ``case_input.nc`` file via microhhpy."""
     microhhpy.io.save_case_input(
         case_name=case_name,
         init_profiles=init_profiles,
@@ -145,10 +150,14 @@ def open_jobreport(path: Union[str, Path]) -> pd.DataFrame:
     """Open a jobreport file as a pandas DataFrame.
 
     Args:
-        path (Union[str, Path]): Path where the jobreport file is located.
+        path: CSV file or directory containing a single jobreport CSV file.
 
     Returns:
-        pd.DataFrame: DataFrame containing the jobreport data.
+        Jobreport table with parsed start, end, and runtime columns.
+
+    Raises:
+        FileNotFoundError: If no jobreport CSV file is found.
+        FileExistsError: If multiple jobreport CSV files are found.
     """
     path = Path(path)
 

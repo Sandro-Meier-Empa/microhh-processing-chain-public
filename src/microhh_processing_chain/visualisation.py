@@ -1,3 +1,5 @@
+"""Visualisation helpers for MicroHH cases and datasets."""
+
 import logging
 import re
 from collections.abc import Sequence
@@ -29,7 +31,7 @@ class CaseViewer:
     """Visualise the model output.
 
     Args:
-        case (init.Case):
+        case:
             Case to visualise.
 
     """
@@ -51,12 +53,12 @@ class CaseViewer:
         """Plot all variables from initial conditions, grouped by their dimensions.
 
         Args:
-            ncols (int, optional): Number of columns in the subplot grid. Defaults to 4.
-            figsize (tuple, optional): Size of the figure. Defaults to (10, 6).
-            cmap (str, optional): Colormap to use for 2D variables.
+            ncols: Number of columns in the subplot grid.
+            figsize: Size of the figure.
+            cmap: Colormap to use for 2D variables.
 
         Returns:
-            list[Figure]: Figures created for each group of variables.
+            Figures created for each group of variables.
         """
         file_path = self.case.initial_conditions_file_path
 
@@ -90,7 +92,7 @@ class CaseViewer:
         cmap: str = "viridis",
         sharey: bool = True,
     ) -> list[Figure]:
-
+        """Plot all variables from one initial-condition group by dimension set."""
         # Group variables by their dimension signature
         dim_groups = {}
         for var in ds.data_vars:
@@ -127,6 +129,7 @@ class CaseViewer:
     def _plot_variable(
         self, data: xr.DataArray, ax: Axes, cmap: str = "viridis"
     ) -> None:
+        """Plot one scalar, profile, time series, or two-dimensional variable."""
         dims = data.dims
         # Check if it is a height profile
         aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
@@ -160,7 +163,7 @@ class CaseViewer:
         plot_format: Literal["line", "shaded"] = "line",
         color_init: str = "k",
     ) -> Figure:
-        """Plot the prognostic variables."""
+        """Plot vertical profiles of prognostic variables over time."""
         variables = [str(variable) for variable in utils.object_to_list(variables)]
         time_factor = self._get_time_factor(time_format)
 
@@ -259,6 +262,7 @@ class CaseViewer:
         return fig
 
     def _get_time_factor(self, time_format: str) -> int:
+        """Return the divisor that converts seconds to the requested time unit."""
         # define factor for time format
         if time_format == "s":
             time_factor = 1
@@ -285,6 +289,7 @@ class CaseViewer:
         z_dim: str,
         color: Union[str, tuple[float, float, float, float]],
     ) -> None:
+        """Plot sampled vertical profiles as individual lines."""
         # define step size for plot
         x_step = max(1, int(data[x_dim].size / n_lines))
         y_step = max(1, int(data[y_dim].size / n_lines))
@@ -307,6 +312,7 @@ class CaseViewer:
         color: Union[str, tuple[float, float, float, float]],
         alpha: float = 0.3,
     ) -> None:
+        """Plot horizontal mean profiles with one standard-deviation shading."""
         # integrate over x and y dimensions: Mean and std
         integrated = data[variable].mean(dim=[x_dim, y_dim])
         integrated_std = data[variable].std(dim=[x_dim, y_dim])
@@ -335,21 +341,21 @@ class CaseViewer:
             Added text information of the model resolution and wind properties.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the variable
-            variable (str):
+            variable:
                 Name of the variable to be plotted.
-            timestep (int):
+            timestep:
                 Time step to be plotted.
-            figsize (tuple):
-                Size of the figure. Defaults to (10, 6).
-            cbar_width (float, optional: Default 0.01.):
+            figsize:
+                Size of the figure.
+            cbar_width:
                 Width of colorbar.
-            cmap (str, optional: Default "viridis".):
+            cmap:
                 Colormap to use for plotting.
 
         Returns:
-            Figure: Figure with subplots and text
+            Figure with subplots and text.
         """
         time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
         data = data.isel({time_dim: timestep})
@@ -437,15 +443,15 @@ class CaseViewer:
         Format text on resolution and wind properties for 'plot_side_views'
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset from which one time step should be plotted.
-            timestep (int):
+            timestep:
                 Time step which should be plotted.
-            xdim (str):
+            xdim:
                 Name of x dimension in dataset.
-            ydim (str):
+            ydim:
                 Name of y dimension in dataset.
-            zdim (str):
+            zdim:
                 Name of z dimension in dataset.
 
         Returns:
@@ -509,7 +515,7 @@ class CaseViewer:
         """Plot variables from the statistics netcdf file.
 
         Args:
-            variables (str, list(str)):
+            variables:
                 Variables within the statistics file to plot.
             figsize: tuple[int, int]:
                 Figure size for the plot.
@@ -517,7 +523,7 @@ class CaseViewer:
                 Colormap to use for plotting.
 
         Returns:
-            list[Figure]: Figures created for each requested variable.
+            Figures created for each requested variable.
         """
         stats = io.open_statistics(self.case)
 
@@ -559,7 +565,7 @@ class CaseViewer:
                 initial conditions.
 
         Returns:
-            Figure: Figure containing the comparison plots.
+            Figure containing the comparison plots.
         """
         stats = io.open_statistics(self.case)
         initial_cond = io.open_initial_cond(self.case)
@@ -632,11 +638,11 @@ class CaseViewer:
         wind profile from Monin-Obukhov similarity theory.
 
         Args:
-            timestep (int): Time step to compare.
-            figsize (tuple[float, float], optional): Size of the figure.
+            timestep: Time step to compare.
+            figsize: Size of the figure.
 
         Returns:
-            Figure: Figure containing the wind profile comparison.
+            Figure containing the wind profile comparison.
         """
         initial_cond = io.open_initial_cond(self.case)
         stats = io.open_statistics(self.case)
@@ -670,7 +676,7 @@ class VariableViewer:
     Initialise the VariableViewer with a microHH dataset.
 
     Args:
-        data (xr.Dataset):
+        data:
             Dataset containing microHH model output.
     """
 
@@ -791,6 +797,7 @@ class VariableViewer:
             self.mesh.set_clim(data_min, data_max)
 
     def _get_title(self) -> str:
+        """Return the current time-step title for the interactive plot."""
         time = (
             self.data[self.time_dim]
             .isel({self.time_dim: self.time_slider.value})
@@ -835,6 +842,7 @@ class VariableViewer:
         self.fig.canvas.draw_idle()
 
     def _handle_vlim(self) -> None:
+        """Initialise colorbar limits and slider step size."""
         if self.vmin is None:
             self.vmin = np.nanquantile(self.data[self.variable].values, 0.001)
 
@@ -847,6 +855,7 @@ class VariableViewer:
         self.vstep = (self.data_max - self.data_min) / 100
 
     def _create_widgets(self) -> None:
+        """Create the time and color-limit widgets."""
         self.time_slider = widgets.IntSlider(
             value=0,
             min=0,
@@ -881,11 +890,13 @@ class VariableViewer:
         )
 
     def _wrap_widgets(self) -> None:
+        """Place controls and figure output into the displayed widget layout."""
         vlim_box = widgets.VBox([self.vmin_slider, self.vmax_slider])
         widget_box = widgets.HBox([self.time_slider, vlim_box])
         self.ui = widgets.VBox([widget_box, self.fig_output])
 
     def _connect_events(self) -> None:
+        """Connect widget value changes to plot update callbacks."""
         self.time_slider.observe(self._update_plot, names="value")
         self.vmin_slider.observe(self._update_vlim, names="value")
         self.vmax_slider.observe(self._update_vlim, names="value")
@@ -911,7 +922,8 @@ def plot_initial_conditions_comparison(
     Args:
         case1: First case to compare.
         case2: Second case to compare.
-        variables: Variables to compare. If None, all common variables will be compared.
+        variables: Variables to compare. When omitted, all common variables
+            will be compared.
         show_differences: Whether to show the difference between the two cases
             in a third subplot.
         figsize: Size of the figure for each variable.
@@ -920,7 +932,7 @@ def plot_initial_conditions_comparison(
             10 z-levels). This will be applied to both cases before comparison.
 
     Returns:
-        list[Figure]: Figures created for each compared variable.
+        Figures created for each compared variable.
     """
     # compare initial conditions of the two cases
     ic_case1 = io.open_initial_cond(case1).sel(subset_kwargs)
@@ -1079,14 +1091,14 @@ def plot_case_comparison(
         cases: One or more case objects.
         variables: One or more variable names to plot.
         difference: If True, plot differences to the default case.
-            If False, plot absolute values. Defaults to True.
+            If False, plot absolute values.
         default_case_index: Index of the default case used when
-            ``difference=True``. Defaults to 0.
-        figsize: Figure size passed to ``plt.subplots``. Defaults to (10, 6).
-        cmap: Colormap name passed to ``pcolormesh``. Defaults to "RdBu_r".
+            ``difference=True``.
+        figsize: Figure size passed to ``plt.subplots``.
+        cmap: Colormap name passed to ``pcolormesh``.
 
     Returns:
-        list[Figure]: Figures created for each requested variable.
+        Figures created for each requested variable.
     """
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)

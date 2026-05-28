@@ -1,3 +1,5 @@
+"""Wind diagnostics, similarity profiles, and turbulence spectra."""
+
 import logging
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -25,7 +27,7 @@ class WindProcessing:
     """Class used for post-processing MicroHH cases and handling the output.
 
     Args:
-        case (init.Case):
+        case:
             Case to post-process.
     """
 
@@ -50,31 +52,27 @@ class WindProcessing:
         """Create a dataset containing the wind information around a source.
 
         Args:
-            source (str):
+            source:
                 Source for which the wind dataset should be created.
-            sources (xr.Dataset):
+            sources:
                 Dataset with source information
-            radius (int):
+            radius:
                 Number of pixels around the source which should be considered
                 for calculating wind properties.
-            gas (str):
+            gas:
                 Gas to be used for the vertical weighting of wind speed fields.
-            method (str):
+            method:
                 Method of how the wind should be vertically integrated.
                 "mean" "median", "height" or "concentration_weighted"
-            height (float):
+            height:
                 Height at which the wind speed should be used if method = 'height'.
-            save (bool, optional. Default: True):
+            save:
                 Specify if the dataset should be saved to store.
-            overwrite (bool, optional. Default: False):
+            overwrite:
                 Specify if the output file should be overwritten if it exists.
 
-        Raises:
-            e: Raise an error if the datasets of the wind components u and v
-            could not be found or processed.
-
         Returns:
-            xr.Dataset: Dataset containing the wind information around a source.
+            Dataset containing the wind information around a source.
         """
         wind_data = self.create_2d_wind(method, gas, height, save, overwrite)
 
@@ -162,26 +160,22 @@ class WindProcessing:
         """Create a 2D wind dataset from 3D MicroHH wind fields.
 
         Args:
-            method (str):
+            method:
                 Method to vertically integrate wind speeds. Available options are
                 "mean", "median", "height", "concentration_weighted"
-            gas (str, optional):
+            gas:
                 Gas to use if method = 'concentration_weighted' wind speeds.
-                Defaults to None.
-            height (float, optional):
+            height:
                 Height at which the wind speed should be used if method = 'height'.
-                Defaults to None.
-            save (bool, optional):
+            save:
                 Specify if the resulting xarray dataset should be saved.
-                Defaults to True.
-            overwrite (bool, optional):
+            overwrite:
                 Specify if the output file should be overwritten if it exists.
-                Defaults to False.
-            chunks (Union[str, dict], optional):
-                Chunking strategy for dask when loading the data. Defaults to None.
+            chunks:
+                Chunking strategy for dask when loading the data.
 
         Returns:
-            xr.Dataset: Dataset with vertically integrated wind.
+            Dataset with vertically integrated wind.
         """
         wind_vars = self._get_wind_vars(method)
 
@@ -270,12 +264,12 @@ class WindProcessing:
         """Check if all required variables for wind integration method are given.
 
         Args:
-            method (str):
+            method:
                 Method to vertically integrate wind speeds. Available options are
                 "mean", "median", "height", "concentration_weighted"
-            gas (str):
+            gas:
                 Gas to use if method = 'concentration_weighted' wind speeds.
-            height (float):
+            height:
                 Height at which the wind speed should be used if method = 'height'.
         """
         if method not in ["mean", "median", "height", "concentration_weighted"]:
@@ -294,11 +288,11 @@ class WindProcessing:
         """Select all pixels within a radius around a source.
 
         Args:
-            wind_data (xr.Dataset):
+            wind_data:
                 Dataset containing the wind information.
-            selected_source (xr.Dataset):
+            selected_source:
                 Source around which the pixels are to be selected.
-            radius (int):
+            radius:
                 Radius in pixels around the source.
         """
         source_x0 = selected_source.source_x0.values
@@ -327,23 +321,23 @@ class WindProcessing:
         """Vertically integrate 3D wind fields.
 
         Args:
-            wind_data (xr.Dataset):
+            wind_data:
                 3D wind dataset
-            method (str):
+            method:
                 Method of how the wind should be vertically integrated.
                 "mean" "median", "height" or "concentration_weighted"
-            gas (str, optional):
+            gas:
                 Gas to be used for the vertical weighting of wind speed fields.
-                Required if method = 'concentration_weighted'. Defaults to None.
-            height (float, optional):
+                Required if method = 'concentration_weighted'.
+            height:
                 Height at which the wind speed should be used if method = 'height'.
-                Required if method = 'height'. Defaults to None.
+                Required if method = 'height'.
 
         Raises:
             NotImplementedError: Raise an error if an invalid method is provided.
 
         Returns:
-            xr.Dataset: Vertically integrated wind dataset.
+            Vertically integrated wind dataset.
         """
         if method in ["mean", "median"]:
             return self.unweighted_mean_wind(wind_data, method)
@@ -358,9 +352,9 @@ class WindProcessing:
         """Calculate the unweighted mean or median wind speed from 3D wind fields.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the 3D wind fields.
-            method (str):
+            method:
                 Method of how the wind should be vertically integrated.
                 Either "mean" or "median".
         """
@@ -382,9 +376,9 @@ class WindProcessing:
         """Get the wind speed at a certain height.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the wind speed information.
-            height (float):
+            height:
                 Height in m at which the wind speed should be taken from.
 
         """
@@ -420,21 +414,20 @@ class WindProcessing:
         Remove data below a threshold of avoid division by 0.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset containing the variables 'u', 'v' and {gas}.
-            gas (str, optional):
+            gas:
                 Gas which should be used to weight the 3D wind fields.
-                Defaults to "ch4".
-            wind_vars (Union[str, list], optional):
-                Variable name(s) of the wind components. Defaults to ["u", "v"].
-            threshold (float, optional):
+            wind_vars:
+                Variable name(s) of the wind components.
+            threshold:
                 Threshold below which the gas values are not used
-                to compute the weight profile. Defaults to None.
-            threshold_unit (str, optional):
+                to compute the weight profile.
+            threshold_unit:
                 Unit of the threshold value. Required if threshold is given.
 
         Returns:
-            xr.Dataset: Dataset containing the weighted wind.
+            Dataset containing the weighted wind.
         """
         if wind_vars is None:
             wind_vars = ["u", "v"]
@@ -481,19 +474,19 @@ class WindProcessing:
         distribution of a gas. Remove data below 'threshold' to avoid division by 0.
 
         Args:
-            data (xr.Dataset):
+            data:
                 Dataset to which the weight profile should be added.
-            gas (str, optional):
+            gas:
                 Gas which is used to compute the weight profile.
-            threshold (float, optional):
+            threshold:
                 Threshold below which the gas values are not used
                 to compute the weight profile to avoid division by 0.
-            threshold_unit (str, optional):
+            threshold_unit:
                 Unit of the threshold value. Required if threshold is given.
 
 
         Returns:
-            xr.Dataset: Dataset containing the weight profile.
+            Dataset containing the weight profile.
         """
         if gas not in data.data_vars:
             raise KeyError(
@@ -557,8 +550,11 @@ class WindProcessing:
 
 
 class EffectiveWind:
+    """Placeholder for effective-wind calculations."""
+
     # TODO
     def _init__(self) -> None:
+        """Initialise the effective-wind placeholder."""
         return None
 
 
@@ -596,7 +592,7 @@ def wind_profile_from_given_wind(
             calculated wind speed.
 
     Returns:
-        np.ndarray: Wind profile interpolated to the model grid.
+        Wind profile interpolated to the model grid.
     """
     if isinstance(grid, np.ndarray):
         model_profile = grid
@@ -676,27 +672,24 @@ def get_wind_profile(
     Give either the sensible heat flux H (in W/m2) or the turbulent sensible
     heat flux (in K m/s).
 
-    Source: https://denning.atmos.colostate.edu/ats761/BonanBookFigures/Scans/Turbulent_fluxes_14.pdf
-
-    Marked with *:
-    From https://www.cambridge.org/core/books/turbulence-in-the-atmosphere/60C43BE9C14A0511C0B03ACD42731068
+    Source: Bonan turbulent flux notes. Entries marked with ``*`` are from
+    Wyngaard, Turbulence in the Atmosphere.
 
     Args:
         z: Array of heights above the ground level.
         z0: Roughness length.
         u_star: Friction velocity.
         t: (Potential) temperature (in K).
-        l_mo: Monin-Obukhov length (m). Defaults to None.
-        h: Sensible heat flux (W/m^2). Defaults to None.
-        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
-        e: Water vapor flux (kg/s). Defaults to 0.
-        displacement_height: Zero-plane displacement height (m). Defaults to 0.
+        l_mo: Monin-Obukhov length.
+        h: Sensible heat flux.
+        h_turb: Turbulent sensible heat flux.
+        e: Water vapor flux.
+        displacement_height: Zero-plane displacement height.
         stability_criterion: Stability criterion to use ('MO' or 'Ri').
-            Defaults to 'Ri'.
-        kappa: von Kármán constant. Defaults to 0.4.
+        kappa: von Kármán constant.
 
     Returns:
-        np.ndarray: Wind speed at each height in z.
+        Wind speed at each height in z.
     """
     z = np.array(z)
 
@@ -757,7 +750,7 @@ def calculate_virtual_temperature(
         q: Specific humidity (dimensionless, in kg/kg).
 
     Returns:
-        np.ndarray: Virtual temperature (in K).
+        Virtual temperature.
     """
     t = np.array(t)
     q = np.array(q)
@@ -776,9 +769,8 @@ def calculate_virtual_turbulent_heat_flux(
         h: Sensible heat flux (W/m^2).
         e: Water vapor flux (kg/s).
         t: Absolute temperature (K).
-        rho: Density of air (kg/m^3). Defaults to 1.225.
+        rho: Density of air.
         cp: Specific heat capacity of air at constant pressure (J/(kg*K)).
-            Defaults to 1003.5.
 
     Returns:
         float: Virtual turbulent heat flux (K m/s).
@@ -799,8 +791,8 @@ def calculate_monin_obukhov_length(
         u_star: Friction velocity (m/s).
         t0: Mean temperature (K).
         h_turb: Virtual turbulent heat flux (K m/s).
-        kappa: von Kármán constant (dimensionless). Defaults to 0.4.
-        g: Acceleration due to gravity (m/s^2). Defaults to 9.81.
+        kappa: von Kármán constant.
+        g: Acceleration due to gravity.
 
     Returns:
         float: Monin-Obukhov length (m).
@@ -812,12 +804,12 @@ def calculate_monin_obukhov_length(
 def _determine_stability_mo(l_mo: float, threshold: float = 500) -> str:
     """Determine the stability regime based on the Monin-Obukhov length (L).
 
-    From: https://www.researchgate.net/publication/266043126_Estimating_the_systematic_er-_rors_in_turbulence_sensed_by_wind_lidars
+    Based on published wind-lidar turbulence error classifications.
     Or from: https://onlinelibrary.wiley.com/doi/full/10.1002/we.1528
 
     Args:
         l_mo: Monin-Obukhov length (m).
-        threshold: Threshold for neutral stability. Defaults to 500.
+        threshold: Threshold for neutral stability.
 
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
@@ -835,14 +827,12 @@ def _determine_stability_ri(
 ) -> str:
     """Determine the stability regime based on the Richardson number (ri).
 
-    From: https://www.researchgate.net/publication/269105054_Dispersion_modeling_of_air_pollutants_in_the_atmosphere_a_review
+    Based on common Richardson-number dispersion-regime thresholds.
 
     Args:
         ri: Richardson number.
         upper_threshold: Upper threshold for stability classification.
-            Defaults to -0.1.
         lower_threshold: Lower threshold for stability classification.
-            Defaults to 0.05.
 
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
@@ -869,7 +859,7 @@ def _correction_stable(
     Args:
         z: Height above the ground level (m).
         l_mo: Monin-Obukhov length (m).
-        beta: Stability correction parameter. Defaults to 4.8.
+        beta: Stability correction parameter.
 
     Returns:
         Stability correction term.
@@ -885,8 +875,8 @@ def _correction_unstable(
     Args:
         z: Height above the ground level (m).
         l_mo: Monin-Obukhov length (m).
-        alpha: Stability correction parameter. Defaults to 1/4.
-        gamma: Stability correction parameter. Defaults to 15.
+        alpha: Stability correction parameter.
+        gamma: Stability correction parameter.
 
     Returns:
         Stability correction term.
@@ -926,11 +916,11 @@ def solve_wind_profile(
         z0: Roughness length (m).
         t: (Potential) temperature profile (in K).
         e: Water vapor flux (kg/s).
-        h: Sensible heat flux (W/m^2). Defaults to None.
-        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        h: Sensible heat flux.
+        h_turb: Turbulent sensible heat flux.
 
     Returns:
-        np.ndarray: Difference between calculated and measured wind speed.
+        Difference between calculated and measured wind speed.
     """
     return (
         get_wind_profile(z=z, z0=z0, u_star=u_star, t=t, e=e, h=h, h_turb=h_turb)
@@ -959,10 +949,10 @@ def calculate_u_star(
         z0: Roughness length (m).
         t: (Potential) temperature (in K).
         e: Water vapor flux (kg/s).
-        h: Sensible heat flux (W/m^2). Defaults to None.
-        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        h: Sensible heat flux.
+        h_turb: Turbulent sensible heat flux.
         u_star_initial: Initial guess of u*. If not provided, it is
-            calculated assuming neutrally stable conditions. Defaults to None.
+            calculated assuming neutrally stable conditions.
     """
     if u_star_initial is None:
         u_star_initial = calculate_u_star_stable(wind_speed, z, z0, kappa=0.4)
@@ -986,10 +976,10 @@ def calculate_u_star_stable(
     Compute u* without a correction term for stability analytically.
 
     Args:
-        wind_speed (float): Measured wind speed (m/s).
-        z (float): Height above ground at which the wind speed was measured (m).
-        z0 (float): Roughness length (m).
-        kappa (float, optional): von Kármán constant (dimensionless). Defaults to 0.4.
+        wind_speed: Measured wind speed (m/s).
+        z: Height above ground at which the wind speed was measured (m).
+        z0: Roughness length (m).
+        kappa: von Kármán constant.
 
     Returns:
         float: U* for neutrally stable cases without a correction term for
@@ -1008,7 +998,7 @@ def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
     the majority of wind values in the array.
 
     Args:
-        arr (np.ndarray):
+        arr:
             Array containing the wind speed.
 
     """
@@ -1037,7 +1027,21 @@ def calculate_effective_wind_speed(
     gas: str,
     true_emissions_unit: str,
 ) -> xr.Dataset:
+    """Add effective wind speed inferred from true and estimated emissions.
 
+    Args:
+        results: Dataset containing ``{gas}_emissions``,
+            ``integrated_{gas}_mass``, and ``L_max``.
+        true_emissions: Known source strength to compare against.
+        gas: Gas name used in the emissions variables and unit conversion.
+        true_emissions_unit: Unit of the known source strength.
+
+    Returns:
+        Dataset with ``effective_wind_speed`` added.
+
+    Raises:
+        ValueError: If estimated emissions do not define units.
+    """
     est_emissions_units = results[f"{gas}_emissions"].attrs.get("units", None)
     if est_emissions_units is None:
         raise ValueError(f"No units found for estimated emissions of {gas}.")
@@ -1070,9 +1074,9 @@ def calculate_smagorinsky_constant(
     alpha: float = 0.135,
     n: int = 3,
 ) -> Union[int, float, np.ndarray]:
-    """Computes Smagorinsky constant.
+    """Compute the Smagorinsky constant.
 
-     Computes Smagorinsky constant according to Eq. (17) in
+    Computes the Smagorinsky constant according to Eq. (17) in
     https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2.
 
     Args:
@@ -1080,10 +1084,10 @@ def calculate_smagorinsky_constant(
             model, in m.
         l_mo: Obukhov length (l).
         z: Height above ground (in m).
-        kappa: von Kármán constant (κ). Defaults to 0.4.
-        c0: Base concentration (c₀). Defaults to 0.135.
-        alpha: Model parameter (alpha). Defaults to 0.135.
-        n: Model exponent (n). Defaults to 3.
+        kappa: von Kármán constant.
+        c0: Base concentration.
+        alpha: Model parameter.
+        n: Model exponent.
 
     Returns:
         Computed Smagorinsky constant c_s.
@@ -1153,26 +1157,14 @@ def calculate_spatial_psd_2d(
 
     after removal of the horizontal mean.
 
-    Parameters
-    ----------
-    field : 2D array, shape [nx, ny]
-        Input field.
-    dx : float
-        Grid spacing in the x direction.
-    dy : float
-        Grid spacing in the y direction.
-    angular : bool, optional
-        If False, return frequencies in cycles per physical unit.
-        If True, return angular wavenumbers in radians per physical unit.
+    Args:
+        field: Two-dimensional input field.
+        dx: Grid spacing in the x direction.
+        dy: Grid spacing in the y direction.
+        angular: Return angular wavenumbers instead of cycles per physical unit.
 
     Returns:
-    -------
-    psd2d : 2D array, shape [nx, ny]
-        Variance-preserving 2D PSD, shifted so the zero mode is in the center.
-    kx : 1D array, shape [nx]
-        Physical frequency or angular wavenumber coordinates in x.
-    ky : 1D array, shape [ny]
-        Physical frequency or angular wavenumber coordinates in y.
+        Variance-preserving PSD and the x/y frequency coordinates.
     """
     from numpy.fft import fft2, fftfreq, fftshift
 
@@ -1220,26 +1212,18 @@ def radial_spectrum_from_spatial_psd(
 
     assuming all Fourier modes are included in the radial bins.
 
-    Parameters
-    ----------
-    psd2d : 2D array, shape [nx, ny]
-        Variance-preserving 2D PSD, usually shifted.
-    kx, ky : 1D arrays
-        Physical frequency or wavenumber coordinates corresponding to psd2d.
-        These should be shifted in the same way as psd2d.
-    nbins : int, optional
-        Number of radial bins. If None, defaults to min(nx, ny) // 2.
-    bin_edges : 1D array, optional
-        Custom radial bin edges. If provided, nbins is ignored.
+    Args:
+        psd2d: Variance-preserving two-dimensional PSD, usually shifted.
+        kx: Frequency or wavenumber coordinates corresponding to the first axis.
+        ky: Frequency or wavenumber coordinates corresponding to the second axis.
+        nbins: Number of radial bins.
+        bin_edges: Custom radial bin edges. Overrides ``nbins`` when provided.
 
     Returns:
-    -------
-    k_radial : 1D array
-        Radial bin centers.
-    radial_psd : 1D array
-        Variance-preserving radial spectrum.
-    counts : 1D array
-        Number of Fourier modes in each radial bin.
+        Radial bin centers, variance-preserving radial spectrum, and bin counts.
+
+    Raises:
+        ValueError: If coordinate lengths do not match the PSD shape.
     """
     psd2d = np.asarray(psd2d)
     kx = np.asarray(kx)
@@ -1292,10 +1276,9 @@ def _tke_spatial_spectrum_core(
     dy: float,
     w_2d: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Core function that handles a single 2D plane of data.
+    """Compute a radial TKE spectrum for a single two-dimensional plane.
 
     Receives raw NumPy arrays from xr.apply_ufunc.
-
     """
     # 1. Compute 2D PSDs
     psd2d_u, kx, ky = calculate_spatial_psd_2d(u_2d, dx, dy)
@@ -1317,6 +1300,7 @@ def _tke_spatial_spectrum_core(
 def _tke_spatial_spectrum_core_array(
     u_2d: np.ndarray, v_2d: np.ndarray, *args: np.ndarray, dx: float, dy: float
 ) -> np.ndarray:
+    """Return only radial TKE values for ``xr.apply_ufunc``."""
     w_2d: Optional[np.ndarray] = args[0] if args else None
     _, radial_tke = _tke_spatial_spectrum_core(u_2d, v_2d, dx, dy, w_2d=w_2d)
     return radial_tke
@@ -1328,7 +1312,7 @@ def calculate_tke_spatial_profile_dask(
     ds_w: Optional[xr.Dataset] = None,
     time_idx: int = -1,
 ) -> xr.Dataset:
-    """Computes the 2D or 3D TKE spectrum for every vertical level using Dask.
+    """Compute the TKE spatial spectrum for every vertical level using Dask.
 
     Assumes staggered-grid inputs:
         u(time, z,  xh, y)
@@ -1339,6 +1323,15 @@ def calculate_tke_spatial_profile_dask(
         (z, x, y)
 
     before applying the 2D FFT spectrum.
+
+    Args:
+        ds_u: Dataset containing the u wind component.
+        ds_v: Dataset containing the v wind component.
+        ds_w: Optional dataset containing the w wind component.
+        time_idx: Time index to analyse.
+
+    Returns:
+        Dataset containing the vertical profile of radial TKE spectra.
     """
     dx = float(np.median(ds_v.x.diff(dim="x").values))
     dy = float(np.median(ds_u.y.diff(dim="y").values))
@@ -1450,27 +1443,18 @@ def calculate_temporal_variance_psd(
 
         psd.sum() * (f[1] - f[0]) ≈ np.var(signal)
 
-    Parameters
-    ----------
-    signal : 1D array
-        Time series at a single point.
-    fs : float
-        Sampling frequency [Hz].
-    nperseg : int, optional
-        Length of each Welch segment. Defaults to 256.
-    noverlap : int, optional
-        Number of overlapping samples between segments.
-        If None, defaults to nperseg // 2 (scipy default).
-    detrend : str, optional
-        Detrending applied to each segment. 'linear' removes a linear trend;
-        'constant' removes the mean only. Matches the spatial code's mean removal.
+    Args:
+        signal: Time series at a single point.
+        fs: Sampling frequency in Hz.
+        nperseg: Length of each Welch segment.
+        noverlap: Number of overlapping samples between segments.
+        detrend: Detrending applied to each segment.
 
     Returns:
-    -------
-    f : 1D array
-        Frequency bins [Hz].
-    psd : 1D array
-        Variance-preserving PSD [units² / Hz].
+        Frequency bins and variance-preserving PSD.
+
+    Raises:
+        ValueError: If the signal is shorter than one Welch segment.
     """
     signal = np.asarray(signal, dtype=float)
 
@@ -1503,17 +1487,13 @@ def _tke_temporal_spectrum_core(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Core function: compute TKE temporal spectrum from 1D time series.
+    """Compute a TKE temporal spectrum from one-dimensional time series.
 
     This function computes the temporal PSD of the velocity time series
     at a single (x, y, z) point.
 
     Returns:
-    -------
-    f : 1D array
-        Frequency bins [Hz].
-    tke_psd : 1D array
-        TKE temporal PSD, i.e. 0.5 * (P_uu + P_vv [+ P_ww]) [m² s⁻² / Hz].
+        Frequency bins and TKE temporal PSD.
     """
     f, p_uu = calculate_temporal_variance_psd(u_t, fs, nperseg, noverlap, detrend)
     _, p_vv = calculate_temporal_variance_psd(v_t, fs, nperseg, noverlap, detrend)
@@ -1542,37 +1522,29 @@ def calculate_tke_temporal_profile(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute the TKE temporal spectrum at every vertical level.
 
-    This function computes the temporal PSD of the velocity time series
-    for a single (x, y) point in the domain.
+    The calculation uses velocity time series for a single (x, y) point in
+    the domain.
 
     This is the temporal analogue of calculate_tke_profile:
     instead of a 2D spatial FFT over (x, y) at fixed time,
     it applies Welch's method over the time axis at fixed (x, y).
 
-    Parameters
-    ----------
-    ds_u, ds_v, ds_w : /
-        Datasets containing velocity components. Expected dims:
-            u(time, z,  xh, y)
-            v(time, z,  x,  yh)
-            w(time, zh, x,  y)   [optional]
-    x_idx : int
-        Index along the x axis to extract the time series from.
-    y_idx : int
-        Index along the y axis to extract the time series from.
-    fs : float
-        Sampling frequency [Hz]. Must match the temporal resolution of the data.
-    nperseg : int
-        Welch segment length.
-    noverlap : int, optional
-        Overlap between Welch segments.
-    detrend : str
-        Detrending per segment ('linear' or 'constant').
+    Args:
+        ds_u: Dataset containing the u wind component.
+        ds_v: Dataset containing the v wind component.
+        ds_w: Optional dataset containing the w wind component.
+        x_idx: Index along the x axis to extract the time series from.
+        y_idx: Index along the y axis to extract the time series from.
+        fs: Sampling frequency in Hz.
+        nperseg: Welch segment length.
+        noverlap: Overlap between Welch segments.
+        detrend: Detrending mode passed to Welch's method.
 
     Returns:
-    -------
-    energy_spectra : 2D array, shape [z, f]
-        TKE temporal PSD at each vertical level.
+        Height levels, frequency bins, and TKE temporal PSD by height.
+
+    Raises:
+        ValueError: If no vertical levels are found.
     """
     z_levels = ds_u.z.values
     energy_spectra = []
@@ -1629,19 +1601,27 @@ def calculate_tke_temporal_profile_dask(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> xr.Dataset:
-    """Dask-parallelised version of calculate_tke_temporal_profile.
+    """Compute TKE temporal spectra by vertical level using Dask.
 
     Applies Welch's method over the time axis at a fixed (x, y) point
     for every vertical level in parallel.
 
-    Parameters
-    ----------
-    (same as calculate_tke_temporal_profile)
+    Args:
+        ds_u: Dataset containing the u wind component.
+        ds_v: Dataset containing the v wind component.
+        ds_w: Optional dataset containing the w wind component.
+        x_idx: Optional x index. Must be paired with ``y_idx``.
+        y_idx: Optional y index. Must be paired with ``x_idx``.
+        fs: Sampling frequency in Hz.
+        nperseg: Welch segment length.
+        noverlap: Overlap between Welch segments.
+        detrend: Detrending mode passed to Welch's method.
 
     Returns:
-    -------
-    tke_ds : xr.DataArray, dims (z, frequency)
-        TKE temporal PSD at each vertical level.
+        Dataset containing TKE temporal PSD at each vertical level.
+
+    Raises:
+        ValueError: If exactly one of ``x_idx`` and ``y_idx`` is provided.
     """
     z_levels = ds_u.z.values
 

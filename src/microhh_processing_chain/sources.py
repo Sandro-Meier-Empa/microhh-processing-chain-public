@@ -1,3 +1,5 @@
+"""Source-strength and plume-rise utilities for MicroHH cases."""
+
 import logging
 from typing import Optional, Union, cast
 
@@ -21,13 +23,13 @@ def get_source_strength(
     Works both for constant and time-dependent source strengths.
 
     Args:
-        case: Case object needed to get initial conditions
-        to_unit: Desired unit for source strength (e.g., "kg/s", "kmol/s")
+        case: Case object used to read source settings and initial conditions.
+        to_unit: Desired unit for source strength.
         time_s: Time in seconds to select source strength data.
-            If None, use max over all times.
+            When omitted, the maximum over all times is used.
 
     Returns:
-        np.ndarray: Array of source strengths in desired units
+        Source strengths in the desired unit.
     """
     swtimedep_strength = case.config["source"]["swtimedep_strength"]
 
@@ -61,12 +63,12 @@ def _get_dynamic_source_strength(
     """Get time-dependent source strengths from initial conditions.
 
     Args:
-        case: Case object needed to get initial conditions
+        case: Case object used to read initial conditions.
         time_s: Time in seconds to select source strength data.
-            If None, use max over all times.
+            When omitted, the maximum over all times is used.
 
     Returns:
-        np.ndarray: Array of source strengths
+        Source strengths from the initial-condition file.
     """
     # Load time-dependent strength data
     initial_cond = io.open_initial_cond(case)
@@ -102,6 +104,7 @@ def _get_dynamic_source_strength(
 
 
 def _get_emission_units(case: init.Case) -> tuple[np.ndarray, np.ndarray]:
+    """Return source-strength units and gas masses from source settings."""
     swvmr_list = case.config["source"]["swvmr"]
     sourcelist_list = case.config["source"]["sourcelist"]
 
@@ -121,7 +124,7 @@ def seconds_from_midnight(
 
     Returns:
         Number of seconds from midnight to the given time (int for single Timestamp,
-        pd.Series for DatetimeIndex).
+        array for DatetimeIndex).
     """
     if isinstance(time, pd.Timestamp):
         midnight = pd.to_datetime(time.strftime("%Y-%m-%d 00:00:00"))
@@ -149,20 +152,22 @@ def create_strength_profiles(
     """Create strength profiles with 1-second ramp up/down for each time interval.
 
     Args:
-        start_times: list of start times in format "HH:MM:SS"
-        end_times: list of end times in format "HH:MM:SS"
-        strengths: list of strength values for each interval
-        reference_start: Reference start time of the output time series
-        reference_end: Reference end time of the output time series
-        from_unit: Unit of the input strengths (e.g., "kg/s", "kmol/s")
-        to_unit: Desired unit for the output strengths (e.g., "kg/s", "kmol/s")
-        gas_mass: Molecular mass of the gas (float) or gas name (str)
-            for ucat conversion
-        time_format: Format of the input start/end times (default is "HH:MM:SS")
-        spacing: Time spacing for the output time profile
+        start_times: Start times for each interval.
+        end_times: End times for each interval.
+        strengths: Source strength values for each interval.
+        reference_start: Start time of the output time series.
+        reference_end: End time of the output time series.
+        from_unit: Unit of the input strengths.
+        to_unit: Desired unit for the output strengths.
+        gas_mass: Molecular mass or gas name for unit conversion.
+        time_format: Format of the input start and end times.
+        spacing: Time spacing for the output profile.
 
     Returns:
-        xr.Dataset with strength profiles, dimensions (time, source)
+        Dataset with source-by-time strength profiles.
+
+    Raises:
+        ValueError: If the reference period or any interval is inverted.
     """
     strength_values = np.array(strengths)
     strengths_converted = np.atleast_1d(
@@ -218,6 +223,7 @@ def create_strength_profiles(
 
 
 def _parse_reference(ref: Union[pd.Timestamp, str], name: str) -> pd.Timestamp:
+    """Parse a reference timestamp and normalise it to UTC."""
     # Allow "HH:MM:SS" strings by anchoring to a fixed UTC date.
     if isinstance(ref, str):
         parsed = pd.to_datetime(f"1970-01-01 {ref}", utc=True)
@@ -261,7 +267,10 @@ def briggs_momentum_rise(
             Only "neutral" is supported in this implementation.
 
     Returns:
-        float: Plume rise above source Δh (m).
+        Plume rise above the source in meters.
+
+    Raises:
+        ValueError: If inputs are non-physical or stability is not neutral.
     """
     _validate_input(x, u, d, vs)
 
@@ -319,7 +328,10 @@ def asme_momentum_rise(
         vs: Stack exit velocity (m/s).
 
     Returns:
-        float: Plume rise above source Δh (m).
+        Plume rise above the source in meters.
+
+    Raises:
+        ValueError: If inputs are non-physical.
     """
     _validate_input(x, u, d, vs)
 
@@ -358,7 +370,7 @@ def _generic_plume_rise_form(
         a: Exponent for wind speed.
 
     Returns:
-        float or np.ndarray: Plume rise above source Δh (m).
+        Plume rise above the source in meters.
     """
     return e * (x**b) * (u**-a)
 
@@ -369,6 +381,7 @@ def _validate_input(
     d: Union[float, np.ndarray],
     vs: Union[float, np.ndarray],
 ) -> None:
+    """Validate plume-rise inputs for positive physical values."""
     if np.array(x).any() < 0:
         raise ValueError("x must be >= 0 (m).")
     if np.array(u).any() <= 0:

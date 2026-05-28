@@ -1,3 +1,5 @@
+"""Utilities for simple array transformations used in model experiments."""
+
 import xarray as xr
 
 
@@ -5,12 +7,12 @@ def flip_data(data: xr.Dataset, flip_x: bool, flip_y: bool) -> xr.Dataset:
     """Flip all 2D variables in a dataset along the x and/or y axis.
 
     Args:
-        data (xr.Dataset): The dataset containing the variables to flip.
-        flip_x (bool): Whether to flip the variables along the x-axis.
-        flip_y (bool): Whether to flip the variables along the y-axis.
+        data: Dataset containing variables to flip.
+        flip_x: Flip variables along the x-axis.
+        flip_y: Flip variables along the y-axis.
 
     Returns:
-        xr.Dataset: The dataset with the flipped variables.
+        Dataset with all x/y variables flipped as requested.
     """
     # get all variables with dims "x" and "y"
     vars_to_flip = [
@@ -25,15 +27,15 @@ def flip_data(data: xr.Dataset, flip_x: bool, flip_y: bool) -> xr.Dataset:
 
 
 def flip_variable(arr: xr.DataArray, flip_x: bool, flip_y: bool) -> xr.DataArray:
-    """Rotate a 2D variable by a given angle.
+    """Flip a 2D variable along the x and/or y axis.
 
     Args:
-        arr (xr.DataArray): The variable to rotate. Must have dimensions 'x' and 'y'.
-        flip_x (bool): Whether to flip the variable along the x-axis.
-        flip_y (bool): Whether to flip the variable along the y-axis.
+        arr: Variable to flip. Must have x and y dimensions.
+        flip_x: Flip the variable along the x-axis.
+        flip_y: Flip the variable along the y-axis.
 
     Returns:
-        xr.DataArray: The flipped variable.
+        Flipped variable with the original dimension order and coordinates.
     """
     arr_flipped = arr.copy(deep=True)
     if flip_x:
@@ -54,7 +56,7 @@ def flip_variable(arr: xr.DataArray, flip_x: bool, flip_y: bool) -> xr.DataArray
 def scale_emissions(
     data: xr.Dataset, scale_factor: float, gas: str = "CH4"
 ) -> xr.Dataset:
-    """Scale emissions data to simulate different emission rates."""
+    """Scale a gas emission variable in a dataset."""
     data = data.copy(deep=True)
     if gas in data.data_vars:
         data[gas] *= scale_factor

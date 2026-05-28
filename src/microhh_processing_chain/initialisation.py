@@ -1,4 +1,5 @@
-import re
+"""Case lifecycle helpers for MicroHH simulations."""
+
 import json
 import logging
 import re
@@ -58,6 +59,7 @@ class Case:
 
     @directory.setter
     def directory(self, value: Union[str, Path]) -> None:
+        """Set the directory of the case."""
         self._directory = Path(value)
 
     @property
@@ -69,6 +71,7 @@ class Case:
 
     @ini_file_path.setter
     def ini_file_path(self, value: Union[str, Path]) -> None:
+        """Set the path to the INI file of the case."""
         self._ini_file_path = Path(value)
 
     @property
@@ -80,6 +83,7 @@ class Case:
 
     @scratch_path.setter
     def scratch_path(self, value: Union[str, Path]) -> None:
+        """Set the scratch path of the case."""
         self._scratch_path = Path(value)
 
     @property
@@ -107,6 +111,7 @@ class Case:
 
     @config.setter
     def config(self, value: mht.Read_namelist) -> None:
+        """Set the loaded INI configuration."""
         self._config = value
 
     @property
