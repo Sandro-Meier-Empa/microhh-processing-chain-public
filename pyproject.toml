@@ -60,3 +60,41 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py39" # to prevent warnings of not using | for union types
+line-length = 88
+exclude = ["**/archive"]
+
+[tool.ruff.lint]
+select = [
+    "A",    # flake8-builtins — shadows of Python builtins
+    "ANN",  # flake8-annotations — missing type annotations
+    "B",    # flake8-bugbear — likely bugs and design problems
+    "C4",   # flake8-comprehensions — suboptimal comprehensions
+    "D",    # pydocstyle — docstring conventions
+    "E",    # pycodestyle errors — PEP 8 style errors
+    "F",    # pyflakes — undefined names, unused imports
+    "G",    # flake8-logging-format — logging anti-patterns
+    "I",    # isort — import ordering
+    "N",    # pep8-naming — naming convention violations
+    "PTH",  # flake8-use-pathlib — prefer pathlib over os.path
+    "RUF",  # Ruff-native rules — high quality, low noise
+    "SIM",  # flake8-simplify — simplifiable code patterns
+    "T10",  # flake8-debugger — leftover debugger statements
+    "TRY",  # tryceratops — exception handling anti-patterns
+    "UP",   # pyupgrade — outdated syntax modernisation
+    "W",    # pycodestyle warnings — PEP 8 style warnings
+]
+ignore = [
+    "D100",    # missing docstring in public module
+    "D103",    # missing docstring in public function
+    "D104",    # missing docstring in public package
+    "D107",    # missing docstring in __init__ — args go in class docstring (Google style)
+    "D203",    # conflicts with D211
+    "D213",    # conflicts with D212
+    "TRY003",  # long exception messages — too pedantic for simple raises
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

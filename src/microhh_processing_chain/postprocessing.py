@@ -1,42 +1,43 @@
 import logging
-import os
 import re
 import shlex
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Literal, Optional, Tuple, Union, cast
+from typing import Literal, Optional, Union, cast
+
+import microhh_py.convert_3d_to_nc as convert_3d_to_nc
+import microhh_py.cross_to_nc as cross_to_nc
+import microhh_py.microhh_tools as mht
+import netCDF4
+import numpy as np
+import pandas as pd
+import scipy
+import ucat
+import xarray as xr
+from tqdm.auto import tqdm
 
 import microhh_processing_chain.cscs as cscs
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.spatial as spatial
-import microhh_py.convert_3d_to_nc as convert_3d_to_nc
-import microhh_py.cross_to_nc as cross_to_nc
-import microhh_py.microhh_tools as mht
-import netCDF4 as nc4
-import numpy as np
-import pandas as pd
-import scipy
-import ucat
-import xarray as xr
 from microhh_processing_chain import utils
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
 from microhh_processing_chain.enums import Precision
-from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
 
 class PostProcessing:
-    def __init__(self, case: init.Case) -> None:
-        """Class used for post-processing MicroHH cases and handling the output.
+    """Class used for post-processing MicroHH cases and handling the output.
 
-        Args:
-            case (init.Case):
-                Case to post-process.
-        """
+    Args:
+        case (init.Case):
+            Case to post-process.
+    """
+
+    def __init__(self, case: init.Case) -> None:
         self.case = case
 
     def process_case_on_alps(
@@ -45,11 +46,12 @@ class PostProcessing:
         py_file_path: str,
         job_name: str,
         python_path: str,
-        additional_args: dict[str, object] = {},
+        additional_args: Optional[dict] = None,
         overwrite: bool = False,
         start_jobs: bool = True,
     ) -> Union[str, Path]:
         """Submit a bash script to process a case on alps.
+
         Make sure that the python venv used for processing was created with the
         same uenv as the one in alps_setup.
 
@@ -64,14 +66,19 @@ class PostProcessing:
             python_path (str):
                 Path of the python environment to use.
             additional_args (dict, optional):
-                Additional arguments for the function called in the python script. Defaults to {}.
+                Additional arguments for the function called in the python script.
+            overwrite (bool, optional):
+                Specify if an existing sbatch script should be overwritten.
             start_jobs (bool, optional):
-                Specify if the job should be starte. Defaults to True.
+                Specify if the job should be started. Defaults to True.
 
         Returns:
             Union[str, Path]:
-                Path to the created bash script.
+                Path to the created sbatch script.
         """
+        if additional_args is None:
+            additional_args = {}
+
         job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
 
         # create command for bash script
@@ -91,21 +98,21 @@ class PostProcessing:
 
         cmd = shlex.join(cmd_parts)
 
-        # submit bash script to run post processing in parallel on alps
+        # submit sbatch script to run post processing in parallel on alps
         job_file = Path(self.case.scratch_path, f"{job_name_formatted}.sbatch")
 
         if job_file.exists() and overwrite:
-            os.remove(job_file)
+            job_file.unlink()
 
         if not job_file.exists() or overwrite:
-            job_file = alps_setup.create_bash_script(
+            job_file = alps_setup.create_sbatch_script(
                 commands=cmd,
                 job_name=job_name_formatted,
                 file_path=job_file,
                 scratch_path=self.case.scratch_path,
             )
         else:
-            logger.info(f"Reading existing bash script {job_file}")
+            logger.info("Reading existing sbatch script %s", job_file)
 
         if start_jobs:
             # Launch the job on alps
@@ -117,7 +124,7 @@ class PostProcessing:
 
     def create_3d_output(
         self,
-        vars: Union[str, list],
+        variables: Union[str, list],
         precision: Union[Precision, str] = Precision.SINGLE,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
@@ -125,10 +132,10 @@ class PostProcessing:
         nprocs: Optional[int] = None,
         overwrite: bool = False,
     ) -> None:
-        """Create 3D netCDF files for the variables specified
+        """Create 3D netCDF files for the variables specified.
 
         Args:
-            vars (Union[str, list]):
+            variables (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
             precision (str, optional. Default: "double"):
@@ -144,13 +151,13 @@ class PostProcessing:
             overwrite (bool, optional. Default: False):
                 Specify if existing .nc files should be overwritten.
         """
-        vars = np.atleast_1d(vars).tolist()
+        variables = np.atleast_1d(variables).tolist()
 
-        if vars:
+        if variables:
             convert_3d_to_nc.run_conversion(
                 filename=f"{self.case.name}.ini",
                 directory=self.case.directory,
-                variables=vars,
+                variables=variables,
                 precision=(
                     precision.value if isinstance(precision, Precision) else precision
                 ),
@@ -163,7 +170,7 @@ class PostProcessing:
 
     def create_2d_output(
         self,
-        vars: Union[str, list],
+        variables: Union[str, list],
         modes: Optional[list] = None,
         indexes: Optional[list] = None,
         start_time: Optional[int] = None,
@@ -178,7 +185,7 @@ class PostProcessing:
         """Create cross-section netCDF files for the variables specified.
 
         Args:
-            vars (Union[str, list]):
+            variables (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
             modes (list, optional):
@@ -203,13 +210,13 @@ class PostProcessing:
             overwrite (bool, optional. Default: False):
                 Specify if existing files should be overwritten.
         """
-        vars = np.atleast_1d(vars).tolist()
-        if vars:
+        variables_list = np.atleast_1d(variables).tolist()
+        if variables_list:
             cross_to_nc.run_conversion(
                 filename=f"{self.case.name}.ini",
                 directory=self.case.directory,
                 modes=modes,
-                variables=vars,
+                variables=variables_list,
                 indexes=indexes,
                 starttime=start_time,
                 endtime=end_time,
@@ -227,7 +234,7 @@ class PostProcessing:
         self,
         store_path: Union[str, Path],
         overwrite: bool = False,
-        vars: Optional[Union[str, list]] = None,
+        variables: Optional[Union[str, list]] = None,
     ) -> None:
         """Move files used for running MicroHH to store for reproducibility.
 
@@ -236,7 +243,7 @@ class PostProcessing:
                 Path to the folder where the files should be moved to.
             overwrite (bool, optional):
                 Specify if existing files on 'store' should be overwritten.
-            vars (Union[str, list], optional):
+            variables (Union[str, list], optional):
                 Names of the processed {var}.nc files to move. Defaults to None.
         """
         store_path = Path(store_path) / self.case.full_name
@@ -246,7 +253,7 @@ class PostProcessing:
             store_path.mkdir(parents=True, exist_ok=True)
         elif overwrite:
             shutil.rmtree(store_path)
-            logger.warning(f"Overwriting {store_path}.")
+            logger.warning("Overwriting %s.", store_path)
             store_path.mkdir(parents=True)
 
         # Copy files for reproducibility
@@ -267,9 +274,9 @@ class PostProcessing:
                 pattern, store_path=store_path, overwrite=overwrite
             )
 
-        if vars is not None:
-            vars_list = np.atleast_1d(vars).tolist()
-            for var in vars_list:
+        if variables is not None:
+            variables_list = np.atleast_1d(variables).tolist()
+            for var in variables_list:
                 pattern = f"{var}.nc"
                 self.move_pattern_to_store(
                     pattern, store_path=store_path, overwrite=overwrite
@@ -288,7 +295,6 @@ class PostProcessing:
             overwrite (bool):
                 Specify if existing files or folders should be overwritten.
         """
-
         for item in self.case.directory.glob(pattern):
             dest_item = Path(store_path, item.name)
 
@@ -298,19 +304,27 @@ class PostProcessing:
                     if dest_item.exists() and overwrite:
                         shutil.rmtree(dest_item)
                     shutil.copytree(item, dest_item)
-                    logger.info(f"Successfully copied '{item.name}' to '{store_path}'.")
+                    logger.info(
+                        "Successfully copied '%s' to '%s'.", item.name, store_path
+                    )
                 else:
                     logger.info(
-                        f"'{item.name}' already exists in '{store_path}'. Skipping."
+                        "'%s' already exists in '%s'. Skipping.",
+                        item.name,
+                        store_path,
                     )
             else:
                 # Handle files
                 if not dest_item.exists() or overwrite:
                     shutil.copy(item, store_path)
-                    logger.info(f"Successfully copied '{item.name}' to '{store_path}'.")
+                    logger.info(
+                        "Successfully copied '%s' to '%s'.", item.name, store_path
+                    )
                 else:
                     logger.info(
-                        f"'{item.name}' already exists in '{store_path}'. Skipping."
+                        "'%s' already exists in '%s'. Skipping.",
+                        item.name,
+                        store_path,
                     )
 
     def zip_binary_files(
@@ -332,7 +346,7 @@ class PostProcessing:
         zip_file_path = Path(self.case.directory, zip_filename)
 
         if zip_file_path.exists():
-            logger.info(f"{zip_file_path} already exists. Skipping...")
+            logger.info("%s already exists. Skipping...", zip_file_path)
             return
 
         pattern = re.compile(rf"{file_pattern}\.\d{{7}}$")
@@ -342,7 +356,8 @@ class PostProcessing:
 
         if not matching_files:
             logger.warning(
-                f"No files matching the pattern '{file_pattern}' were found. Skipping..."
+                "No files matching the pattern '%s' were found. Skipping...",
+                file_pattern,
             )
             return
 
@@ -350,25 +365,27 @@ class PostProcessing:
             for file in tqdm(matching_files, desc="Zipping files", unit="file"):
                 zip_file.write(file, file.name)
 
-        logger.info(f"{len(matching_files)} files were zipped to '{zip_file_path}'.")
+        logger.info("%d files were zipped to '%s'.", len(matching_files), zip_file_path)
 
         if remove_files:
             for file in tqdm(matching_files, desc="Removing files", unit="file"):
                 file.unlink()
 
     def unzip_binary_files(self, remove_zip_file: bool = False) -> None:
-        """Unzip the binary grid files to scratch"""
+        """Unzip the binary grid files to scratch."""
         zip_filename = Path(self.case.directory, "binary_grid_files.zip")
 
         if not zip_filename.exists():
-            logger.warning(f"{zip_filename} does not exist. Skipping...")
+            logger.warning("%s does not exist. Skipping...", zip_filename)
             return
 
         with zipfile.ZipFile(zip_filename, "r") as zip_ref:
             zip_ref.extractall(self.case.directory)
 
         logger.info(
-            f"Files from '{zip_filename}' successfully extracted to '{self.case.directory}'"
+            "Files from '%s' successfully extracted to '%s'",
+            zip_filename,
+            self.case.directory,
         )
 
         if remove_zip_file:
@@ -382,6 +399,8 @@ class PostProcessing:
         Args:
             variable (str):
                 Variable name of dataset to open.
+            chunks (Union[str, dict], optional):
+                Chunks used when processing the netCDF files with xarray.
 
         Returns:
             xr.Dataset: 3D netCDF file from model output.
@@ -389,23 +408,22 @@ class PostProcessing:
         file_path = Path(self.case.directory, f"{variable.lower()}.nc")
 
         if not file_path.exists():
-            self.create_3d_output(vars=variable.lower())
+            self.create_3d_output(variables=variable.lower())
 
         data = io.open_microhh_nc(case=self.case, variable=variable, chunks=chunks)
         data = self._nc_assign_names_and_attributes(data)
-        data = self._capitalise_variable_names(data)
 
         return data
 
     def _nc_assign_names_and_attributes(self, data: xr.Dataset) -> xr.Dataset:
         """Assign long_name and unit attributes to variables in a .nc file.
+
         FIXME: Check if swvmr is in ini file
 
         Args:
             data (xr.Dataset):
                 MicroHH dataset to which the attributes and units should be assigned.
         """
-        # Define the dictionary with variable attributes using a dictionary comprehension
         swvmr = np.all(self.case.config["source"]["swvmr"])
         if swvmr:
             unit = "mol mol-1"
@@ -415,7 +433,7 @@ class PostProcessing:
             prefix = "mass"
 
         variables = {
-            var: (f"{var} {prefix} mixing ratio", unit) for var in GAS_MOLAR_MASS.keys()
+            var: (f"{var} {prefix} mixing ratio", unit) for var in GAS_MOLAR_MASS
         }
         variables.update(
             {
@@ -438,34 +456,9 @@ class PostProcessing:
 
         return data
 
-    def _capitalise_variable_names(self, dataset: xr.Dataset) -> xr.Dataset:
-        """Capitalize variable names in an xr.Dataset if they match
-        keys in the GAS_MOLAR_MASS dictionary.
-
-        Args:
-            dataset (xr.Dataset): The xarray dataset to process.
-
-        Returns:
-            xr.Dataset: The dataset with variable names capitalized if they match
-            keys in the GAS_MOLAR_MASS dictionary.
-        """
-        for var_name in list(dataset.variables):
-            var_name_str = str(var_name)
-            new_var_name = self._capitalise_gas_key(var_name_str)
-            if new_var_name != var_name_str:
-                dataset = dataset.rename({var_name_str: new_var_name})
-        return dataset
-
-    def _capitalise_gas_key(self, variable_name: str) -> str:
-        """Capitalise gases to make them consistent with 'ddeq'"""
-        for key in GAS_MOLAR_MASS.keys():
-            if key in variable_name:
-                return key.upper()
-        return variable_name
-
     def handle_prognostic_variables(
         self,
-        vars: Union[str, list],
+        variables: Union[str, list],
         filename: str,
         overwrite: bool = False,
         save: bool = True,
@@ -475,7 +468,7 @@ class PostProcessing:
         """Combine .nc files of different variables to one file.
 
         Args:
-            vars (Union[str, list]):
+            variables (Union[str, list]):
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
             filename (str):
@@ -486,6 +479,8 @@ class PostProcessing:
                 Indicate if the created file should be saved.
             chunks (dict):
                 Chunks used when processing the netCDF files with xarray.
+            interpolate (bool. Default: True):
+                Whether to interpolate the variables to the grid midpoint.
 
         Returns:
             xr.Dataset: Dataset with combined variables.
@@ -499,43 +494,48 @@ class PostProcessing:
 
         # combine the prognostic variables into one dataset
         combined_dataset = self.combine_prognostic_variables(
-            vars=vars, chunks=chunks, interpolate=interpolate
+            variables=variables, chunks=chunks, interpolate=interpolate
         )
 
         # Save the combined dataset to a new NetCDF file
         if save:
-            logger.info(f"Saving {file_path}")
+            logger.info("Saving %s", file_path)
             combined_dataset.to_netcdf(file_path)
 
         return combined_dataset
 
     def combine_prognostic_variables(
         self,
-        vars: Union[str, list],
+        variables: Union[str, list],
         data: Optional[xr.Dataset] = None,
         chunks: Optional[Union[str, dict]] = None,
         interpolate: bool = True,
     ) -> xr.Dataset:
-        """Combine multiple prognostic variables of the MicroHH output to one
-        dataset. Specify either the variables to combine or give a dataset to
+        """Combine multiple prognostic variables of the MicroHH output.
+
+        Combine the specified variables into one dataset.
+        Specify either the variables to combine or give a dataset to
         which the new variables should be added.
 
         Args:
-            vars (Union[str, list]):
+            variables (Union[str, list]):
                 Variable(s) to add together or to assign to the given dataset.
             data (xr.Dataset):
                 If given, the variable(s) are added to this dataset
             chunks (Union[str, dict], optional):
                 Chunks used when processing the netCDF files with xarray.
+            interpolate (bool, optional):
+                Whether to interpolate the variables to the grid midpoint.
+                Defaults to True.
 
         Returns:
             xr.Dataset:
                 Dataset containing the combined variables.
         """
-        vars = np.atleast_1d(vars).tolist()
+        variables_list = np.atleast_1d(variables).tolist()
         datasets = [] if data is None else [data]
 
-        for var in vars:
+        for var in variables_list:
             dataset = self.open_3d_prognostic_variable(var, chunks=chunks)
 
             if interpolate:
@@ -569,7 +569,7 @@ class PostProcessing:
         new_dim_name = dim[:-1]
         data = data.rename({dim: new_dim_name})
 
-        logger.info(f"Interpolating {dim} to {new_dim_name}")
+        logger.info("Interpolating %s to %s", dim, new_dim_name)
 
         if dim == "zh":
             # Use initial conditions since vertical grid can be stretched
@@ -586,8 +586,7 @@ class PostProcessing:
         return data_interpolated
 
     def _get_dims_at_grid_boundaries(self, data: xr.Dataset) -> Optional[str]:
-        """Get the name of the dimension that is sampled at the boundaries of the
-        MicroHH grid
+        """Get the name of the dimension at the grid boundaries.
 
         Args:
             data (xr.Dataset):
@@ -632,7 +631,6 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with source information.
         """
-
         source_list = np.atleast_1d(self.case.config["source"]["sourcelist"])
         nr_sources = len(source_list)
 
@@ -710,6 +708,7 @@ class PostProcessing:
         microhh_crs: str = "epsg:32632",
     ) -> xr.Dataset:
         """Convert the modelled MicroHH grid into a lat/lon grid.
+
         If lat and lon are specified in the .ini file, these values are
         used as domain centres.
         If 'source' is provided, the lat and lon of the source
@@ -735,7 +734,6 @@ class PostProcessing:
         Returns:
             xr.Dataset: Dataset with transformed coordinates.
         """
-
         # if lat/lon is defined in .ini file: use these values to convert grid
         if (
             "lat" in self.case.config["grid"]
@@ -799,13 +797,15 @@ class PostProcessing:
         return data
 
     def _broadcast_coords_to_2d_grid(
-        self, data: xr.Dataset, coord_names: Tuple[str, str]
+        self, data: xr.Dataset, coord_names: tuple[str, str]
     ) -> xr.Dataset:
         """Broadcast 1D x and y coordinates to a 2D grid.
 
         Args:
             data (xr.Dataset):
                 Dataset with 1D x and y coordinates.
+            coord_names (tuple[str, str]):
+                Names of the x and y coordinates in the dataset.
 
         Returns:
             xr.Dataset:
@@ -823,10 +823,10 @@ class PostProcessing:
         self,
         data: xr.Dataset,
         start_date: Optional[Union[str, pd.Timestamp]] = None,
-        format: str = "%Y-%m-%d %H:%M:%S",
+        date_format: str = "%Y-%m-%d %H:%M:%S",
     ) -> xr.Dataset:
-        """Convert time into a timestamp to make the
-        dataset digestible by `ddeq`.
+        """Convert time into a timestamp to make the dataset digestible by `ddeq`.
+
         Use 'datetime_utc' if available in the .ini file.
 
         Args:
@@ -834,6 +834,8 @@ class PostProcessing:
                 The dataset to convert.
             start_date (Union[str, Timestamp], optional):
                 The start date as a string or a pandas Timestamp object.
+            date_format (str, optional):
+                The format of the start_date string. Defaults to "%Y-%m-%d %H:%M:%S".
 
         Returns:
             xr.Dataset:
@@ -844,8 +846,9 @@ class PostProcessing:
             start_date = self.case.config["time"]["datetime_utc"]
         elif "datetime_utc" in self.case.config["time"] and start_date is not None:
             logger.info(
-                f"Using {start_date} to overwrite {self.case.config['time']['datetime_utc']} "
-                f"in .ini file"
+                "Using %s to overwrite %s in .ini file",
+                start_date,
+                self.case.config["time"]["datetime_utc"],
             )
 
         if start_date is None:
@@ -856,7 +859,7 @@ class PostProcessing:
         tz = "UTC"
 
         if isinstance(start_date, str):
-            converted = pd.to_datetime(start_date, format=format)
+            converted = pd.to_datetime(start_date, format=date_format)
             if pd.isna(converted):
                 raise ValueError(f"Could not parse start_date: {start_date}")
             start_date = cast(pd.Timestamp, converted)
@@ -897,26 +900,31 @@ class PostProcessing:
         to_unit: str = "kg m-3",
         chunks: Optional[Union[str, dict]] = None,
     ) -> xr.Dataset:
-        """Convert the gas given in data to concentrations using modelled pressure
+        """Convert the gas given in data to concentrations.
+
+        Convert mixing ratio to concentraion using modelled pressure
         and potential temperature.
 
         Args:
             data (xr.Dataset):
-                Dataset containing the variable which should be converted to concentrations.
+                Dataset containing the variable which should be converted to
+                concentrations.
             gas (str, optional):
                 Gas for which the columns should be computed. Defaults to "ch4".
             to_unit (str, optional):
                 Concentration units to which the gas should be converted.
                 Defaults to "kg m-3".
+            chunks (Union[str, dict], optional):
+                Chunks used when processing the netCDF files with xarray.
         """
         required_prognostic_vars = [gas, "th"]
 
         # check if all required prognostic variables are in the dataset
         for var in required_prognostic_vars:
             if var not in data.data_vars:
-                logger.info(f"Adding '{var}' to the dataset.")
+                logger.info("Adding '%s' to the dataset.", var)
                 data = self.combine_prognostic_variables(
-                    vars=var, data=data, chunks=chunks
+                    variables=var, data=data, chunks=chunks
                 )
 
         # check if pressure is in the dataset
@@ -934,8 +942,11 @@ class PostProcessing:
             raise ValueError(f"No units defined for variable '{gas}'.")
 
         logger.info(
-            f"Converting {gas} mixing ratios [{from_unit}] to concentrations [{to_unit}].",
+            "Converting %s mixing ratios [%s] to concentrations [%s]. "
             "This might take a while.",
+            gas,
+            from_unit,
+            to_unit,
         )
 
         data[gas] = ucat.convert_points(
@@ -950,6 +961,19 @@ class PostProcessing:
         return data
 
     def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
+        """Add a variable from the statistics file to the given dataset.
+
+        Args:
+            data (xr.Dataset):
+                Dataset to which the variable should be added.
+            variable (str):
+                Name of the variable in the statistics file which should be added
+                to the dataset.
+
+        Returns:
+            xr.Dataset:
+                Dataset with the added variable.
+        """
         # read in statistics file
         stats = io.open_statistics(case=self.case)
 
@@ -986,7 +1010,7 @@ class PostProcessing:
         return data
 
     def add_absolute_temperature(self, data: xr.Dataset) -> xr.Dataset:
-        """FIXME
+        """FIXME.
 
         Args:
             data (xr.Dataset): _description_
@@ -998,7 +1022,7 @@ class PostProcessing:
 
         for var in required_vars:
             if var not in data.data_vars:
-                logger.info(f"Adding '{var}' to the dataset.")
+                logger.info("Adding '%s' to the dataset.", var)
                 data = self.add_statistics_variable(data, variable=var)
 
         # Calculate absolute temperature
@@ -1023,23 +1047,25 @@ class PostProcessing:
         FIXME
         """
         # Constants
-        R = scipy.constants.R  # Specific gas constant for dry air in J/(kg·K)
+        r = scipy.constants.R  # Specific gas constant for dry air in J/(kg·K)
         cp = 1004  # Specific heat capacity at constant pressure for dry air in J/(kg·K)
 
         # Calculate absolute temperature
-        absolute_temperature = theta * (p / p0) ** (R / cp)
+        absolute_temperature = theta * (p / p0) ** (r / cp)
 
         return absolute_temperature
 
-    def calculate_3D_tke(
+    def calculate_3d_tke(
         self, data: xr.Dataset, chunks: Optional[Union[str, dict]] = None
     ) -> xr.Dataset:
-        """Calculate the TKE based on the 3D prognostic variables of MicroHH
+        """Calculate the TKE based on the 3D prognostic variables of MicroHH.
 
         Args:
             data (xr.Dataset):
                 Dataset containing the required variables. If it does not contain
                 all variables, they are added.
+            chunks (Union[str, dict], optional):
+                Chunks used when processing the netCDF files with xarray.
 
         Returns:
             xr.Dataset:
@@ -1050,7 +1076,7 @@ class PostProcessing:
         for var in wind_components:
             if var not in data.data_vars:
                 data = self.combine_prognostic_variables(
-                    vars=var, data=data, chunks=chunks
+                    variables=var, data=data, chunks=chunks
                 )
 
         # compute temporal deviation for each wind component
@@ -1084,7 +1110,6 @@ class PostProcessing:
                 Method to read the modelled scalar fields. Choose 'binary' to read
                 the binary output files or 'netcdf' to read the netCDF output files.
         """
-
         stats = io.open_statistics(case=self.case)
         rhoref = stats.rhoref.values
         zh = stats.zh.values
@@ -1124,7 +1149,7 @@ class PostProcessing:
             # Assume variable name matches scalar, dimensions (time, z, y, x)
             arr = ds[scalar].values
             mass_array = []
-            for i, time in enumerate(time_range):
+            for i, _ in enumerate(time_range):
                 fld = arr[i]
                 mass = np.sum(rhoref[:, None, None] * fld * dx * dy * dz[:, None, None])
                 mass_array.append(float(mass))
@@ -1177,9 +1202,8 @@ def merge_restart_statistics(
             stat_file1 will be used for time < split_time and data from
             stat_file2 will be used for time >= split_time.
     """
-
     if Path(combined_stat_file).exists():
-        logger.info(f"{combined_stat_file} already exists. Skipping...")
+        logger.info("%s already exists. Skipping...", combined_stat_file)
         return
 
     def clean_time(ds: xr.Dataset, times: np.ndarray) -> xr.Dataset:
@@ -1198,11 +1222,11 @@ def merge_restart_statistics(
     with xr.open_dataset(stat_file2, decode_times=False) as ds2_root:
         times2 = np.rint(ds2_root.time.values).astype(np.int64)
 
-    with nc4.Dataset(stat_file1, "r") as nc:
+    with netCDF4.Dataset(stat_file1, "r") as nc:
         group_names = list(nc.groups.keys())
 
     # Write root group first.
-    all_groups = [None] + group_names
+    all_groups = [None, *group_names]
 
     for i, group in enumerate(all_groups):
         ds1 = xr.open_dataset(stat_file1, group=group, decode_times=False)
@@ -1239,14 +1263,13 @@ def merge_restart_statistics(
         ds1.close()
         ds2.close()
 
-    logger.info(f"Finished merging into {combined_stat_file}")
+    logger.info("Finished merging into %s", combined_stat_file)
 
 
 def add_gaussian_noise(
     data: xr.Dataset, var_name: str, gas: str, std: float, noise_units: str
 ) -> xr.Dataset:
-    """
-    Add Gaussian noise to a specified variable in the dataset.
+    """Add Gaussian noise to a specified variable in the dataset.
 
     Args:
         data (xr.Dataset):
@@ -1261,9 +1284,9 @@ def add_gaussian_noise(
             Unit of the noise added.
 
     Returns:
-        xr.Dataset: The dataset with the specified variable modified to include Gaussian noise.
+        xr.Dataset: The dataset with the specified variable modified to include
+        Gaussian noise.
     """
-
     # Create a deep copy of the dataset to avoid modifying the original in-place
     data_copy = data.copy(deep=True)
 
@@ -1321,13 +1344,12 @@ def degrade_resolution(
 
     for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
         if all(dim in data.dims for dim in dims):
-            degraded_data = getattr(
+            degraded_data = (
                 data.coarsen(
                     {zonal_dim: zonal_res, meridional_dim: meridional_res},
                     boundary="trim",
-                ),
-                "mean",
-            )()
+                )
+            ).mean()  # pyright: ignore[reportAttributeAccessIssue]
             return degraded_data
 
     raise ValueError(f"Unknown spatial dimensions: {data.dims}")
@@ -1336,12 +1358,14 @@ def degrade_resolution(
 def format_data_for_cdo(
     data_coord: xr.Dataset, out_path: Union[str, Path], save: bool = True
 ) -> xr.Dataset:
-    """Format the data for use with the CDO library
+    """Format the data for use with the CDO library.
 
     Args:
-        data_coord (xr.Dataset): Dataset with coordinates to format for CDO compatibility.
+        data_coord (xr.Dataset): Dataset with coordinates to format for CDO
+            compatibility.
         out_path (Union[str, Path]): Path where the formatted dataset should be saved.
-        save (bool, optional): Whether to save the formatted dataset to out_path. Defaults to True.
+        save (bool, optional): Whether to save the formatted dataset to out_path.
+            Defaults to True.
 
     Returns:
         xr.Dataset: Formatted dataset.
@@ -1459,22 +1483,25 @@ def create_2d_3d_output_script(
 
     if ncpus_per_task is not None and ncpus_per_task < ncases * nvars:
         logger.warning(
-            f"cpus_per_task in alps_setup is set to {ncpus_per_task}, but {ncases * nvars} "
-            f"CPUs are required to process all variables in parallel."
-            f"cpus_per_task will be set to {ncases * nvars}."
+            "cpus_per_task in alps_setup is set to %d, but %d CPUs are required to "
+            "process all variables in parallel. cpus_per_task will be set to %d.",
+            ncpus_per_task,
+            ncases * nvars,
+            ncases * nvars,
         )
         alps_setup.cpus_per_task = ncases * nvars
     if ncpus_per_task is None:
         alps_setup.cpus_per_task = ncases * nvars
         logger.info(
-            f"cpus_per_task in alps_setup is not set. Setting it to {ncases * nvars}."
+            "cpus_per_task in alps_setup is not set. Setting it to %d.",
+            ncases * nvars,
         )
 
     job_name_formatted = job_name.replace(" ", "_").replace("-", "_")
     job_file = Path(scratch_path, f"{job_name_formatted}.sbatch")
 
     if job_file.exists() and not overwrite:
-        logger.info(f"Reading existing bash script {job_file}")
+        logger.info("Reading existing bash script %s", job_file)
         return job_file
 
     commands = _get_2d_3d_output_commands(
@@ -1486,7 +1513,7 @@ def create_2d_3d_output_script(
         sample_time=sample_time,
     )
 
-    job_file = alps_setup.create_bash_script(
+    job_file = alps_setup.create_sbatch_script(
         commands=commands,
         job_name=job_name_formatted,
         file_path=job_file,
@@ -1568,9 +1595,9 @@ def _get_2d_3d_output_commands(
 
 __all__ = [
     "PostProcessing",
-    "merge_restart_statistics",
     "add_gaussian_noise",
+    "create_2d_3d_output_script",
     "degrade_resolution",
     "format_data_for_cdo",
-    "create_2d_3d_output_script",
+    "merge_restart_statistics",
 ]

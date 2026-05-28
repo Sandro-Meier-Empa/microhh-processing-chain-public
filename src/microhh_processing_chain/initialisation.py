@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -10,6 +9,7 @@ from typing import Optional, Union
 
 import microhh_py.microhh_tools as mht
 import pandas as pd
+
 from microhh_processing_chain import cscs, utils
 from microhh_processing_chain.enums import FileType, InitMethod
 
@@ -17,21 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 class Case:
+    """Define a case for MicroHH.
+
+    Can be used for initialising the model, pre-processing,
+    post-processing, and visualisation.
+
+    Args:
+        name: Name of the case. Must be set up in ``microhh/cases``.
+        suffix: Suffix for the specific model run.
+            Combined as ``{name}.{suffix}``.
+    """
+
     def __init__(
         self,
         name: str,
         suffix: str,
     ) -> None:
-        """Define a case for MicroHH.
-
-        Can be used for initialising the model, pre-processing,
-        post-processing, and visualisation.
-
-        Args:
-            name: Name of the case. Must be set up in ``microhh/cases``.
-            suffix: Suffix for the specific model run.
-                Combined as ``{name}.{suffix}``.
-        """
         self.name = name
         self.suffix = suffix
         self.full_name = f"{name}.{suffix}" if suffix else f"{name}"
@@ -45,8 +46,11 @@ class Case:
         self._config: Optional[mht.Read_namelist] = None
         self.job_id: Optional[int] = None
 
+        return None
+
     @property
     def directory(self) -> Path:
+        """Get the directory of the case."""
         if self._directory is None:
             raise RuntimeError("File directory has not been set yet.")
         return self._directory
@@ -57,6 +61,7 @@ class Case:
 
     @property
     def ini_file_path(self) -> Path:
+        """Get the path to the INI file of the case."""
         if self._ini_file_path is None:
             raise RuntimeError("INI file path has not been set yet.")
         return self._ini_file_path
@@ -67,6 +72,7 @@ class Case:
 
     @property
     def scratch_path(self) -> Path:
+        """Get the scratch path of the case."""
         if self._scratch_path is None:
             raise RuntimeError("Scratch path has not been set yet.")
         return self._scratch_path
@@ -77,10 +83,12 @@ class Case:
 
     @property
     def out_file_path(self) -> Path:
+        """Get the path to the output file of the case."""
         return Path(self.directory, f"{self.name}.out")
 
     @property
     def initial_conditions_file_path(self) -> Path:
+        """Get the path to the initial conditions file of the case."""
         return Path(self.directory, f"{self.name}_input.nc")
 
     @property
@@ -91,6 +99,7 @@ class Case:
 
     @property
     def config(self) -> mht.Read_namelist:
+        """Get the configuration of the case from the INI file."""
         if self._config is None:
             raise RuntimeError("Config has not been loaded yet.")
         return self._config
@@ -117,11 +126,13 @@ class Case:
 
     # add method when printing case
     def __repr__(self) -> str:
-        # format ini file content as string
-        # read ini file and format content
+        """Return a string representation of the case.
+
+        Includes the name, suffix, directory, and INI file content.
+        """
         ini_content = ""
         if self._ini_file_path is not None and self._ini_file_path.exists():
-            with open(self._ini_file_path, "r") as f:
+            with self._ini_file_path.open("r") as f:
                 ini_content = f.read()
 
         case_str = (
@@ -203,10 +214,12 @@ class Case:
             self.method in [InitMethod.DEFAULT.value, InitMethod.RERUN.value]
             and init_from is None
         ):
-            raise ValueError(
+            msg = (
                 "When using 'default' or 'rerun' method, please provide "
-                "the path of the directory containing `.ini` and initial condition files."
+                "the path of the directory containing `.ini` and initial "
+                "condition files."
             )
+            raise ValueError(msg)
 
     def _handle_scratch_dir(self, overwrite: bool = False) -> None:
         """Create the case directory on *scratch*.
@@ -218,19 +231,18 @@ class Case:
         Args:
             overwrite: Whether to overwrite an existing directory.
         """
-
         # set up directory on scratch
         if not self.scratch_path.exists():
-            logger.info(f"Creating {self.scratch_path}")
-            os.makedirs(self.scratch_path)
+            logger.info("Creating %s", self.scratch_path)
+            self.scratch_path.mkdir(parents=True)
         elif overwrite:
             with utils.confirm_action(
                 f"Are you sure you want to overwrite {self.scratch_path}?"
             ) as confirmed:
                 if confirmed:
                     shutil.rmtree(self.scratch_path)
-                    logger.info(f"Overwriting {self.scratch_path}")
-                    os.makedirs(self.scratch_path)
+                    logger.info("Overwriting %s", self.scratch_path)
+                    self.scratch_path.mkdir(parents=True)
 
     def _handle_running_method(
         self, init_from: Optional[Union[str, Path]] = None
@@ -270,7 +282,8 @@ class Case:
             self._copy_initial(case_path)
         else:
             raise ValueError(
-                f"{self.method} is not available. Use 'default', 'interactive' or 'rerun'."
+                f"{self.method} is not available. "
+                "Use 'default', 'interactive' or 'rerun'."
             )
         self.config = mht.Read_namelist(self.ini_file_path)
 
@@ -360,7 +373,8 @@ class Case:
 
         if len(matched_files) != 1:
             raise FileNotFoundError(
-                f"Expected one file with pattern '{pattern}' in '{case_path}', found {len(matched_files)}."
+                f"Expected one file with pattern '{pattern}' in '{case_path}', "
+                f"found {len(matched_files)}."
             )
 
         src = matched_files[0]
@@ -381,7 +395,7 @@ class Case:
         )
 
     def _copy_initial(self, case_path: Union[str, Path]) -> None:
-        """Copy the initial conditions (``*_input.nc``) file from *case_path* to scratch.
+        """Copy the initial conditions file from `case_path` to scratch.
 
         Args:
             case_path: Source directory containing the input file.
@@ -410,9 +424,8 @@ class Case:
                 return
 
             for item in self.scratch_path.iterdir():
-                if item.name not in files_to_keep:
-                    if item.is_file():
-                        item.unlink()
+                if item.name not in files_to_keep and item.is_file():
+                    item.unlink()
 
     def _create_initial(self, case_path: Union[str, Path]) -> None:
         """Create the initial conditions by running the case's input script.
@@ -428,9 +441,11 @@ class Case:
         if py_script_path.exists():
             subprocess.run(["python", str(py_script_path)], cwd=case_path)
         else:
-            logger.info(f"{py_script_path} not found.")
+            logger.info("%s not found.", py_script_path)
 
-    def overwrite_ini(self, settings: dict = {}, overwrite: bool = True) -> None:
+    def overwrite_ini(
+        self, settings: Optional[dict] = None, overwrite: bool = True
+    ) -> None:
         """Overwrite the ``.ini`` file of the case with the given settings.
 
         Clears all existing groups before applying *settings*.
@@ -440,6 +455,9 @@ class Case:
                 pairs to write.
             overwrite: Whether to allow overwriting the existing file.
         """
+        if settings is None:
+            settings = {}
+
         self.config.groups = {}
 
         self.modify_ini(settings=settings, overwrite=overwrite)
@@ -479,7 +497,6 @@ class Case:
                 ``'sbatch_out'``).
             ValueError: If *filetype* is not a recognised value.
         """
-
         # Normalize filetype to string
         filetype_val = (
             filetype.value if isinstance(filetype, FileType) else str(filetype).lower()
@@ -499,7 +516,8 @@ class Case:
             filename = max(matches, key=lambda f: f.stat().st_mtime)
         else:
             raise ValueError(
-                f"{filetype} is not available. Use 'ini', 'out', 'sbatch' or 'sbatch_out'."
+                f"{filetype} is not available. "
+                "Use 'ini', 'out', 'sbatch' or 'sbatch_out'."
             )
 
         file_path = self.directory / filename
@@ -507,7 +525,7 @@ class Case:
         if file_path.exists():
             utils.open_in_vscode(file_path)
         else:
-            logger.info(f"{file_path} does not exist.")
+            logger.info("%s does not exist.", file_path)
 
     def calculate_benchmark(
         self, save: bool = False, ssh_connect: Optional[str] = None
@@ -567,7 +585,7 @@ class Case:
         if save:
             # Save benchmark information as a .json file
             json_file_path = self.directory / f"{self.name}_benchmark.json"
-            with open(json_file_path, "w") as f:
+            with json_file_path.open("w") as f:
                 json.dump(benchmark, f, indent=4)
 
         return benchmark
@@ -588,7 +606,7 @@ class Case:
                 f"Benchmark file '{json_file_path}' does not exist."
             )
 
-        with open(json_file_path, "r") as f:
+        with json_file_path.open("r") as f:
             benchmark = json.load(f)
 
         # add some newly calculated fields
@@ -685,7 +703,7 @@ class Case:
                             item.unlink()
                         elif item.is_dir():
                             shutil.rmtree(item)
-                logger.info(f"Cleaned case at {self.directory}.")
+                logger.info("Cleaned case at %s.", self.directory)
 
     def delete(self) -> None:
         """Delete this MicroHH case by removing its directory.
@@ -705,9 +723,9 @@ class Case:
         ) as confirmed:
             if confirmed:
                 shutil.rmtree(self.directory)
-                logger.info(f"Deleted case at {self.directory}.")
+                logger.info("Deleted case at %s.", self.directory)
 
-    def summarise_files(self):
+    def summarise_files(self) -> None:
         """Summarise output files in the case directory."""
         files = [f.name for f in self.directory.iterdir() if f.is_file()]
 
@@ -751,13 +769,13 @@ class Case:
             n = len(ts)
             t0, t1 = ts[0], ts[-1]
             # Detect uniform step
-            steps = set(ts[i + 1] - ts[i] for i in range(len(ts) - 1)) if n > 1 else {0}
+            steps = {ts[i + 1] - ts[i] for i in range(len(ts) - 1)} if n > 1 else {0}
             if len(steps) == 1:
                 dt = steps.pop()
                 step_str = f"step={dt}"
             else:
                 step_str = "irregular steps"
-            print(f"  {base:<40s}  {n:>4d} files  [{t0:07d} – {t1:07d}]  {step_str}")
+            print(f"  {base:<40s}  {n:>4d} files  [{t0:07d} - {t1:07d}]  {step_str}")
 
         if nc_files:
             print()
@@ -798,9 +816,9 @@ class Case:
             dst = case.directory / file
             if src.exists():
                 shutil.copy(str(src), str(dst))
-                logger.info(f"Copied {file} to {case.directory}")
+                logger.info("Copied %s to %s", file, case.directory)
             else:
-                logger.warning(f"File {src} does not exist.")
+                logger.warning("File %s does not exist.", src)
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
@@ -815,9 +833,9 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
         case_path2: Path to the second case directory (or file).
     """
     # ANSI Colors
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    RESET = "\033[0m"
+    red = "\033[91m"
+    green = "\033[92m"
+    reset = "\033[0m"
 
     case_path1 = Path(case_path1)
     case_path2 = Path(case_path2)
@@ -839,20 +857,20 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
     for group in sorted(all_groups):
         # Case A: Group completely removed in case2
         if group in self_groups and group not in other_groups:
-            print(f"{RED}[Group: {group}] removed{RESET}")
+            print(f"{red}[Group: {group}] removed{reset}")
             # Show all variables in this group as deleted
             for var in case1.config.groups[group]:
                 val = case1.config[group][var]
-                print(f"{RED}- {var} = {val}{RESET}")
+                print(f"{red}- {var} = {val}{reset}")
             continue
 
         # Case B: Group newly added in case2
         if group not in self_groups and group in other_groups:
-            print(f"{GREEN}[Group: {group}] added{RESET}")
+            print(f"{green}[Group: {group}] added{reset}")
             # Show all variables in this group as added
             for var in case2.config.groups[group]:
                 val = case2.config[group][var]
-                print(f"{GREEN}+ {var} = {val}{RESET}")
+                print(f"{green}+ {var} = {val}{reset}")
             continue
 
         # Case C: Group exists in both (Check for variable differences)
@@ -860,19 +878,19 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
         other_vars = set(case2.config.groups[group])
         all_vars = self_vars | other_vars
 
-        # Buffer changes so we only print the group header if there is an actual difference
+        # Buffer changes so we only print the group header if there is a difference
         changes = []
 
         for var in sorted(all_vars):
             # Variable removed
             if var in self_vars and var not in other_vars:
                 val = case1.config[group][var]
-                changes.append(f"{RED}- {var} = {val}{RESET}")
+                changes.append(f"{red}- {var} = {val}{reset}")
 
             # Variable added
             elif var not in self_vars and var in other_vars:
                 val = case2.config[group][var]
-                changes.append(f"{GREEN}+ {var} = {val}{RESET}")
+                changes.append(f"{green}+ {var} = {val}{reset}")
 
             # Variable modified
             else:
@@ -881,8 +899,8 @@ def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> N
 
                 # Convert to string for comparison to avoid type mismatches
                 if str(val_self) != str(val_other):
-                    changes.append(f"{RED}- {var} = {val_self}{RESET}")
-                    changes.append(f"{GREEN}+ {var} = {val_other}{RESET}")
+                    changes.append(f"{red}- {var} = {val_self}{reset}")
+                    changes.append(f"{green}+ {var} = {val_other}{reset}")
 
         # Only print if changes were found in this group
         if changes:

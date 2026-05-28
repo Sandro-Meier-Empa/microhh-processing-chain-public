@@ -68,10 +68,10 @@ def calculate_plume_psd(
     # Apply Tapering to prevent spectral leakage
     tapered_data = apply_2d_taper(plume_data)
 
-    F = fftpack.fft2(tapered_data)
-    F_shifted = fftpack.fftshift(F)
+    f = fftpack.fft2(tapered_data)
+    f_shifted = fftpack.fftshift(f)
     # normlise to satisfy Parseval's Theorem
-    psd_2d = (np.abs(F_shifted) ** 2) / (tapered_data.size)
+    psd_2d = (np.abs(f_shifted) ** 2) / (tapered_data.size)
 
     center = (psd_2d.shape[1] // 2, psd_2d.shape[0] // 2)
     psd_1d = radial_profile(psd_2d, center)
@@ -85,8 +85,7 @@ def calculate_plume_psd(
 
 
 def apply_2d_taper(data: np.ndarray) -> np.ndarray:
-    """
-    Applies a 2D Hanning window to the data to reduce spectral leakage in the FFT.
+    """Applies a 2D Hanning window to the data to reduce spectral leakage in the FFT.
 
     Args:
         data (np.ndarray): 2D array of plume concentration values.
@@ -116,7 +115,7 @@ def radial_profile(data: np.ndarray, center: tuple) -> np.ndarray:
     Returns:
         np.ndarray: 1D array of average power values as a function of radial distance.
     """
-    y, x = np.indices((data.shape))
+    y, x = np.indices(data.shape)
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
     r = r.astype(int)
 
@@ -128,7 +127,7 @@ def radial_profile(data: np.ndarray, center: tuple) -> np.ndarray:
 
 
 __all__ = [
-    "calculate_plume_centerline",
     "calculate_absolute_dispersion",
     "calculate_meandering_dispersion",
+    "calculate_plume_centerline",
 ]

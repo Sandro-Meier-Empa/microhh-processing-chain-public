@@ -1,6 +1,7 @@
-from typing import Literal, Optional, Tuple, Union, cast
+from typing import Literal, Optional, Union, cast
 
 import cartopy.crs as ccrs
+import ddeq
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -10,15 +11,31 @@ from pyproj import Transformer
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 
-import ddeq
-
-__all__ = [
-    "Domain",
-    "get_epsg_from_pyproj",
-]
-
 
 class Domain:
+    """Initialize the Domain object.
+
+    Adapted from https://github.com/microhh/microhhpy
+
+    Args:
+        xsize (int): Size of the domain in the x-direction (meters).
+        ysize (int): Size of the domain in the y-direction (meters).
+        itot (int): Number of grid points in the x-direction.
+        jtot (int): Number of grid points in the y-direction.
+        lon (float): Longitude of the reference point (degrees). Must be in the
+            same coordinate reference system as the provided EPSG code (if any).
+        lat (float): Latitude of the reference point (degrees). Must be in the
+            same coordinate reference system as the provided EPSG code (if any).
+        anchor (str or tuple): Anchor point for the reference coordinates.
+            Can be a string ("center", "lower left", "lower right", "upper left",
+            "upper right", "lower center",
+            "upper center", "center left", "center right") or a tuple of relative
+            offsets (x_rel, y_rel) in meters from the reference point.
+        epsg_code (str, optional): EPSG code for the coordinate reference system.
+            If None, it will be determined automatically based on the
+            provided latitude and longitude.
+    """
+
     def __init__(
         self,
         xsize: int,
@@ -43,26 +60,6 @@ class Domain:
         ] = "lower left",
         epsg_code: Optional[str] = None,
     ) -> None:
-        """Initialize the Domain object.
-        Adapted from https://github.com/microhh/microhhpy
-
-        Args:
-            xsize (int): Size of the domain in the x-direction (meters).
-            ysize (int): Size of the domain in the y-direction (meters).
-            itot (int): Number of grid points in the x-direction.
-            jtot (int): Number of grid points in the y-direction.
-            lon (float): Longitude of the reference point (degrees). Must be in the
-                same coordinate reference system as the provided EPSG code (if any).
-            lat (float): Latitude of the reference point (degrees). Must be in the
-                same coordinate reference system as the provided EPSG code (if any).
-            anchor (str or tuple): Anchor point for the reference coordinates. Can be a string
-                ("center", "lower left", "lower right", "upper left", "upper right", "lower center",
-                "upper center", "center left", "center right") or a tuple of relative offsets
-                (x_rel, y_rel) in meters from the reference point.
-            epsg_code (str, optional): EPSG code for the coordinate reference system. If None,
-                it will be determined automatically based on the provided latitude and longitude.
-        """
-
         if epsg_code is None:
             epsg_code_str = get_epsg_from_pyproj(lat, lon)
             epsg_code = f"epsg:{epsg_code_str}"
@@ -149,6 +146,18 @@ class Domain:
         y: Union[float, list[float], np.ndarray],
         meshgrid: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert x/y coordinates to longitude and latitude.
+
+        Args:
+            x (Union[float, list[float], np.ndarray]): x coordinates in meters.
+            y (Union[float, list[float], np.ndarray]): y coordinates in meters.
+            meshgrid (bool): Whether to return the output in meshgrid format (2D arrays
+                matching the shape of the input x and y). If False, returns 1D arrays.
+                Default is False.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple of (lon, lat) arrays.
+        """
         x = np.array(x)
         y = np.array(y)
 
@@ -165,6 +174,15 @@ class Domain:
         lon: Union[float, list[float], np.ndarray],
         lat: Union[float, list[float], np.ndarray],
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert longitude and latitude to x/y coordinates.
+
+        Args:
+            lon (Union[float, list[float], np.ndarray]): Longitude values.
+            lat (Union[float, list[float], np.ndarray]): Latitude values.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Tuple of (x, y) arrays.
+        """
         lon = np.array(lon)
         lat = np.array(lat)
 
@@ -175,9 +193,23 @@ class Domain:
         self,
         lon: Optional[Union[float, np.ndarray]] = None,
         lat: Optional[Union[float, np.ndarray]] = None,
-        figsize: Tuple[int, int] = (10, 8),
+        figsize: tuple[int, int] = (10, 8),
     ) -> Figure:
+        """Plot the domain boundaries and reference point.
 
+        Args:
+            lon (Optional[Union[float, np.ndarray]]):
+                Optional longitude values of points to plot.
+            lat (Optional[Union[float, np.ndarray]]):
+                Optional latitude values of points to plot.
+            figsize (tuple[int, int]): Size of the figure in inches.
+                Default is (10, 8).
+                The aspect ratio will be adjusted to match the domain dimensions.
+                If None, a default size will be used without adjusting for aspect ratio.
+
+        Returns:
+            Figure: Matplotlib Figure object containing the plot.
+        """
         fig, ax = plt.subplots(
             figsize=figsize,
             subplot_kw={"projection": ccrs.PlateCarree()},
@@ -217,9 +249,10 @@ class Domain:
 
     def create_grid_nc(self) -> xr.Dataset:
         """Create an xarray Dataset containing the grid information.
-        The dataset can be used to remap data to the same grid as the MicroHH simulation.
-        """
 
+        The dataset can be used to remap data to the same grid as the
+        MicroHH simulation.
+        """
         lon_grid, lat_grid = self.to_lonlat(self.x, self.y, meshgrid=True)
 
         data = xr.Dataset(
@@ -271,3 +304,9 @@ def get_epsg_from_pyproj(lat: float, lon: float) -> str:
     )
 
     return utm_crs_list[0].code
+
+
+__all__ = [
+    "Domain",
+    "get_epsg_from_pyproj",
+]

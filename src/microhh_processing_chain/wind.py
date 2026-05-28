@@ -1,35 +1,35 @@
 import logging
-import os
 from pathlib import Path
 from typing import Literal, Optional, Union
 
+import ddeq
 import ls2d
-import microhh_processing_chain.initialisation as init
-import microhh_processing_chain.io as io
-import microhh_processing_chain.preprocessing as pre
 import numpy as np
 import scipy
 import ucat
 import xarray as xr
-from microhh_processing_chain.constants import EARTH_ROTATION_RATE
-from microhh_processing_chain.enums import WindIntegrationMethod
 from scipy.optimize import fsolve
 from scipy.signal import welch
 from tqdm.auto import tqdm
 
-import ddeq
+import microhh_processing_chain.initialisation as init
+import microhh_processing_chain.io as io
+import microhh_processing_chain.preprocessing as pre
+from microhh_processing_chain.constants import EARTH_ROTATION_RATE
+from microhh_processing_chain.enums import WindIntegrationMethod
 
 logger = logging.getLogger(__name__)
 
 
 class WindProcessing:
-    def __init__(self, case: init.Case) -> None:
-        """Class used for post-processing MicroHH cases and handling the output.
+    """Class used for post-processing MicroHH cases and handling the output.
 
-        Args:
-            case (init.Case):
-                Case to post-process.
-        """
+    Args:
+        case (init.Case):
+            Case to post-process.
+    """
+
+    def __init__(self, case: init.Case) -> None:
         import microhh_processing_chain.postprocessing as post
 
         self.post = post.PostProcessing(case)
@@ -46,10 +46,8 @@ class WindProcessing:
         height: Optional[float] = None,
         save: bool = True,
         overwrite: bool = False,
-        chunks: Optional[dict] = None,
     ) -> xr.Dataset:
-        """Create a dataset containing the wind information around a source
-        which is used for estimating emissions in 'ddeq'.
+        """Create a dataset containing the wind information around a source.
 
         Args:
             source (str):
@@ -64,8 +62,12 @@ class WindProcessing:
             method (str):
                 Method of how the wind should be vertically integrated.
                 "mean" "median", "height" or "concentration_weighted"
+            height (float):
+                Height at which the wind speed should be used if method = 'height'.
             save (bool, optional. Default: True):
                 Specify if the dataset should be saved to store.
+            overwrite (bool, optional. Default: False):
+                Specify if the output file should be overwritten if it exists.
 
         Raises:
             e: Raise an error if the datasets of the wind components u and v
@@ -74,7 +76,7 @@ class WindProcessing:
         Returns:
             xr.Dataset: Dataset containing the wind information around a source.
         """
-        wind_data = self.create_2D_wind(method, gas, height, save, overwrite)
+        wind_data = self.create_2d_wind(method, gas, height, save, overwrite)
 
         selected_source = sources.sel(source=source)
         wind_data_subset = self._select_pixels_around_source(
@@ -148,7 +150,7 @@ class WindProcessing:
 
         return wind_src
 
-    def create_2D_wind(
+    def create_2d_wind(
         self,
         method: Union[WindIntegrationMethod, str],
         gas: Optional[str] = None,
@@ -175,6 +177,8 @@ class WindProcessing:
             overwrite (bool, optional):
                 Specify if the output file should be overwritten if it exists.
                 Defaults to False.
+            chunks (Union[str, dict], optional):
+                Chunking strategy for dask when loading the data. Defaults to None.
 
         Returns:
             xr.Dataset: Dataset with vertically integrated wind.
@@ -183,17 +187,17 @@ class WindProcessing:
 
         # load wind.nc if it exists
         wind_nc_path = Path(self.directory, "wind_2D.nc")
-        if os.path.exists(wind_nc_path):
+        if wind_nc_path.exists():
             if overwrite:
-                os.remove(wind_nc_path)
-                logger.info(f"Overwriting {wind_nc_path}")
+                wind_nc_path.unlink()
+                logger.info("Overwriting %s", wind_nc_path)
             else:
                 return io.open_microhh_nc(self.case, variable="wind_2D", chunks=chunks)
 
         self._check_wind_integration(method, gas, height)
 
         wind_data = self.post.combine_prognostic_variables(
-            vars=wind_vars, chunks=chunks
+            variables=wind_vars, chunks=chunks
         )
 
         wind_data = self.vertically_integrate_wind(wind_data, method, gas, height)
@@ -238,7 +242,7 @@ class WindProcessing:
             NotImplementedError: Raise error if the method is not implemented.
 
         Returns:
-            list: List of prognostic variables used for the given wind integration method.
+            list: List of prognostic variables used for wind integration method.
         """
         method_val = (
             method.value
@@ -263,7 +267,7 @@ class WindProcessing:
         gas: Optional[str],
         height: Optional[float],
     ) -> None:
-        """Check if all required variables for a given wind integration method are given.
+        """Check if all required variables for wind integration method are given.
 
         Args:
             method (str):
@@ -274,10 +278,10 @@ class WindProcessing:
             height (float):
                 Height at which the wind speed should be used if method = 'height'.
         """
-
         if method not in ["mean", "median", "height", "concentration_weighted"]:
             raise ValueError(
-                f"'method' must be 'mean', 'median', 'height' or 'concentration_weighted', not {method}."
+                "'method' must be 'mean', 'median', 'height' or "
+                f"'concentration_weighted', not {method}."
             )
         if method == "height" and height is None:
             raise ValueError("Height must be an integer or float, not 'None'.")
@@ -287,7 +291,7 @@ class WindProcessing:
     def _select_pixels_around_source(
         self, wind_data: xr.Dataset, selected_source: xr.Dataset, radius: int
     ) -> xr.Dataset:
-        """Select all pixels within a radius around a source
+        """Select all pixels within a radius around a source.
 
         Args:
             wind_data (xr.Dataset):
@@ -328,6 +332,12 @@ class WindProcessing:
             method (str):
                 Method of how the wind should be vertically integrated.
                 "mean" "median", "height" or "concentration_weighted"
+            gas (str, optional):
+                Gas to be used for the vertical weighting of wind speed fields.
+                Required if method = 'concentration_weighted'. Defaults to None.
+            height (float, optional):
+                Height at which the wind speed should be used if method = 'height'.
+                Required if method = 'height'. Defaults to None.
 
         Raises:
             NotImplementedError: Raise an error if an invalid method is provided.
@@ -345,6 +355,15 @@ class WindProcessing:
             raise NotImplementedError
 
     def unweighted_mean_wind(self, data: xr.Dataset, method: str) -> xr.Dataset:
+        """Calculate the unweighted mean or median wind speed from 3D wind fields.
+
+        Args:
+            data (xr.Dataset):
+                Dataset containing the 3D wind fields.
+            method (str):
+                Method of how the wind should be vertically integrated.
+                Either "mean" or "median".
+        """
         if method == "mean":
             data_int = data.mean(dim="z")
         elif method == "median":
@@ -390,11 +409,13 @@ class WindProcessing:
         self,
         data: xr.Dataset,
         gas: Optional[str],
-        wind_vars: Union[str, list] = ["u", "v"],
+        wind_vars: Optional[Union[str, list]] = None,
         threshold: Optional[float] = None,
         threshold_unit: Optional[str] = None,
     ) -> xr.Dataset:
-        """Compute the concentration weighted wind speed from the 3D fields
+        """Compute the concentration weighted wind speed from the 3D fields.
+
+        Calculate a weight profile based on the vertical distribution
         of 'gas' and the 3D wind fields with variable(s) 'wind_vars'.
         Remove data below a threshold of avoid division by 0.
 
@@ -415,6 +436,8 @@ class WindProcessing:
         Returns:
             xr.Dataset: Dataset containing the weighted wind.
         """
+        if wind_vars is None:
+            wind_vars = ["u", "v"]
         if gas is None:
             raise ValueError("'gas' must be a string, not 'None'.")
 
@@ -423,7 +446,8 @@ class WindProcessing:
 
         if not all(var in data for var in wind_vars):
             raise KeyError(
-                f"Not all variables '{wind_vars}' are in the dataset. Variables on the dataset include {list(data.data_vars)}"
+                f"Not all variables '{wind_vars}' are in the dataset. "
+                f"Variables on the dataset include {list(data.data_vars)}"
             )
 
         # calculate weight profile
@@ -451,7 +475,9 @@ class WindProcessing:
         threshold: Optional[float] = None,
         threshold_unit: Optional[str] = "kg m-2",
     ) -> xr.Dataset:
-        """Calculate a weight profile for 3D wind speed based on the concentration
+        """Calculate a weight profile for 3D wind speed.
+
+        Calculate a weight profile based on the concentration
         distribution of a gas. Remove data below 'threshold' to avoid division by 0.
 
         Args:
@@ -471,7 +497,8 @@ class WindProcessing:
         """
         if gas not in data.data_vars:
             raise KeyError(
-                f"No variable named '{gas}'. Variables on the dataset include {list(data.data_vars)}"
+                f"No variable named '{gas}'. "
+                f"Variables on the dataset include {list(data.data_vars)}"
             )
 
         # get current unit of gas
@@ -480,7 +507,7 @@ class WindProcessing:
 
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
-            # add pressure which is needed to convert mass mixing ratios to concentraions
+            # add pressure to convert mass mixing ratios to concentraions
             data = self.post.add_statistics_variable(data, "phydro")
             data = self.post.add_statistics_variable(data, "phydroh")
             data = self.post.convert_to_concentration(data, gas, to_unit="kg m-3")
@@ -519,13 +546,13 @@ class WindProcessing:
     def _circular_mean(
         self, a: Union[xr.DataArray, np.ndarray], axes: list[int]
     ) -> np.ndarray:
-        """Calculate circular mean, e.g. of wind direction"""
+        """Calculate circular mean, e.g. of wind direction."""
         return scipy.stats.circmean(a, high=360, nan_policy="omit", axis=axes)
 
     def _circular_std(
         self, a: Union[xr.DataArray, np.ndarray], axes: list[int]
     ) -> np.ndarray:
-        """Calculate circular standard deviation, e.g. of wind direction"""
+        """Calculate circular standard deviation, e.g. of wind direction."""
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
 
@@ -551,7 +578,7 @@ def wind_profile_from_given_wind(
     height: float,
     surface_roughness: float,
     thl: float,
-    E: float,
+    e: float,
     sensible_heat_flux: float,
     threshold: float,
 ) -> np.ndarray:
@@ -563,7 +590,7 @@ def wind_profile_from_given_wind(
         height: Target height at which the wind speed should be 'wind_speed' (m).
         surface_roughness: Surface roughness length (m).
         thl: (Potential) temperature profile (K).
-        E: Water vapor flux (kg/s).
+        e: Water vapor flux (kg/s).
         sensible_heat_flux: Sensible heat flux (W/m2).
         threshold: Maximum difference between target 'wind_speed' and
             calculated wind speed.
@@ -571,7 +598,6 @@ def wind_profile_from_given_wind(
     Returns:
         np.ndarray: Wind profile interpolated to the model grid.
     """
-
     if isinstance(grid, np.ndarray):
         model_profile = grid
     elif isinstance(
@@ -586,16 +612,21 @@ def wind_profile_from_given_wind(
         model_profile = grid.z
 
     u_star = calculate_u_star(
-        wind_speed, height, surface_roughness, thl, E=E, H=sensible_heat_flux
+        wind_speed=wind_speed,
+        z=height,
+        z0=surface_roughness,
+        t=thl,
+        e=e,
+        h=sensible_heat_flux,
     )
 
     wind_profile = get_wind_profile(
         z=model_profile,
         z0=surface_roughness,
         u_star=u_star,
-        T=thl,
-        E=E,
-        H=sensible_heat_flux,
+        t=thl,
+        e=e,
+        h=sensible_heat_flux,
     )
 
     # check if wind speed at height deviates too much from given value
@@ -614,8 +645,11 @@ def wind_profile_from_given_wind(
 
     if np.abs(wind_speed - actual_wind_speed) > threshold:
         logger.info(
-            f"Wind speed at {height} m ({actual_wind_speed:.2f} m/s) deviates too much from prescribed wind speed ({wind_speed} m/s).\n"
-            "Returning vertically homogeneous wind profile."
+            "Wind speed at %s m (%.2f m/s) deviates too much from prescribed "
+            "wind speed (%s m/s).\nReturning vertically homogeneous wind profile.",
+            height,
+            actual_wind_speed,
+            wind_speed,
         )
         wind_profile = pre.interpolate_to_model_profile(
             grid=grid, variable_value=wind_speed
@@ -628,11 +662,11 @@ def get_wind_profile(
     z: Union[int, float, list, np.ndarray],
     z0: float,
     u_star: float,
-    T: float,
-    L: Optional[float] = None,
-    H: Optional[float] = None,
-    H_turb: Optional[float] = None,
-    E: float = 0,
+    t: float,
+    l_mo: Optional[float] = None,
+    h: Optional[float] = None,
+    h_turb: Optional[float] = None,
+    e: float = 0,
     displacement_height: float = 0,
     stability_criterion: Literal["MO", "Ri"] = "Ri",
     kappa: float = 0.4,
@@ -651,11 +685,11 @@ def get_wind_profile(
         z: Array of heights above the ground level.
         z0: Roughness length.
         u_star: Friction velocity.
-        T: (Potential) temperature (in K).
-        L: Monin-Obukhov length (m). Defaults to None.
-        H: Sensible heat flux (W/m^2). Defaults to None.
-        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
-        E: Water vapor flux (kg/s). Defaults to 0.
+        t: (Potential) temperature (in K).
+        l_mo: Monin-Obukhov length (m). Defaults to None.
+        h: Sensible heat flux (W/m^2). Defaults to None.
+        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        e: Water vapor flux (kg/s). Defaults to 0.
         displacement_height: Zero-plane displacement height (m). Defaults to 0.
         stability_criterion: Stability criterion to use ('MO' or 'Ri').
             Defaults to 'Ri'.
@@ -671,34 +705,36 @@ def get_wind_profile(
         displacement_height = 10 * z0 * (3 / 4)
 
     # calculate MO length if it is not given
-    if L is None:
-        if (H is not None) and (H_turb is not None):
+    if l_mo is None:
+        if (h is not None) and (h_turb is not None):
             raise ValueError(
-                "Only one of sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided, not both."
+                "Only one of sensible heat flux (h) or turbulent sensible heat "
+                "flux (h_turb) should be provided, not both."
             )
 
-        if H is not None:
-            h_turb_value = calculate_virtual_turbulent_heat_flux(H, E, T=T)
-        elif H_turb is not None:
-            h_turb_value = H_turb
+        if h is not None:
+            h_turb_value = calculate_virtual_turbulent_heat_flux(h, e, t=t)
+        elif h_turb is not None:
+            h_turb_value = h_turb
         else:
             raise ValueError(
-                "Either sensible heat flux (H) or turbulent sensible heat flux (H_turb) should be provided."
+                "Either sensible heat flux (h) or turbulent sensible heat "
+                "flux (h_turb) should be provided."
             )
 
-        L = calculate_monin_obukhov_length(u_star, T, h_turb_value)
+        l_mo = calculate_monin_obukhov_length(u_star, t, h_turb_value)
 
     if stability_criterion == "Ri":
-        stability = _determine_stability_Ri(float(np.nanmean(z) / L))
+        stability = _determine_stability_ri(float(np.nanmean(z) / l_mo))
     else:
-        stability = _determine_stability_MO(L)
+        stability = _determine_stability_mo(l_mo)
 
     if stability == "stable":
-        stability_correction = _correction_stable(z - displacement_height, L)
+        stability_correction = _correction_stable(z - displacement_height, l_mo)
     elif stability == "neutral":
         stability_correction = np.zeros_like(z, dtype=np.float64)
     elif stability == "unstable":
-        stability_correction = _correction_unstable(z - displacement_height, L)
+        stability_correction = _correction_unstable(z - displacement_height, l_mo)
     else:
         raise ValueError(f"Unknown stability: {stability}")
 
@@ -714,7 +750,7 @@ def get_wind_profile(
 def calculate_virtual_temperature(
     t: Union[int, float, list, np.ndarray], q: Union[int, float, list, np.ndarray]
 ) -> np.ndarray:
-    """Calculate the virtual (potential) temperature T_v.
+    """Calculate the virtual (potential) temperature t_v.
 
     Args:
         t: (Potential) temperature (in K).
@@ -725,21 +761,21 @@ def calculate_virtual_temperature(
     """
     t = np.array(t)
     q = np.array(q)
-    T_v = t * (1 + 0.608 * q)
-    return T_v
+    t_v = t * (1 + 0.608 * q)
+    return t_v
 
 
 def calculate_virtual_turbulent_heat_flux(
-    H: float, E: float, T: float, rho: float = 1.225, cp: float = 1003.5
+    h: float, e: float, t: float, rho: float = 1.225, cp: float = 1003.5
 ) -> float:
     """Calculate the virtual turbulent heat flux from sensible heat flux H.
 
     According to: https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
     Args:
-        H: Sensible heat flux (W/m^2).
-        E: Water vapor flux (kg/s).
-        T: Absolute temperature (K).
+        h: Sensible heat flux (W/m^2).
+        e: Water vapor flux (kg/s).
+        t: Absolute temperature (K).
         rho: Density of air (kg/m^3). Defaults to 1.225.
         cp: Specific heat capacity of air at constant pressure (J/(kg*K)).
             Defaults to 1003.5.
@@ -747,13 +783,13 @@ def calculate_virtual_turbulent_heat_flux(
     Returns:
         float: Virtual turbulent heat flux (K m/s).
     """
-    return (1 / T) * (1 / rho) * ((H / cp) + 0.61 * E)
+    return (1 / t) * (1 / rho) * ((h / cp) + 0.61 * e)
 
 
 def calculate_monin_obukhov_length(
     u_star: float,
-    T0: float,
-    H_turb: float,
+    t0: float,
+    h_turb: float,
     kappa: float = 0.4,
     g: float = 9.81,
 ) -> float:
@@ -761,49 +797,48 @@ def calculate_monin_obukhov_length(
 
     Args:
         u_star: Friction velocity (m/s).
-        T0: Mean temperature (K).
-        H_turb: Virtual turbulent heat flux (K m/s).
+        t0: Mean temperature (K).
+        h_turb: Virtual turbulent heat flux (K m/s).
         kappa: von Kármán constant (dimensionless). Defaults to 0.4.
         g: Acceleration due to gravity (m/s^2). Defaults to 9.81.
 
     Returns:
         float: Monin-Obukhov length (m).
     """
+    l_mo = -(u_star**3 * t0) / (kappa * g * h_turb)
+    return l_mo
 
-    L = -(u_star**3 * T0) / (kappa * g * H_turb)
-    return L
 
-
-def _determine_stability_MO(L: float, threshold: float = 500) -> str:
+def _determine_stability_mo(l_mo: float, threshold: float = 500) -> str:
     """Determine the stability regime based on the Monin-Obukhov length (L).
 
     From: https://www.researchgate.net/publication/266043126_Estimating_the_systematic_er-_rors_in_turbulence_sensed_by_wind_lidars
     Or from: https://onlinelibrary.wiley.com/doi/full/10.1002/we.1528
 
     Args:
-        L: Monin-Obukhov length (m).
+        l_mo: Monin-Obukhov length (m).
         threshold: Threshold for neutral stability. Defaults to 500.
 
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
     """
-    if L > 0 and L < threshold:
+    if l_mo > 0 and threshold > l_mo:
         return "stable"
-    elif L < 0 and L > -threshold:
+    elif l_mo < 0 and -threshold < l_mo:
         return "unstable"
     else:
         return "neutral"
 
 
-def _determine_stability_Ri(
-    Ri: float, upper_threshold: float = -0.1, lower_threshold: float = 0.05
+def _determine_stability_ri(
+    ri: float, upper_threshold: float = -0.1, lower_threshold: float = 0.05
 ) -> str:
-    """Determine the stability regime based on the Richardson number (Ri).
+    """Determine the stability regime based on the Richardson number (ri).
 
     From: https://www.researchgate.net/publication/269105054_Dispersion_modeling_of_air_pollutants_in_the_atmosphere_a_review
 
     Args:
-        Ri: Richardson number.
+        ri: Richardson number.
         upper_threshold: Upper threshold for stability classification.
             Defaults to -0.1.
         lower_threshold: Lower threshold for stability classification.
@@ -812,9 +847,9 @@ def _determine_stability_Ri(
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
     """
-    stable = np.sum(Ri < lower_threshold)
-    unstable = np.sum(Ri > upper_threshold)
-    neutral = np.sum((Ri >= lower_threshold) & (Ri <= upper_threshold))
+    stable = np.sum(ri < lower_threshold)
+    unstable = np.sum(ri > upper_threshold)
+    neutral = np.sum((ri >= lower_threshold) & (ri <= upper_threshold))
 
     if stable > unstable and stable > neutral:
         return "stable"
@@ -825,7 +860,7 @@ def _determine_stability_Ri(
 
 
 def _correction_stable(
-    z: Union[float, np.ndarray], L: float, beta: float = 4.8
+    z: Union[float, np.ndarray], l_mo: float, beta: float = 4.8
 ) -> Union[float, np.ndarray]:
     """Stability correction for stable conditions.
 
@@ -833,23 +868,23 @@ def _correction_stable(
 
     Args:
         z: Height above the ground level (m).
-        L: Monin-Obukhov length (m).
+        l_mo: Monin-Obukhov length (m).
         beta: Stability correction parameter. Defaults to 4.8.
 
     Returns:
         Stability correction term.
     """
-    return -beta * z / L
+    return -beta * z / l_mo
 
 
 def _correction_unstable(
-    z: Union[float, np.ndarray], L: float, alpha: float = 1 / 4, gamma: float = 15
+    z: Union[float, np.ndarray], l_mo: float, alpha: float = 1 / 4, gamma: float = 15
 ) -> Union[float, np.ndarray]:
     """Stability correction for unstable conditions.
 
     Args:
         z: Height above the ground level (m).
-        L: Monin-Obukhov length (m).
+        l_mo: Monin-Obukhov length (m).
         alpha: Stability correction parameter. Defaults to 1/4.
         gamma: Stability correction parameter. Defaults to 15.
 
@@ -860,10 +895,10 @@ def _correction_unstable(
     gamma = 3.6
     a = 2 / 3
     b = -1 / 2
-    x = (1 + gamma * np.abs(z / L) ** a) ** b
+    x = (1 + gamma * np.abs(z / l_mo) ** a) ** b
 
     return x
-    x = (1 - gamma * z / L) ** alpha
+    x = (1 - gamma * z / l_mo) ** alpha
     return (
         2 * np.log((1 + x) / 2)
         + np.log((1 + x**2) / 2)
@@ -877,10 +912,10 @@ def solve_wind_profile(
     wind_speed: float,
     z: float,
     z0: float,
-    T: float,
-    E: float,
-    H: Optional[float] = None,
-    H_turb: Optional[float] = None,
+    t: float,
+    e: float,
+    h: Optional[float] = None,
+    h_turb: Optional[float] = None,
 ) -> np.ndarray:
     """Equation to solve for finding friction velocity (u_star).
 
@@ -889,16 +924,16 @@ def solve_wind_profile(
         wind_speed: Measured wind speed (m/s).
         z: Array of heights above the ground level (m).
         z0: Roughness length (m).
-        T: (Potential) temperature profile (in K).
-        E: Water vapor flux (kg/s).
-        H: Sensible heat flux (W/m^2). Defaults to None.
-        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        t: (Potential) temperature profile (in K).
+        e: Water vapor flux (kg/s).
+        h: Sensible heat flux (W/m^2). Defaults to None.
+        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
 
     Returns:
         np.ndarray: Difference between calculated and measured wind speed.
     """
     return (
-        get_wind_profile(z=z, z0=z0, u_star=u_star, T=T, E=E, H=H, H_turb=H_turb)
+        get_wind_profile(z=z, z0=z0, u_star=u_star, t=t, e=e, h=h, h_turb=h_turb)
         - wind_speed
     )
 
@@ -907,13 +942,13 @@ def calculate_u_star(
     wind_speed: float,
     z: float,
     z0: float,
-    T: float,
-    E: float,
-    H: Optional[float] = None,
-    H_turb: Optional[float] = None,
+    t: float,
+    e: float,
+    h: Optional[float] = None,
+    h_turb: Optional[float] = None,
     u_star_initial: Optional[float] = None,
 ) -> float:
-    """Compute the friction velocity u* with a correction term for stability numerically.
+    """Compute the friction velocity u* with correction term for stability numerically.
 
     Give either the sensible heat flux H (in W/m2) or the turbulent sensible
     heat flux (in K m/s).
@@ -922,10 +957,10 @@ def calculate_u_star(
         wind_speed: Measured wind speed (m/s).
         z: Height above ground at which the wind speed was measured (m).
         z0: Roughness length (m).
-        T: (Potential) temperature (in K).
-        E: Water vapor flux (kg/s).
-        H: Sensible heat flux (W/m^2). Defaults to None.
-        H_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
+        t: (Potential) temperature (in K).
+        e: Water vapor flux (kg/s).
+        h: Sensible heat flux (W/m^2). Defaults to None.
+        h_turb: Turbulent sensible heat flux (K m/s). Defaults to None.
         u_star_initial: Initial guess of u*. If not provided, it is
             calculated assuming neutrally stable conditions. Defaults to None.
     """
@@ -935,7 +970,7 @@ def calculate_u_star(
     u_star_solution = fsolve(
         solve_wind_profile,
         u_star_initial,
-        args=(wind_speed, z, z0, T, E, H, H_turb),
+        args=(wind_speed, z, z0, t, e, h, h_turb),
     )
     return u_star_solution[0]
 
@@ -946,7 +981,9 @@ def calculate_u_star_stable(
     z0: float,
     kappa: float = 0.4,
 ) -> float:
-    """Compute u* for neutrally stable situations without a correction term for stability analytically.
+    """Compute u* for neutrally stable situations.
+
+    Compute u* without a correction term for stability analytically.
 
     Args:
         wind_speed (float): Measured wind speed (m/s).
@@ -955,9 +992,9 @@ def calculate_u_star_stable(
         kappa (float, optional): von Kármán constant (dimensionless). Defaults to 0.4.
 
     Returns:
-        float: U* for neutrally stable cases without a correction term for atmospheric stability.
+        float: U* for neutrally stable cases without a correction term for
+        atmospheric stability.
     """
-
     # Calculate friction velocity for neutrally stable case
     u_star = (wind_speed * kappa) / np.log(z / z0)
 
@@ -965,7 +1002,9 @@ def calculate_u_star_stable(
 
 
 def _replace_by_majority_sign(arr: np.ndarray) -> np.ndarray:
-    """Replace wind speed in array with 0 if it does not have the same sign as
+    """Replace values in an array with 0 if sign does not match the majority sign.
+
+    Replace wind speed in array with 0 if it does not have the same sign as
     the majority of wind values in the array.
 
     Args:
@@ -1024,30 +1063,32 @@ def ramp(x: Union[int, float, np.ndarray]) -> Union[int, float, np.ndarray]:
 
 def calculate_smagorinsky_constant(
     delta: Union[int, float, np.ndarray],
-    L: Union[int, float, np.ndarray],
+    l_mo: Union[int, float, np.ndarray],
     z: Union[int, float, np.ndarray],
     kappa: float = 0.4,
     c0: float = 0.135,
     alpha: float = 0.135,
     n: int = 3,
 ) -> Union[int, float, np.ndarray]:
-    """Computes Smagorinsky constant according to Eq. (17) in
-    https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
+    """Computes Smagorinsky constant.
+
+     Computes Smagorinsky constant according to Eq. (17) in
+    https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2.
 
     Args:
         delta: Characteristic scale (Δ). For simulations: resolution of the
             model, in m.
-        L: Obukhov length (L).
+        l_mo: Obukhov length (l).
         z: Height above ground (in m).
         kappa: von Kármán constant (κ). Defaults to 0.4.
         c0: Base concentration (c₀). Defaults to 0.135.
-        alpha: Model parameter (α). Defaults to 0.135.
+        alpha: Model parameter (alpha). Defaults to 0.135.
         n: Model exponent (n). Defaults to 3.
 
     Returns:
         Computed Smagorinsky constant c_s.
     """
-    term1 = (1 + (c0 / alpha) * ramp(delta / L)) ** -1
+    term1 = (1 + (c0 / alpha) * ramp(delta / l_mo)) ** -1
     term2 = (1 + (c0 * delta / (kappa * z)) ** n) ** (-1 / n)
     return c0 * term1 * term2
 
@@ -1086,14 +1127,17 @@ def calculate_richardson_number(
         Dataset with Richardson number added as 'Ri' variable.
     """
     denom = stats.u_w * stats.u_grad + stats.v_w * stats.v_grad  # m^2 s^-3
-    Rf = stats.b_w / denom
+    rf = stats.b_w / denom
     attrs = {
         "long_name": "Richardson number",
         "units": "1",
-        "description": "Ratio of buoyant production to shear production of turbulence kinetic energy",
+        "description": (
+            "Ratio of buoyant production to shear production of "
+            "turbulence kinetic energy"
+        ),
     }
 
-    da = xr.DataArray(Rf, dims=Rf.dims, coords=Rf.coords, attrs=attrs)
+    da = xr.DataArray(rf, dims=rf.dims, coords=rf.coords, attrs=attrs)
     stats["Ri"] = da.where(np.abs(denom) > threshold)
     return stats
 
@@ -1101,8 +1145,7 @@ def calculate_richardson_number(
 def calculate_spatial_psd_2d(
     field: np.ndarray, dx: float, dy: float, angular: bool = False
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute a variance-preserving 2D PSD using physical frequency/wavenumber coordinates.
+    """Compute a variance-preserving 2D PSD using frequency/wavenumber coordinates.
 
     The returned psd2d satisfies approximately:
 
@@ -1122,7 +1165,7 @@ def calculate_spatial_psd_2d(
         If False, return frequencies in cycles per physical unit.
         If True, return angular wavenumbers in radians per physical unit.
 
-    Returns
+    Returns:
     -------
     psd2d : 2D array, shape [nx, ny]
         Variance-preserving 2D PSD, shifted so the zero mode is in the center.
@@ -1166,8 +1209,7 @@ def radial_spectrum_from_spatial_psd(
     nbins: Optional[int] = None,
     bin_edges: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute a variance-preserving radial spectrum from a 2D PSD.
+    """Compute a variance-preserving radial spectrum from a 2D PSD.
 
     This function bins the 2D PSD into annuli in wavenumber space and sums
     the PSD values inside each annulus.
@@ -1190,7 +1232,7 @@ def radial_spectrum_from_spatial_psd(
     bin_edges : 1D array, optional
         Custom radial bin edges. If provided, nbins is ignored.
 
-    Returns
+    Returns:
     -------
     k_radial : 1D array
         Radial bin centers.
@@ -1199,7 +1241,6 @@ def radial_spectrum_from_spatial_psd(
     counts : 1D array
         Number of Fourier modes in each radial bin.
     """
-
     psd2d = np.asarray(psd2d)
     kx = np.asarray(kx)
     ky = np.asarray(ky)
@@ -1212,8 +1253,8 @@ def radial_spectrum_from_spatial_psd(
     if ky.size != ny:
         raise ValueError("ky length must match psd2d.shape[1].")
 
-    KX, KY = np.meshgrid(kx, ky, indexing="ij")
-    k_radius = np.sqrt(KX**2 + KY**2)
+    kx, ky = np.meshgrid(kx, ky, indexing="ij")
+    k_radius = np.sqrt(kx**2 + ky**2)
 
     if bin_edges is None:
         n_bins = min(nx, ny) // 2 if nbins is None else nbins
@@ -1244,10 +1285,17 @@ def radial_spectrum_from_spatial_psd(
     return k_radial, radial_psd, counts
 
 
-def _tke_spatial_spectrum_core(u_2d, v_2d, dx, dy, w_2d=None):
-    """
-    Core function that handles a single 2D plane of data.
+def _tke_spatial_spectrum_core(
+    u_2d: np.ndarray,
+    v_2d: np.ndarray,
+    dx: float,
+    dy: float,
+    w_2d: Optional[np.ndarray] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Core function that handles a single 2D plane of data.
+
     Receives raw NumPy arrays from xr.apply_ufunc.
+
     """
     # 1. Compute 2D PSDs
     psd2d_u, kx, ky = calculate_spatial_psd_2d(u_2d, dx, dy)
@@ -1266,17 +1314,21 @@ def _tke_spatial_spectrum_core(u_2d, v_2d, dx, dy, w_2d=None):
     return k_radial, radial_tke
 
 
-def _tke_spatial_spectrum_core_array(u_2d, v_2d, *args, dx, dy):
-    w_2d = args[0] if args else None
+def _tke_spatial_spectrum_core_array(
+    u_2d: np.ndarray, v_2d: np.ndarray, *args: np.ndarray, dx: float, dy: float
+) -> np.ndarray:
+    w_2d: Optional[np.ndarray] = args[0] if args else None
     _, radial_tke = _tke_spatial_spectrum_core(u_2d, v_2d, dx, dy, w_2d=w_2d)
     return radial_tke
 
 
 def calculate_tke_spatial_profile_dask(
-    ds_u, ds_v, ds_w=None, time_idx=-1
+    ds_u: xr.Dataset,
+    ds_v: xr.Dataset,
+    ds_w: Optional[xr.Dataset] = None,
+    time_idx: int = -1,
 ) -> xr.Dataset:
-    """
-    Computes the 2D or 3D TKE spectrum for every vertical level using Dask.
+    """Computes the 2D or 3D TKE spectrum for every vertical level using Dask.
 
     Assumes staggered-grid inputs:
         u(time, z,  xh, y)
@@ -1361,7 +1413,10 @@ def calculate_tke_spatial_profile_dask(
         {
             "long_name": "TKE spatial spectrum",
             "units": "m2 s-2",
-            "description": "Variance-preserving radial TKE spectrum; sum over wavenumber bins gives TKE variance.",
+            "description": (
+                "Variance-preserving radial TKE spectrum; "
+                "sum over wavenumber bins gives TKE variance."
+            ),
         }
     )
     tke_da["z"].attrs["units"] = "m"
@@ -1389,8 +1444,7 @@ def calculate_temporal_variance_psd(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Compute a variance-preserving temporal PSD using Welch's method.
+    """Compute a variance-preserving temporal PSD using Welch's method.
 
     The returned psd satisfies approximately:
 
@@ -1411,7 +1465,7 @@ def calculate_temporal_variance_psd(
         Detrending applied to each segment. 'linear' removes a linear trend;
         'constant' removes the mean only. Matches the spatial code's mean removal.
 
-    Returns
+    Returns:
     -------
     f : 1D array
         Frequency bins [Hz].
@@ -1449,11 +1503,12 @@ def _tke_temporal_spectrum_core(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Core function: compute TKE temporal spectrum from 1D time series
+    """Core function: compute TKE temporal spectrum from 1D time series.
+
+    This function computes the temporal PSD of the velocity time series
     at a single (x, y, z) point.
 
-    Returns
+    Returns:
     -------
     f : 1D array
         Frequency bins [Hz].
@@ -1485,8 +1540,9 @@ def calculate_tke_temporal_profile(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute the TKE temporal spectrum at every vertical level,
+    """Compute the TKE temporal spectrum at every vertical level.
+
+    This function computes the temporal PSD of the velocity time series
     for a single (x, y) point in the domain.
 
     This is the temporal analogue of calculate_tke_profile:
@@ -1513,7 +1569,7 @@ def calculate_tke_temporal_profile(
     detrend : str
         Detrending per segment ('linear' or 'constant').
 
-    Returns
+    Returns:
     -------
     energy_spectra : 2D array, shape [z, f]
         TKE temporal PSD at each vertical level.
@@ -1550,9 +1606,9 @@ def _tke_temporal_spectrum_core_array(
     nperseg: int,
     noverlap: Optional[int],
     detrend: str,
-):
-    """
-    Wrapper around _tke_temporal_spectrum_core for use with xr.apply_ufunc.
+) -> np.ndarray:
+    """Wrapper around _tke_temporal_spectrum_core for use with xr.apply_ufunc.
+
     Accepts raw NumPy arrays; w_t is optional via *args.
     """
     w_t = args[0] if args else None
@@ -1573,8 +1629,7 @@ def calculate_tke_temporal_profile_dask(
     noverlap: Optional[int] = None,
     detrend: str = "linear",
 ) -> xr.Dataset:
-    """
-    Dask-parallelised version of calculate_tke_temporal_profile.
+    """Dask-parallelised version of calculate_tke_temporal_profile.
 
     Applies Welch's method over the time axis at a fixed (x, y) point
     for every vertical level in parallel.
@@ -1583,7 +1638,7 @@ def calculate_tke_temporal_profile_dask(
     ----------
     (same as calculate_tke_temporal_profile)
 
-    Returns
+    Returns:
     -------
     tke_ds : xr.DataArray, dims (z, frequency)
         TKE temporal PSD at each vertical level.
@@ -1657,7 +1712,10 @@ def calculate_tke_temporal_profile_dask(
         {
             "long_name": "TKE temporal spectrum",
             "units": "m2 s-1",
-            "description": "TKE temporal power spectral density from Welch's method; integral over frequency gives TKE variance.",
+            "description": (
+                "TKE temporal power spectral density from Welch's method; "
+                "integral over frequency gives TKE variance."
+            ),
         }
     )
     tke_da["z"].attrs["units"] = "m"
@@ -1681,15 +1739,15 @@ def calculate_tke_temporal_profile_dask(
 
 __all__ = [
     "WindProcessing",
-    "get_wind_profile",
-    "calculate_virtual_temperature",
-    "calculate_virtual_turbulent_heat_flux",
+    "calculate_coriolis_force",
+    "calculate_effective_wind_speed",
     "calculate_monin_obukhov_length",
-    "solve_wind_profile",
+    "calculate_richardson_number",
+    "calculate_smagorinsky_constant",
     "calculate_u_star",
     "calculate_u_star_stable",
-    "calculate_effective_wind_speed",
-    "calculate_smagorinsky_constant",
-    "calculate_coriolis_force",
-    "calculate_richardson_number",
+    "calculate_virtual_temperature",
+    "calculate_virtual_turbulent_heat_flux",
+    "get_wind_profile",
+    "solve_wind_profile",
 ]
