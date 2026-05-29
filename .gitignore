@@ -16,7 +16,8 @@ microhh/
 microhh_py/
 microhhpy/
 notebooks/test/
-u-cat/images/
+u-cat/
+images/
 notebooks/archive/
 notebooks/*.ipynb
 notebooks/test/
