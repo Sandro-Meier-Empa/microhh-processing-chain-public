@@ -9,6 +9,7 @@ LS2D/
         u-cat/images/
 notebooks/archive/
 notebooks/*.ipynb
+notebooks/test/
 data/
 
 *.egg-info
