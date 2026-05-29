@@ -1,12 +1,13 @@
 LS2D/
-        ddeq/
-        diplib/
-        microhh-ch4/
-        microhh/
-        microhh_py/
-        microhhpy/
-        notebooks/test/
-        u-cat/images/
+ddeq/
+diplib/
+microhh-ch4/
+microhh/
+microhh_py/
+microhhpy/
+notebooks/test/
+u-cat/
+images/
 notebooks/archive/
 notebooks/*.ipynb
 notebooks/test/
