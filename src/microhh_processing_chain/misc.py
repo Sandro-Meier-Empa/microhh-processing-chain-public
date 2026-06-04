@@ -115,3 +115,9 @@ def potential_temperature(
         theta_v = theta * (1 + 0.61 * qv)
         theta_v.attrs = {"units": "K", "long_name": "virtual_potential_temperature"}
         return theta_v
+
+
+def nearest_idx(array: xr.DataArray, value: float) -> int:
+    """Find the index of the nearest value in an xarray DataArray."""
+    idx = np.abs(array - value).argmin().item()
+    return idx
