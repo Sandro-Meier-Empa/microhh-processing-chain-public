@@ -119,5 +119,28 @@ def potential_temperature(
 
 def nearest_idx(array: xr.DataArray, value: float) -> int:
     """Find the index of the nearest value in an xarray DataArray."""
-    idx = np.abs(array - value).argmin().item()
-    return idx
+    if array.ndim == 1:
+        idx = np.abs(array - value).argmin().item()
+        return idx
+    else:
+        flat_idx = np.abs(array - value).argmin()
+        idx = np.unravel_index(flat_idx, array.shape)
+        return idx
+
+
+def nearest_lat_lon_idx(
+    lat_array: Union[xr.DataArray, np.ndarray],
+    lon_array: Union[xr.DataArray, np.ndarray],
+    lat: float,
+    lon: float,
+) -> tuple[int, int]:
+    """Find the 2D grid index nearest to a latitude/longitude coordinate."""
+    lat_values = np.asarray(lat_array)
+    lon_values = np.asarray(lon_array)
+
+    lat_diff = lat_values - lat
+    lon_diff = (lon_values - lon + 180.0) % 360.0 - 180.0
+    lon_scale = np.cos(np.deg2rad(lat))
+
+    flat_idx = np.argmin(lat_diff * lat_diff + (lon_diff * lon_scale) ** 2)
+    return tuple(int(i) for i in np.unravel_index(flat_idx, lat_values.shape))
