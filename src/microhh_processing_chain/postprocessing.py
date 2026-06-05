@@ -761,11 +761,16 @@ class PostProcessing:
             anchor=(grid_x_ref, grid_y_ref),
             epsg_code=microhh_crs,
         )
+
+        var_names = np.array(list(data.variables))
+        x_var = np.intersect1d(var_names, np.array(["x", "xh"]))
+        y_var = np.intersect1d(var_names, np.array(["y", "yh"]))
+
         lon_grid, lat_grid = domain.to_lonlat(
-            data.x.values, data.y.values, meshgrid=True
+            data[x_var[0]].values, data[y_var[0]].values, meshgrid=True
         )
 
-        data = data.rename({"x": "nobs", "y": "nrows"})
+        data = data.rename({x_var[0]: "nobs", y_var[0]: "nrows"})
         data = data.assign_coords(
             lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
         )
@@ -778,12 +783,12 @@ class PostProcessing:
         data = data.drop_vars(["nrows", "nobs"])
 
         # add x and y coordinates
-        data["x"] = (
+        data[x_var[0]] = (
             ("nrows", "nobs"),
             domain.xx + domain.x_offset,
             {"epsg": int(microhh_crs.split(":")[-1])},
         )
-        data["y"] = (
+        data[y_var[0]] = (
             ("nrows", "nobs"),
             domain.yy + domain.y_offset,
             {"epsg": int(microhh_crs.split(":")[-1])},
