@@ -34,6 +34,8 @@ class PreProcessing:
             MicroHH executable.
         jobreport_path:
             Path to the GPU job report executable. Only supported on GPU.
+        binary_precision:
+            Target precision for raw MicroHH binary files.
     """
 
     def __init__(
@@ -42,11 +44,13 @@ class PreProcessing:
         alps_setup: cscs.AlpsSetup,
         microhh_executable_path: Union[str, Path],
         jobreport_path: Optional[Union[str, Path]] = None,
+        binary_precision: type = np.float64,
     ) -> None:
         self.case = case
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
         self.jobreport_path = jobreport_path
+        self.binary_precision = np.dtype(binary_precision)
 
         self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_architecture()
@@ -151,6 +155,8 @@ class PreProcessing:
         # Check if required files are present
         self._check_required_files()
 
+        self._check_file_precision()
+
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
 
@@ -173,6 +179,61 @@ class PreProcessing:
                     f"Required file '{filename}' not found in "
                     f"'{self.case.scratch_path}'."
                 )
+
+    def _check_file_precision(self) -> None:
+        """Ensure raw MicroHH binary files use the configured precision.
+
+        Files with MicroHH timestep suffixes are checked against the expected
+        grid size and ``self.binary_precision``. Files already using the target
+        precision are left untouched; files matching a supported alternate
+        precision are rewritten in place with the configured dtype.
+
+        Raises:
+            ValueError: If a binary file size does not match a supported
+                precision for the configured grid.
+        """
+        # there might be an issue when there are for example only two soil levels, then
+        # a single 3D soil field could be mixed up with a double 2D surface field.
+        dtype = self.binary_precision
+        case_directory = Path(self.case.directory)
+        itot = self.case.config.grid.itot
+        jtot = self.case.config.grid.jtot
+        ktot = self.case.config.grid.ktot
+        ls_ktot = self.case.config.land_surface.ktot
+        field_counts = (itot * jtot, itot * jtot * ktot, itot * jtot * ls_ktot)
+        target_sizes = {count * dtype.itemsize for count in field_counts}
+        print(target_sizes)
+        source_dtypes_by_size = {
+            count * np.dtype(source_dtype).itemsize: np.dtype(source_dtype)
+            for count in field_counts
+            for source_dtype in (np.float32, np.float64)
+        }
+
+        binary_files = [
+            file
+            for file in case_directory.iterdir()
+            if file.is_file() and len(file.suffix) == 8 and file.suffix[1:].isdigit()
+        ]
+
+        for file in binary_files:
+            size = file.stat().st_size
+            print(f"filename: {file.name}: size: {size}")
+            if size in target_sizes:
+                continue
+
+            try:
+                source_dtype = source_dtypes_by_size[size]
+            except KeyError as e:
+                raise ValueError(
+                    f"Unexpected size for {file}: {size} bytes for "
+                    f"2D shape {(itot, jtot)} or 3D shape {(itot, jtot, ktot)}"
+                ) from e
+
+            data = np.fromfile(file, dtype=source_dtype)
+            data.astype(dtype, copy=False).tofile(file)
+            logger.info(
+                "Converted %s from %s to %s", file, np.dtype(source_dtype), dtype
+            )
 
     def prepare_restart_simulation(
         self,
@@ -244,21 +305,7 @@ class PreProcessing:
                 Specify if the next job should only be submitted
                 after the previous one has stopped.
         """
-        running_jobs = cscs.jobs_in_queue()
-        jobs_in_debug_queue = False
-
-        # check if any other job is running in the debug queue
-        if not running_jobs.empty:
-            jobs_in_debug_queue = not running_jobs[
-                running_jobs["PARTITION"] == "debug"
-            ].empty
-
-        if self.alps_setup.partition == "debug" and jobs_in_debug_queue:
-            logger.warning(
-                "There are other jobs in the queue. "
-                "No new job will be started in the debug partition."
-            )
-
+        if _skip_debug_submission(self.alps_setup):
             self.case.job_id = None
             return
 
@@ -1053,7 +1100,7 @@ def _get_multi_run_commands(
 def create_run_4x_script(
     cases: list[init.Case],
     alps_setup: cscs.AlpsSetup,
-    scratch_path: str,
+    scratch_path: Union[str, Path],
     mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
@@ -1069,7 +1116,7 @@ def create_run_4x_script(
 
     commands = _get_microhh_run_commands(
         case_list=cases,
-        mode=RunMode.RUN,
+        mode=mode,
         jobreport_path=jobreport_path,
         cpus_per_task_per_case=18,
         gpus_per_task_per_case=1,
@@ -1086,6 +1133,95 @@ def create_run_4x_script(
         logger.info("Reading existing sbatch script %s", master_job_file)
 
     return Path(master_job_file)
+
+
+def start_run_4x_simulation(
+    cases: list[init.Case],
+    alps_setup: cscs.AlpsSetup,
+    scratch_path: Union[str, Path],
+    mode: Union[RunMode, str] = RunMode.RUN,
+    overwrite: bool = False,
+    wait: bool = False,
+    jobreport_path: Optional[str] = None,
+) -> Optional[int]:
+    """Create and submit a 4-case MicroHH SLURM script on CSCS Alps.
+
+    Args:
+        cases:
+            Cases to run in parallel, one per GPU.
+        alps_setup:
+            Alps setup used to create and submit the SLURM script.
+        scratch_path:
+            Directory where the master sbatch script is written.
+        mode:
+            Run mode passed to :func:`create_run_4x_script`.
+        overwrite:
+            Specify if an existing sbatch script should be overwritten.
+        wait:
+            Specify if the call should wait until the job has stopped.
+        jobreport_path:
+            Optional GPU job report wrapper for the final MicroHH phase.
+
+    Returns:
+        Submitted SLURM job ID, or ``None`` if debug queue protection skips
+        submission.
+    """
+    if alps_setup.partition_key == "debug":
+        running_jobs = cscs.jobs_in_queue()
+        jobs_in_debug_queue = False
+
+        if not running_jobs.empty:
+            jobs_in_debug_queue = not running_jobs[
+                running_jobs["PARTITION"] == "debug"
+            ].empty
+
+        if jobs_in_debug_queue:
+            logger.warning(
+                "There are other jobs in the queue. "
+                "No new job will be started in the debug partition."
+            )
+            for case in cases:
+                case.job_id = None
+            return None
+
+    job_file = create_run_4x_script(
+        cases=cases,
+        alps_setup=alps_setup,
+        scratch_path=str(scratch_path),
+        mode=mode,
+        overwrite=overwrite,
+        jobreport_path=jobreport_path,
+    )
+    slurm_job = cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
+    job_id = slurm_job.start(wait=wait)
+
+    for case in cases:
+        case.job_id = job_id
+
+    return job_id
+
+
+def _skip_debug_submission(alps_setup: cscs.AlpsSetup) -> bool:
+    """Return whether a submission should be skipped for debug queue protection."""
+    if alps_setup.partition_key != "debug":
+        return False
+
+    running_jobs = cscs.jobs_in_queue()
+    jobs_in_debug_queue = False
+
+    if not running_jobs.empty:
+        jobs_in_debug_queue = not running_jobs[
+            running_jobs["PARTITION"] == "debug"
+        ].empty
+
+    if not jobs_in_debug_queue:
+        return False
+
+    logger.warning(
+        "There are other jobs in the queue. "
+        "No new job will be started in the debug partition."
+    )
+    return True
 
 
 def _get_common_case_name(cases: list[init.Case]) -> str:
@@ -1180,4 +1316,5 @@ __all__ = [
     "PreProcessing",
     "create_run_4x_script",
     "interpolate_to_model_profile",
+    "start_run_4x_simulation",
 ]
