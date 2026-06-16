@@ -202,7 +202,6 @@ class PreProcessing:
         ls_ktot = self.case.config.land_surface.ktot
         field_counts = (itot * jtot, itot * jtot * ktot, itot * jtot * ls_ktot)
         target_sizes = {count * dtype.itemsize for count in field_counts}
-        print(target_sizes)
         source_dtypes_by_size = {
             count * np.dtype(source_dtype).itemsize: np.dtype(source_dtype)
             for count in field_counts
@@ -217,7 +216,6 @@ class PreProcessing:
 
         for file in binary_files:
             size = file.stat().st_size
-            print(f"filename: {file.name}: size: {size}")
             if size in target_sizes:
                 continue
 
