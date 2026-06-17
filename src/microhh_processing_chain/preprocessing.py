@@ -44,13 +44,16 @@ class PreProcessing:
         alps_setup: cscs.AlpsSetup,
         microhh_executable_path: Union[str, Path],
         jobreport_path: Optional[Union[str, Path]] = None,
-        binary_precision: type = np.float64,
+        binary_precision: Optional[type] = None,
     ) -> None:
         self.case = case
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
         self.jobreport_path = jobreport_path
-        self.binary_precision = np.dtype(binary_precision)
+        if binary_precision is not None:
+            self.binary_precision = np.dtype(binary_precision)
+        else:
+            self.binary_precision = None
 
         self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_architecture()
@@ -155,7 +158,8 @@ class PreProcessing:
         # Check if required files are present
         self._check_required_files()
 
-        self._check_file_precision()
+        if self.binary_precision is not None:
+            self._check_file_precision()
 
         # Create bash script if it does not exist
         self.job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
