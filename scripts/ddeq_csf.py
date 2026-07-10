@@ -120,6 +120,9 @@ def main() -> None:
     noise_lvl = 280  # ppmv m, based on coarsened data with 1m resolution
     crs = ccrs.epsg(32630)  # UTM zone 30N
 
+    # create folder for images
+    (case.directory / "images").mkdir(exist_ok=True)
+
     post_processing = post.PostProcessing(case)
 
     # -------------------------------------------------------------------------
@@ -140,7 +143,10 @@ def main() -> None:
     gui_background = "linear"
     gui_lmax = 50
     gui_delta = 3
-    gui_plume_width = 50
+    gui_plume_width = 75
+
+    # FIXME: Adapt bounds for Gaussian fit
+    raise NotImplementedError("Gaussian fit bounds need to be adapted for this case.")
 
     # -------------------------------------------------------------------------
     # 4) Generate Synthetic Wind Field
@@ -264,6 +270,12 @@ def main() -> None:
                     t.values,
                 )
                 continue
+
+            # save results fig:
+            if ui.results_fig is not None:
+                t_str = pd.Timestamp(t.values).strftime("%Y%m%d_%H%M%S")
+                fig_path = case.directory / "images" / f"results_fig_{t_str}.png"
+                ui.results_fig.savefig(fig_path, dpi=300)
 
             results_stats = ddeq.csf.compute_fit_statistics(
                 ui.results,
