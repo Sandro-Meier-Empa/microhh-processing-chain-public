@@ -1360,7 +1360,7 @@ def calculate_tke_spatial_profile_dask(
     # add w if provided
     if ds_w is not None:
         w_slice = ds_w.w.isel(time=time_idx)
-        w_slice = 0.5 * (w_slice + w_slice.roll(zh=-1, roll_coords=False))
+        w_slice = (0.5 * (w_slice + w_slice.shift(zh=-1))).ffill(dim="zh")
         w_slice = w_slice.assign_coords(zh=u_slice.z.values).rename({"zh": "z"})
 
         w_slice = w_slice.transpose("z", "x", "y")
