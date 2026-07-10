@@ -1070,7 +1070,7 @@ def create_run_4x_script(
     mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
-) -> Path:
+) -> cscs.SlurmJob:
     """Create a SLURM script that runs prepared simulations on a GPU node."""
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
@@ -1094,7 +1094,7 @@ def create_run_4x_script(
     else:
         logger.info("Reading existing sbatch script %s", master_job_file)
 
-    return Path(master_job_file)
+    return cscs.SlurmJob(master_job_file, ssh_connect=alps_setup.ssh_connect)
 
 
 def _get_common_case_name(cases: list[init.Case]) -> str:
