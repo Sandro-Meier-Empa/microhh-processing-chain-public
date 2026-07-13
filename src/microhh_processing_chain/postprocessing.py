@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal, Optional, Union, cast
 
@@ -1595,10 +1596,121 @@ def _get_2d_3d_output_commands(
     return commands
 
 
+def _create_3d_output_parallel_worker(
+    case: init.Case,
+    variable: Union[str, list],
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    sample_time: Optional[int] = None,
+    precision: Union[Precision, str] = Precision.SINGLE,
+    overwrite: Optional[bool] = None,
+) -> tuple[str, str]:
+    """Worker for the parallel run method.
+
+    Args:
+        case:
+            Case of which the variable is processed
+        variable:
+            Modelled variable which should be processed.
+            E.g. ["u"]
+        precision:
+            Precision used for the created .nc file.
+        start_time:
+            Start time in s of the data to process.
+        end_time:
+            End time in s of the data to process.
+        sample_time:
+            Sample time in s of the output .nc file.
+        overwrite:
+            Specify if existing .nc files should be overwritten.
+    """
+    pp = PostProcessing(case)
+    pp.create_3d_output(
+        variables=variable,
+        sample_time=sample_time,
+        start_time=start_time,
+        end_time=end_time,
+        precision=precision,
+        nprocs=1,
+        overwrite=overwrite,
+    )
+
+    casename = case.name if hasattr(case, "name") else str(case)
+
+    return casename, variable
+
+
+def create_3d_output_parallel(
+    cases: Union[init.Case, list],
+    variables: Union[str, list],
+    precision: Union[Precision, str] = Precision.SINGLE,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    sample_time: Optional[int] = None,
+    overwrite: bool = False,
+    max_workers: int = 20,
+) -> None:
+    """Create 3D netCDF files for the variables specified in parallel.
+
+    Args:
+        cases:
+            List of cases that shell be processed.
+        variables:
+            Modelled variables which should be processed.
+            E.g. ["u", "v", "w", "ch4", "qt", "th"]
+        precision:
+            Precision used for the created .nc file.
+        start_time:
+            Start time in s of the data to process.
+        end_time:
+            End time in s of the data to process.
+        sample_time:
+            Sample time in s of the output .nc file.
+        nprocs:
+            Number of worker processes for parallel processing.
+        overwrite:
+            Specify if existing .nc files should be overwritten.
+        max_workers:
+            The maximum number of workers for the multiprocess.
+    """
+    if type(cases) is not list:
+        cases = [cases]
+
+    tasks = []
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for case in cases:
+            for variable in variables:
+                future = executor.submit(
+                    _create_3d_output_parallel_worker,
+                    case,
+                    variable,
+                    start_time,
+                    end_time,
+                    sample_time,
+                    precision,
+                    overwrite,
+                )
+                tasks.append(future)
+
+        completed = []
+
+        for future in as_completed(tasks):
+            try:
+                case_name, variable = future.result()
+                completed.append((case_name, variable))
+                print(f"Finished: case={case_name}, variable={variable}")
+            except Exception:
+                print("A task failed.")
+
+    return completed
+
+
 __all__ = [
     "PostProcessing",
     "add_gaussian_noise",
     "create_2d_3d_output_script",
+    "create_3d_output_parallel",
     "degrade_resolution",
     "format_data_for_cdo",
     "merge_restart_statistics",
