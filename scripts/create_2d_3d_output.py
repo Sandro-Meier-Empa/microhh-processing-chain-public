@@ -20,6 +20,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--start_time",
+        type=int,
+        help="Start time for processing",
+    )
+
+    parser.add_argument(
         "--sample_time",
         type=int,
         help="Sampling time interval for 3D output.",
@@ -49,8 +55,10 @@ if __name__ == "__main__":
     case = init.read_case(args.directory)
     post_processing = post.PostProcessing(case)
     post_processing.create_3d_output(
-        variables=args.vars_3d, sample_time=args.sample_time
+        variables=args.vars_3d, start_time=args.start_time, sample_time=args.sample_time
     )
-    post_processing.create_2d_output(variables=args.vars_2d)
+    post_processing.create_2d_output(
+        variables=args.vars_2d, start_time=args.start_time, sample_time=args.sample_time
+    )
 
     logging.info("Finished case in %s", args.directory)
