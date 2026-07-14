@@ -8,6 +8,7 @@ import ddeq.gui
 import numpy as np
 import pandas as pd
 import xarray as xr
+from ddeq.gui.params import CSFPlotParams, PlumeDetectionParams
 from tqdm.auto import tqdm
 
 import microhh_processing_chain.initialisation as init
@@ -145,8 +146,17 @@ def main() -> None:
     gui_delta = 3
     gui_plume_width = 75
 
-    # FIXME: Adapt bounds for Gaussian fit
-    raise NotImplementedError("Gaussian fit bounds need to be adapted for this case.")
+    plume_detection_params = PlumeDetectionParams(
+        var_sys=0, filter_type="gaussian", lmax=gui_lmax
+    )
+    csf_plot_params = CSFPlotParams(
+        variable_map="{gas}_mass",
+        variable_std="{gas}_mass_precision",
+        variable_across="{gas}_mass",
+        vmins=0,
+        cmap="Reds",
+        line_color="black",
+    )
 
     # -------------------------------------------------------------------------
     # 4) Generate Synthetic Wind Field
@@ -247,6 +257,8 @@ def main() -> None:
                 cmap=gui_cmap,
                 color=gui_color,
                 headless=gui_headless,
+                plume_detection_params=plume_detection_params,
+                csf_plot_params=csf_plot_params,
             )
 
             ui.thr_value_slider.value = gui_thr  # pyright: ignore
