@@ -362,7 +362,7 @@ def compute_total_slant_column(
     if gas_data.chunks is not None:
         safe_chunks = {dim: -1 for dim in ["x", "y", "z"] if dim in gas_data.dims}
         # Keep existing chunking for other dimensions (like 'time')
-        for dim, chunks in gas_data.chunkssizes.items():
+        for dim, chunks in gas_data.chunksizes.items():
             if dim not in safe_chunks:
                 safe_chunks[dim] = chunks[0]
         gas_data = gas_data.chunk(safe_chunks)
