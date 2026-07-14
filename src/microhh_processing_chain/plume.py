@@ -1,8 +1,9 @@
 """Plume geometry and spectral diagnostics."""
 
+from typing import Optional, Union
+
 import numpy as np
 import xarray as xr
-from scipy import fftpack
 
 
 def calculate_plume_centerline(
@@ -72,48 +73,249 @@ def calculate_meandering_dispersion(y_mean_centerline: np.ndarray) -> float:
 
 def calculate_plume_psd(
     data: xr.Dataset, variable_name: str = "CH4_mass"
-) -> tuple[np.ndarray, np.ndarray]:
-    """Calculate the radially averaged plume power spectral density.
+) -> xr.Dataset:
+    """Calculate the plume two-dimensional spatial PSD density.
+
+    The returned PSD density is normalized so that its integral over the
+    two-dimensional spatial-frequency plane approximately preserves the
+    variance of the mean-removed plume field:
+
+        psd_2d.sum() * dkx * dky ~= np.nanvar(field)
 
     Args:
         data: Dataset containing the plume mask, pixel area, and analysed variable.
         variable_name: Variable to analyse within the plume mask.
 
     Returns:
-        Frequency axis and corresponding radially averaged PSD values.
+        Dataset containing the normalized two-dimensional PSD density and
+        spatial-frequency coordinates.
+
+    Raises:
+        ValueError: If the masked input field is not two-dimensional or if the
+            inferred grid/window normalization is invalid.
     """
-    plume_data = data[variable_name].where(data.plume_area == 1, drop=True).values
+    data_2d = data.squeeze(dim="source", drop=True) if "source" in data.dims else data
+    plume_field = data_2d[variable_name].where(data_2d.plume_area == 1, drop=True)
 
+    if plume_field.ndim != 2:
+        raise ValueError(
+            "calculate_plume_psd expects a two-dimensional field after plume "
+            f"masking; got dimensions {plume_field.dims}."
+        )
+
+    plume_data = plume_field.values.astype(float, copy=True)
     plume_data -= np.nanmean(plume_data)
-    plume_data = np.nan_to_num(plume_data)
+    plume_data = np.nan_to_num(plume_data, nan=0.0)
 
-    # Apply Tapering to prevent spectral leakage
-    tapered_data = apply_2d_taper(plume_data)
+    dx = float(np.sqrt(np.nanmean(data_2d["pixel_area"].values)))
+    dy = dx
+    if not np.isfinite(dx) or dx <= 0:
+        raise ValueError(
+            "Could not infer a positive finite grid spacing from pixel_area."
+        )
 
-    f = fftpack.fft2(tapered_data)
-    f_shifted = fftpack.fftshift(f)
-    # normlise to satisfy Parseval's Theorem
-    psd_2d = (np.abs(f_shifted) ** 2) / (tapered_data.size)
+    tapered_data, window_2d = apply_2d_taper(plume_data, return_window=True)
+    window_power = float(np.mean(window_2d**2))
+    if not np.isfinite(window_power) or window_power <= 0:
+        raise ValueError("The Hanning window power correction is not positive.")
 
-    center = (psd_2d.shape[1] // 2, psd_2d.shape[0] // 2)
-    psd_1d = radial_profile(psd_2d, center)
+    ny, nx = tapered_data.shape
+    field_fft = np.fft.fft2(tapered_data)
+    psd_2d = (
+        np.abs(np.fft.fftshift(field_fft)) ** 2 * dx * dy / (nx * ny * window_power)
+    )
 
-    # 3. Create the frequency axis for the 1D plot
-    dx = np.nanmean(np.sqrt(data["pixel_area"].values))
-    df = 1.0 / (psd_2d.shape[0] * dx)  # Assuming square-ish pixels
-    freq_1d = np.arange(len(psd_1d)) * df
+    kx = np.fft.fftshift(np.fft.fftfreq(nx, d=dx))
+    ky = np.fft.fftshift(np.fft.fftfreq(ny, d=dy))
 
-    return freq_1d, psd_1d
+    input_units = data[variable_name].attrs.get("units")
+    psd_attrs = {
+        "long_name": f"Two-dimensional spatial PSD density of {variable_name}",
+        "normalization": "sum(psd_2d) * dkx * dky approximates field variance",
+    }
+    if input_units:
+        psd_attrs["units"] = f"({input_units})^2 m^2"
+
+    return xr.Dataset(
+        data_vars={
+            "psd_2d": (
+                ("ky", "kx"),
+                psd_2d,
+                psd_attrs,
+            )
+        },
+        coords={
+            "kx": (
+                "kx",
+                kx,
+                {"units": "m-1", "long_name": "zonal spatial frequency"},
+            ),
+            "ky": (
+                "ky",
+                ky,
+                {"units": "m-1", "long_name": "meridional spatial frequency"},
+            ),
+        },
+        attrs={
+            "dx": dx,
+            "dy": dy,
+            "window": "hanning_2d",
+            "window_power_correction": window_power,
+            "normalization": (
+                "|fft2(field * window)|^2 * dx * dy / (nx * ny * mean(window^2))"
+            ),
+        },
+    )
 
 
-def apply_2d_taper(data: np.ndarray) -> np.ndarray:
+def calculate_radial_plume_psd(
+    psd: xr.Dataset,
+    psd_name: str = "psd_2d",
+    nbins: Optional[int] = None,
+    bin_edges: Optional[np.ndarray] = None,
+) -> xr.Dataset:
+    """Radially average a two-dimensional plume PSD density.
+
+    Args:
+        psd: Dataset returned by :func:`calculate_plume_psd`.
+        psd_name: Name of the two-dimensional PSD variable to average.
+        nbins: Number of radial wavenumber bins. Ignored when ``bin_edges`` is
+            provided.
+        bin_edges: Radial wavenumber bin edges in ``m-1``.
+
+    Returns:
+        Dataset containing the annular mean PSD density and a variance-preserving
+        radial spectrum.
+
+    Raises:
+        ValueError: If the PSD dataset does not have compatible ``kx`` and
+            ``ky`` coordinates or invalid radial bins.
+    """
+    if psd_name not in psd:
+        raise ValueError(f"PSD variable '{psd_name}' is not present in the dataset.")
+
+    psd_2d = psd[psd_name]
+    if psd_2d.dims != ("ky", "kx"):
+        raise ValueError(
+            f"Expected '{psd_name}' dimensions ('ky', 'kx'); got {psd_2d.dims}."
+        )
+
+    kx = psd["kx"].values
+    ky = psd["ky"].values
+    if kx.size != psd_2d.sizes["kx"] or ky.size != psd_2d.sizes["ky"]:
+        raise ValueError("kx/ky coordinate lengths must match the PSD shape.")
+
+    dkx = _uniform_spacing(kx, "kx")
+    dky = _uniform_spacing(ky, "ky")
+
+    kx_grid, ky_grid = np.meshgrid(kx, ky, indexing="xy")
+    k_radius = np.sqrt(kx_grid**2 + ky_grid**2)
+    values = psd_2d.values
+
+    if bin_edges is None:
+        n_bins = max(1, min(kx.size, ky.size) // 2) if nbins is None else nbins
+        if n_bins < 1:
+            raise ValueError("nbins must be at least 1.")
+        k_max = float(np.nanmax(k_radius))
+        radial_edges = np.linspace(0.0, np.nextafter(k_max, np.inf), n_bins + 1)
+    else:
+        radial_edges = np.asarray(bin_edges, dtype=float)
+        if radial_edges.ndim != 1 or radial_edges.size < 2:
+            raise ValueError("bin_edges must be a one-dimensional array of edges.")
+
+    bin_widths = np.diff(radial_edges)
+    if np.any(~np.isfinite(radial_edges)) or np.any(bin_widths <= 0):
+        raise ValueError("Radial bin edges must be finite and strictly increasing.")
+
+    n_bins = radial_edges.size - 1
+    radial_psd = np.full(n_bins, np.nan)
+    annular_mean_psd = np.full(n_bins, np.nan)
+    counts = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        if i == n_bins - 1:
+            mask = (k_radius >= radial_edges[i]) & (k_radius <= radial_edges[i + 1])
+        else:
+            mask = (k_radius >= radial_edges[i]) & (k_radius < radial_edges[i + 1])
+
+        valid = mask & np.isfinite(values)
+        counts[i] = int(np.count_nonzero(valid))
+        if counts[i] == 0:
+            continue
+
+        annulus_sum = float(np.nansum(values[valid]))
+        annular_mean_psd[i] = annulus_sum / counts[i]
+        radial_psd[i] = annulus_sum * dkx * dky / bin_widths[i]
+
+    wavenumber = 0.5 * (radial_edges[:-1] + radial_edges[1:])
+    psd_units = psd_2d.attrs.get("units")
+    spectrum_attrs = {
+        "long_name": "Variance-preserving radial plume PSD",
+        "normalization": (
+            "sum(radial_spectrum * bin_width) approximates psd_2d integral"
+        ),
+    }
+    radial_psd_attrs = {
+        "long_name": "Annular mean two-dimensional plume PSD density",
+    }
+    if psd_units:
+        radial_psd_attrs["units"] = psd_units
+        spectrum_attrs["units"] = f"({psd_units}) m-1"
+
+    return xr.Dataset(
+        data_vars={
+            "radial_psd": ("wavenumber", radial_psd, spectrum_attrs),
+            "annular_mean_psd": ("wavenumber", annular_mean_psd, radial_psd_attrs),
+            "mode_count": ("wavenumber", counts),
+            "bin_width": (
+                "wavenumber",
+                bin_widths,
+                {"units": "m-1", "long_name": "Radial bin width"},
+            ),
+        },
+        coords={
+            "wavenumber": (
+                "wavenumber",
+                wavenumber,
+                {"units": "m-1", "long_name": "Radial spatial frequency"},
+            )
+        },
+        attrs={
+            "source_psd": psd_name,
+            "dkx": dkx,
+            "dky": dky,
+            "normalization": (
+                "radial_spectrum is the annulus-integrated PSD divided by "
+                "radial bin width"
+            ),
+        },
+    )
+
+
+def _uniform_spacing(values: np.ndarray, name: str) -> float:
+    """Return the uniform coordinate spacing for a one-dimensional coordinate."""
+    if values.ndim != 1 or values.size < 2:
+        raise ValueError(f"{name} must be a one-dimensional coordinate.")
+
+    spacing = np.diff(values)
+    mean_spacing = float(np.mean(spacing))
+    if not np.allclose(spacing, mean_spacing):
+        raise ValueError(f"{name} coordinate must be uniformly spaced.")
+
+    return abs(mean_spacing)
+
+
+def apply_2d_taper(
+    data: np.ndarray, return_window: bool = False
+) -> Union[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """Apply a 2D Hanning window before spectral analysis.
 
     Args:
         data: Two-dimensional plume concentration field.
+        return_window: Return the applied window together with the tapered data.
 
     Returns:
-        Tapered field.
+        Tapered field, and optionally the applied two-dimensional window.
     """
     ny, nx = data.shape
     # Create 1D windows for each axis
@@ -124,32 +326,16 @@ def apply_2d_taper(data: np.ndarray) -> np.ndarray:
     window_2d = np.outer(win_y, win_x)
 
     # Apply to the data
-    return data * window_2d
-
-
-def radial_profile(data: np.ndarray, center: tuple) -> np.ndarray:
-    """Calculate average power at each radial distance from a center point.
-
-    Args:
-        data: Two-dimensional power field.
-        center: x/y coordinates of the radial origin.
-
-    Returns:
-        Mean value for each integer radial distance.
-    """
-    y, x = np.indices(data.shape)
-    r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
-    r = r.astype(int)
-
-    tbin = np.bincount(r.ravel(), data.ravel())
-    nr = np.bincount(r.ravel())
-    radialprofile = tbin / nr  # normalize by the number of points in each bin
-
-    return radialprofile
+    tapered_data = data * window_2d
+    if return_window:
+        return tapered_data, window_2d
+    return tapered_data
 
 
 __all__ = [
     "calculate_absolute_dispersion",
     "calculate_meandering_dispersion",
     "calculate_plume_centerline",
+    "calculate_plume_psd",
+    "calculate_radial_plume_psd",
 ]

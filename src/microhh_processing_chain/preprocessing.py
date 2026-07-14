@@ -162,7 +162,10 @@ class PreProcessing:
             self._check_file_precision()
 
         # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
+        job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
+        self.slurm_job = cscs.SlurmJob(
+            job_file, ssh_connect=self.alps_setup.ssh_connect
+        )
 
         if start_jobs:
             # Launch the job on alps
@@ -272,7 +275,10 @@ class PreProcessing:
         self.copy_restart_files(origin=restart_case.directory, timestr=restart_str)
 
         # Create bash script if it does not exist
-        self.job_file = self.create_run_script(overwrite, mode=RunMode.RERUN)
+        job_file = self.create_run_script(overwrite, mode=RunMode.RERUN)
+        self.slurm_job = cscs.SlurmJob(
+            job_file, ssh_connect=self.alps_setup.ssh_connect
+        )
 
         if start_jobs:
             # Launch the job on alps
@@ -311,9 +317,6 @@ class PreProcessing:
             self.case.job_id = None
             return
 
-        self.slurm_job = cscs.SlurmJob(
-            self.job_file, ssh_connect=self.alps_setup.ssh_connect
-        )
         self.case.job_id = self.slurm_job.start(wait=wait)
 
     def cancel_simulation(self) -> None:
@@ -940,7 +943,17 @@ class PreProcessing:
             restart_files.extend(origin.glob(pattern))
 
         for file in restart_files:
-            shutil.copy(file, self.case.scratch_path)
+            # check if file exists in target directory
+            target_file = Path(self.case.scratch_path, file.name)
+            if target_file.exists():
+                logger.info(
+                    "Restart file %s already exists in scratch directory. "
+                    "Skipping copy.",
+                    target_file,
+                )
+                continue
+            else:
+                shutil.copy(file, self.case.scratch_path)
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
@@ -1106,7 +1119,7 @@ def create_run_4x_script(
     mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
-) -> Path:
+) -> cscs.SlurmJob:
     """Create a SLURM script that runs prepared simulations on a GPU node."""
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
@@ -1134,7 +1147,7 @@ def create_run_4x_script(
     else:
         logger.info("Reading existing sbatch script %s", master_job_file)
 
-    return Path(master_job_file)
+    return cscs.SlurmJob(master_job_file, ssh_connect=alps_setup.ssh_connect)
 
 
 def start_run_4x_simulation(

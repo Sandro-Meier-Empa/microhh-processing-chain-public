@@ -2,7 +2,7 @@
 
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 import netCDF4
 import pandas as pd
@@ -101,14 +101,22 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     """
     df = pd.read_csv(case.out_file_path, sep=r"\s+")
 
-    df["CPUT"] = df["CPUDT"].cumsum()
+    # for restarted simulations, the column names are written again in the
+    # middle of the file
+    bad_mask = pd.isna(pd.to_numeric(df["TIME"], errors="coerce")) & df["TIME"].notna()
+    df_clean = df[~bad_mask]
 
-    dtime = df["TIME"].diff()
-    df["SDPD"] = dtime / df["CPUDT"]
+    # ensure all numeric columns are numeric again
+    df_clean = cast(pd.DataFrame, df_clean.apply(pd.to_numeric))
 
-    df.loc[0, "SDPD"] = 0.0
+    df_clean["CPUT"] = df_clean["CPUDT"].cumsum()
 
-    return df
+    dtime = df_clean["TIME"].diff()
+    df_clean["SDPD"] = dtime / df_clean["CPUDT"]
+
+    df_clean.loc[0, "SDPD"] = 0.0
+
+    return df_clean
 
 
 @wraps(microhhpy.io.save_case_input)

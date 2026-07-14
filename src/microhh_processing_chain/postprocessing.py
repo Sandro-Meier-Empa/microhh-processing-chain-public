@@ -298,37 +298,29 @@ class PostProcessing:
             overwrite:
                 Specify if existing files or folders should be overwritten.
         """
+        store_path = Path(store_path)
+
         for item in self.case.directory.glob(pattern):
-            dest_item = Path(store_path, item.name)
+            dest_item = store_path / item.name
+
+            if dest_item.exists() and not overwrite:
+                logger.info(
+                    "'%s' already exists in '%s'. Skipping.", item.name, store_path
+                )
+                continue
+
+            if dest_item.exists() and overwrite:
+                if dest_item.is_dir():
+                    shutil.rmtree(dest_item)
+                else:
+                    dest_item.unlink()
 
             if item.is_dir():
-                # Handle directories
-                if not dest_item.exists() or overwrite:
-                    if dest_item.exists() and overwrite:
-                        shutil.rmtree(dest_item)
-                    shutil.copytree(item, dest_item)
-                    logger.info(
-                        "Successfully copied '%s' to '%s'.", item.name, store_path
-                    )
-                else:
-                    logger.info(
-                        "'%s' already exists in '%s'. Skipping.",
-                        item.name,
-                        store_path,
-                    )
+                shutil.copytree(item, dest_item)
             else:
-                # Handle files
-                if not dest_item.exists() or overwrite:
-                    shutil.copy(item, store_path)
-                    logger.info(
-                        "Successfully copied '%s' to '%s'.", item.name, store_path
-                    )
-                else:
-                    logger.info(
-                        "'%s' already exists in '%s'. Skipping.",
-                        item.name,
-                        store_path,
-                    )
+                shutil.copy(item, store_path)
+
+            logger.info("Successfully copied '%s' to '%s'.", item.name, store_path)
 
     def zip_binary_files(
         self, file_pattern: str = "^.*", remove_files: bool = False

@@ -42,6 +42,7 @@ analysis.
 - Keep comments focused on non-obvious scientific, filesystem, or HPC behavior.
 - Avoid committing generated Python caches, local environment files, large
   outputs, or bulky simulation artifacts.
+- Don't create tests for new code unless the user explicitly requests test additions.
 
 ## Notebooks And Data
 
