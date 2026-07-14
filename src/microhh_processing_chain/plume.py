@@ -332,10 +332,124 @@ def apply_2d_taper(
     return tapered_data
 
 
+def compute_total_slant_column(
+    gas_data: xr.DataArray,
+    density_data: xr.DataArray,
+    sza: float,
+    saa: float,
+    vza: float = 0.0,
+    vaa: float = 0.0,
+) -> xr.Dataset:
+    """Compute total 2D Slant Column Density (SCD) for CH4.
+
+    This computes the SCD by integrating CH4 mass density along two slant
+    paths (solar and viewing) accounting for horizontal displacement caused
+    by zenith and azimuth angles. The implementation is vectorized and
+    supports Dask-backed xarray DataArrays.
+
+    Args:
+        gas_data (xr.DataArray): 3D gas mixing ratio (e.g. CH4 in kg/kg).
+        density_data (xr.DataArray): 3D air density (kg/m^3) matching gas_data.
+        sza (float): Solar zenith angle in degrees.
+        saa (float): Solar azimuth angle in degrees (clockwise from North).
+        vza (float, optional): Viewing zenith angle in degrees. Defaults to 0.0.
+        vaa (float, optional): Viewing azimuth angle in degrees. Defaults to 0.0.
+
+    Returns:
+        xr.Dataset: Total Slant Column Density (kg/m^2) with horizontal
+            dimensions (y, x) and any additional dimensions (e.g. time).
+    """
+    if gas_data.chunks is not None:
+        safe_chunks = {dim: -1 for dim in ["x", "y", "z"] if dim in gas_data.dims}
+        # Keep existing chunking for other dimensions (like 'time')
+        for dim, chunks in gas_data.chunkssizes.items():
+            if dim not in safe_chunks:
+                safe_chunks[dim] = chunks[0]
+        gas_data = gas_data.chunk(safe_chunks)
+
+    ch4_dens = gas_data * density_data
+
+    def _compute_single_path(
+        gas_dens: xr.DataArray, zenith: float, azimuth: float
+    ) -> xr.DataArray:
+        """Helper to calculate SCD for a single ray path line."""
+        if zenith == 0.0:
+            return gas_dens.integrate("z")
+
+        zenith_rad = np.radians(zenith)
+        azimuth_rad = np.radians(azimuth)
+
+        # Calculate horizontal displacement per unit height
+        dx_factor = np.tan(zenith_rad) * np.sin(azimuth_rad)
+        dy_factor = np.tan(zenith_rad) * np.cos(azimuth_rad)
+
+        # Vectorized coordinate creation:
+        # (gas_dens.z * dx_factor) creates a ('z',) array.
+        # Adding it to gas_dens.x ('x',) implicitly broadcasts to a
+        # 2D ('z', 'x') coordinate array.
+        x_target = gas_dens.x + (gas_dens.z * dx_factor)
+        y_target = gas_dens.y + (gas_dens.z * dy_factor)
+
+        da_shifted = gas_dens.interp(
+            x=x_target, y=y_target, method="linear", kwargs={"fill_value": np.nan}
+        )
+
+        path_scd = da_shifted.integrate("z") / np.cos(zenith_rad)
+        return path_scd
+
+    scd_incoming = _compute_single_path(ch4_dens, sza, saa)
+    scd_outgoing = _compute_single_path(ch4_dens, vza, vaa)
+
+    # when we compute the modelled vcd, we integrate vertically one way
+    # when we compute the modelled scd, we integrate two-way
+    # => the scd is expected to be larger than the vcd by a factor
+    # of (1/cos(SZA) + 1/cos(VZA)) for a homogeneous atmosphere.
+    # => have to correct for that if we want to compare the two.
+    geom_amf = 1.0 / np.cos(np.radians(sza)) + 1.0 / np.cos(np.radians(vza))
+    scd_incoming /= geom_amf
+    scd_outgoing /= geom_amf
+    total_scd = scd_incoming + scd_outgoing
+
+    # save in xr dataset
+    scd_incoming.name = "scd_incoming"
+    scd_incoming.attrs = {
+        "units": "kg m-2",
+        "description": (f"Incoming slant column density (SZA={sza}, SAA={saa})"),
+    }
+    scd_outgoing.name = "scd_outgoing"
+    scd_outgoing.attrs = {
+        "units": "kg m-2",
+        "description": (f"Outgoing slant column density (VZA={vza}, VAA={vaa})"),
+    }
+    total_scd.attrs = {
+        "units": "kg m-2",
+        "description": ("Total slant column density "),
+    }
+
+    data_out = xr.Dataset(
+        {
+            "scd_incoming": scd_incoming,
+            "scd_outgoing": scd_outgoing,
+            "total_scd": total_scd,
+        },
+        coords={dim: total_scd[dim] for dim in total_scd.dims},
+        attrs={
+            "sza": sza,
+            "saa": saa,
+            "vza": vza,
+            "vaa": vaa,
+            "geom_amf": geom_amf,
+        },
+    )
+    return data_out
+
+
 __all__ = [
+    "apply_2d_taper",
     "calculate_absolute_dispersion",
     "calculate_meandering_dispersion",
     "calculate_plume_centerline",
     "calculate_plume_psd",
     "calculate_radial_plume_psd",
+    "compute_total_slant_column",
 ]
