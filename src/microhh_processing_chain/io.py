@@ -4,10 +4,11 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-import microhhpy  # pyright: ignore[reportMissingImports]
 import netCDF4
 import pandas as pd
 import xarray as xr
+
+import microhhpy  # pyright: ignore[reportMissingImports]
 
 if TYPE_CHECKING:
     from microhh_processing_chain.initialisation import Case
@@ -142,7 +143,6 @@ def save_case_input(
         source=source,
         trajectories=trajectories,
         output_dir=output_dir,
-        overwrite=overwrite,
     )
 
 
