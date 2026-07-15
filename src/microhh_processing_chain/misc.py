@@ -1,11 +1,13 @@
 """Miscellaneous utility functions."""
 
-from typing import Union
+from pathlib import Path
+from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from matplotlib.colors import LinearSegmentedColormap
+from netCDF4 import Dataset
 
 
 def make_white_inferno(
@@ -83,7 +85,7 @@ def make_white_plasma(
 def potential_temperature(
     temperature: Union[xr.DataArray, np.ndarray, float],
     pressure: Union[xr.DataArray, np.ndarray, float],
-    qv: Union[xr.DataArray, np.ndarray, float] = None,
+    qv: Optional[Union[xr.DataArray, np.ndarray, float]] = None,
 ) -> xr.DataArray:
     """Calculate potential temperature from temperature and pressure.
 
@@ -144,3 +146,50 @@ def nearest_lat_lon_idx(
 
     flat_idx = np.argmin(lat_diff * lat_diff + (lon_diff * lon_scale) ** 2)
     return tuple(int(i) for i in np.unravel_index(flat_idx, lat_values.shape))
+
+
+def compare_all_group_variables(
+    nc_path_1: Union[str, Path],
+    nc_path_2: Union[str, Path],
+) -> None:
+    with Dataset(nc_path_1, "r") as ds1, Dataset(nc_path_2, "r") as ds2:
+        groups1 = set(ds1.groups.keys())
+        groups2 = set(ds2.groups.keys())
+
+        only_groups_1 = sorted(groups1 - groups2)
+        only_groups_2 = sorted(groups2 - groups1)
+        common_groups = sorted(groups1 & groups2)
+
+        print("=" * 80)
+        print("GROUP COMPARISON")
+        print("=" * 80)
+
+        print(f"\nGroups only in {nc_path_1}:")
+        print("\n".join(f"  {g}" for g in only_groups_1) or "  None")
+
+        print(f"\nGroups only in {nc_path_2}:")
+        print("\n".join(f"  {g}" for g in only_groups_2) or "  None")
+
+        print("\nGroups in both files:")
+        print("\n".join(f"  {g}" for g in common_groups) or "  None")
+
+        for group in common_groups:
+            vars1 = set(ds1.groups[group].variables.keys())
+            vars2 = set(ds2.groups[group].variables.keys())
+
+            only_vars_1 = sorted(vars1 - vars2)
+            only_vars_2 = sorted(vars2 - vars1)
+            common_vars = sorted(vars1 & vars2)
+
+            print("\n" + "=" * 80)
+            print(f"VARIABLE COMPARISON FOR GROUP /{group}")
+            print("=" * 80)
+
+            print(f"\nOnly in {nc_path_1}:")
+            print("\n".join(f"  {v}" for v in only_vars_1) or "  None")
+
+            print(f"\nOnly in {nc_path_2}:")
+            print("\n".join(f"  {v}" for v in only_vars_2) or "  None")
+
+            print("\n" + "In both:")
+            print("\n".join(f"  {v}" for v in common_vars) or "  None")
