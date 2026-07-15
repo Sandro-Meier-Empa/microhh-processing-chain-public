@@ -52,7 +52,7 @@ class PostProcessing:
         additional_args: Optional[dict] = None,
         overwrite: bool = False,
         start_jobs: bool = True,
-    ) -> Union[str, Path]:
+    ) -> cscs.SlurmJob:
         """Submit a bash script to process a case on alps.
 
         Make sure that the python venv used for processing was created with the
@@ -117,13 +117,12 @@ class PostProcessing:
         else:
             logger.info("Reading existing sbatch script %s", job_file)
 
-        if start_jobs:
-            # Launch the job on alps
-            cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect).start(
-                wait=False
-            )
+        slurm_job = cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
 
-        return job_file
+        if start_jobs:
+            slurm_job.start(wait=False)
+
+        return slurm_job
 
     def create_3d_output(
         self,
