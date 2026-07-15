@@ -1,11 +1,16 @@
 """Miscellaneous utility functions."""
 
+import datetime
 from pathlib import Path
 from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
+from astropy import units
+from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_sun
+from astropy.time import Time
 from matplotlib.colors import LinearSegmentedColormap
 from netCDF4 import Dataset
 
@@ -193,14 +198,6 @@ def compare_all_group_variables(
 
             print("\n" + "In both:")
             print("\n".join(f"  {v}" for v in common_vars) or "  None")
-import datetime
-from typing import Union
-
-import numpy as np
-import pandas as pd
-from astropy import units
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_sun
-from astropy.time import Time
 
 
 def calculate_sun_position(
@@ -235,4 +232,12 @@ def calculate_sun_position(
     return sun_altaz
 
 
-__all__ = ["calculate_sun_position"]
+__all__ = [
+    "calculate_sun_position",
+    "compare_all_group_variables",
+    "make_white_inferno",
+    "make_white_plasma",
+    "nearest_idx",
+    "nearest_lat_lon_idx",
+    "potential_temperature",
+]
