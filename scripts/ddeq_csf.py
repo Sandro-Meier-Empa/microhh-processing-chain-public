@@ -145,6 +145,7 @@ def main() -> None:
     gui_lmax = 50
     gui_delta = 3
     gui_plume_width = 75
+    gui_show_results = True
 
     plume_detection_params = PlumeDetectionParams(
         var_sys=0, filter_type="gaussian", lmax=gui_lmax
@@ -237,7 +238,9 @@ def main() -> None:
     # -------------------------------------------------------------------------
     data_arr = []
     results_arr = []
-    for t in tqdm(data_coord_noisy_slice.time, desc="Processing timesteps"):
+    for t in tqdm(
+        data_coord_noisy_slice.time, desc="Processing timesteps", disable=None
+    ):
         data_coord_subset_t = data_coord_noisy_slice.sel(time=t)
         _tolerance = pd.Timedelta(seconds=sampletime)
         winds_subset_t = winds.sel(
@@ -274,6 +277,7 @@ def main() -> None:
             ui.lmax_slider.value = gui_lmax  # pyright: ignore
             ui.delta_slider.value = gui_delta  # pyright: ignore
             ui.emissions_button.value = gui_emissions  # pyright: ignore
+            ui.show_results_button.value = gui_show_results  # pyright: ignore
 
             if ui.results is None:
                 logging.warning(
@@ -320,11 +324,7 @@ def main() -> None:
     if not results_file_path.exists():
         results_arr_merged.to_netcdf(results_file_path)
 
-    logging.info(
-        "Processing complete for case %s. Results saved to %s",
-        args.directory,
-        results_file_path,
-    )
+    logging.info("Processing complete for case %s.", args.directory)
 
 
 if __name__ == "__main__":
