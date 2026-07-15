@@ -16,6 +16,8 @@ def test_create_run_4x_script_uses_requested_mode(tmp_path: Path) -> None:
     recorded: dict[str, Any] = {}
 
     class FakeAlpsSetup:
+        ssh_connect = "ela"
+
         def create_sbatch_script(
             self,
             commands: list[str],
@@ -34,7 +36,7 @@ def test_create_run_4x_script_uses_requested_mode(tmp_path: Path) -> None:
             file_path.write_text("\n".join(commands))
             return file_path
 
-    job_file = pre.create_run_4x_script(
+    slurm_job = pre.create_run_4x_script(
         cases=cases,
         alps_setup=FakeAlpsSetup(),
         scratch_path=tmp_path,
@@ -43,7 +45,8 @@ def test_create_run_4x_script_uses_requested_mode(tmp_path: Path) -> None:
 
     commands = "\n".join(recorded["commands"])
 
-    assert job_file == tmp_path / "rerun_microhh_4x.sbatch"
+    assert slurm_job.path == tmp_path / "rerun_microhh_4x.sbatch"
+    assert slurm_job.ssh_connect == "ela"
     assert recorded["job_name"] == "rerun_microhh_4x"
     assert "# Launch 'run' phase" in commands
     assert "# Launch 'init' phase" not in commands
@@ -57,14 +60,9 @@ def test_start_run_4x_simulation_submits_script_and_sets_case_job_ids(
     job_file = tmp_path / "run_microhh_4x.sbatch"
     calls: list[dict[str, Any]] = []
 
-    def fake_create_run_4x_script(**kwargs: object) -> Path:
-        calls.append(kwargs)
-        return job_file
-
     class FakeSlurmJob:
-        def __init__(self, path: Path, ssh_connect: str) -> None:
-            self.path = path
-            self.ssh_connect = ssh_connect
+        path = job_file
+        ssh_connect = "ela"
 
         def start(self, wait: bool) -> int:
             calls.append(
@@ -76,8 +74,11 @@ def test_start_run_4x_simulation_submits_script_and_sets_case_job_ids(
             )
             return 1234
 
+    def fake_create_run_4x_script(**kwargs: object) -> FakeSlurmJob:
+        calls.append(kwargs)
+        return FakeSlurmJob()
+
     monkeypatch.setattr(pre, "create_run_4x_script", fake_create_run_4x_script)
-    monkeypatch.setattr(pre.cscs, "SlurmJob", FakeSlurmJob)
 
     job_id = pre.start_run_4x_simulation(
         cases=cases,

@@ -1199,7 +1199,7 @@ def start_run_4x_simulation(
                 case.job_id = None
             return None
 
-    job_file = create_run_4x_script(
+    slurm_job = create_run_4x_script(
         cases=cases,
         alps_setup=alps_setup,
         scratch_path=str(scratch_path),
@@ -1207,7 +1207,6 @@ def start_run_4x_simulation(
         overwrite=overwrite,
         jobreport_path=jobreport_path,
     )
-    slurm_job = cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
     job_id = slurm_job.start(wait=wait)
 
     for case in cases:
