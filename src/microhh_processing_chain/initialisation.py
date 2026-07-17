@@ -683,50 +683,73 @@ class Case:
         self._directory = new_file_directory
         self._ini_file_path = Path(new_file_directory, f"{new_name}.ini")
 
-    def clean(self) -> None:
+    def clean(
+        self,
+        keep_chemistry: bool = True,
+        keep_emissions: bool = True,
+        keep_microhh_binary: bool = True,
+    ) -> None:
         """Clean this MicroHH case by removing all files and directories.
 
-        The following files are preserved:
+        Args:
+            keep_chemistry:
+                Keeps the fields that are needed for chemistry.
+            keep_emissions:
+                Keeps the 3D emission fields.
+            keep_microhh_binary:
+                Keeps ``microhh`` binary.
+
+        The following files are always preserved:
 
         - ``{name}.ini``
         - ``{name}_input.nc``
-        - ``microhh`` executable
 
         The user is prompted for confirmation before deletion.
         """
         files_to_keep = [
             f"{self.name}.ini",
             f"{self.name}_input.nc",
-            "microhh",
-            "van_genuchten_parameters.nc",
-            "alb_dif.0000000",
-            "alb_dir.0000000",
-            "cloud_coefficients_lw.nc",
-            "lb_dif.0000000",
-            "coefficients_sw.nc",
-            "index_veg.0000000",
-            "lambda_unstable.0000000",
-            "rs_veg_min.0000000",
-            "water_mask.0000000",
-            "alb_dir.0000000",
-            "cs_veg.0000000",
-            "lsm_input.nc",
-            "t_bot_water.0000000",
-            "z0h.0000000",
-            "cloud_coefficients_lw.nc",
-            "c_veg.0000000",
-            "theta_soil.0000000",
-            "z0m.0000000",
-            "cloud_coefficients_sw.nc",
-            "gD.0000000",
-            "lai.0000000",
-            "root_frac.0000000",
-            "coefficients_lw.nc",
-            "index_soil.0000000",
-            "lambda_stable.0000000",
-            "rs_soil_min.0000000",
-            "t_soil.0000000",
         ]
+
+        if keep_microhh_binary:
+            files_to_keep = files_to_keep + "microhh"
+        if keep_chemistry:
+            chem_fields = [
+                "van_genuchten_parameters.nc",
+                "alb_dif.0000000",
+                "alb_dir.0000000",
+                "cloud_coefficients_lw.nc",
+                "lb_dif.0000000",
+                "coefficients_sw.nc",
+                "index_veg.0000000",
+                "lambda_unstable.0000000",
+                "rs_veg_min.0000000",
+                "water_mask.0000000",
+                "alb_dir.0000000",
+                "cs_veg.0000000",
+                "lsm_input.nc",
+                "t_bot_water.0000000",
+                "z0h.0000000",
+                "cloud_coefficients_lw.nc",
+                "c_veg.0000000",
+                "theta_soil.0000000",
+                "z0m.0000000",
+                "cloud_coefficients_sw.nc",
+                "gD.0000000",
+                "lai.0000000",
+                "root_frac.0000000",
+                "coefficients_lw.nc",
+                "index_soil.0000000",
+                "lambda_stable.0000000",
+                "rs_soil_min.0000000",
+                "t_soil.0000000",
+            ]
+            files_to_keep = files_to_keep + chem_fields
+
+        if keep_emissions and "source" in self.config.groups:
+            em_fiels = [file.name for file in list(self.directory.glob("*_emission.*"))]
+            files_to_keep = files_to_keep + em_fiels
+
         with utils.confirm_action(
             f"Are you sure you want to clean the case at {self.directory}?"
         ) as confirmed:
