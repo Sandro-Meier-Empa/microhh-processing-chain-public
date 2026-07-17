@@ -702,6 +702,10 @@ class PreProcessing:
         if "source" not in self.case.config.groups:
             return
 
+        if self.case.config.source.swsource == "3d":
+            # TODO implement check for the 3d sources
+            return
+
         for coord in ["x", "y", "z"]:
             source_0 = np.atleast_1d(self.case.config["source"][f"source_{coord}0"])
             sigma = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
@@ -725,6 +729,10 @@ class PreProcessing:
         if "source" not in self.case.config.groups:
             return
 
+        if self.case.config.source.swsource == "3d":
+            # TODO implement check for the 3d sources
+            return
+
         source_heights = np.atleast_1d(self.case.config["source"]["source_z0"])
         lowest_grid_level = self._get_lowest_grid_level()
 
@@ -745,6 +753,10 @@ class PreProcessing:
         if "source" not in self.case.config.groups:
             return
 
+        if self.case.config.source.swsource == "3d":
+            # TODO implement check for the 3d sources
+            return
+
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
             sigmas = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
@@ -754,6 +766,10 @@ class PreProcessing:
     def _check_source_list(self) -> None:
         """Check if all required variables have the same length."""
         if "source" not in self.case.config.groups:
+            return
+
+        if self.case.config.source.swsource == "3d":
+            # TODO implement check for the 3d sources
             return
 
         sourcelist = np.atleast_1d(self.case.config["source"]["sourcelist"])
