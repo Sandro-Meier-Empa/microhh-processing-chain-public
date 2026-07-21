@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal, Optional, Union, cast
 
+import cscs
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
 import microhh_py.cross_to_nc as cross_to_nc
 import microhh_py.microhh_tools as mht
@@ -20,7 +21,6 @@ import ucat
 import xarray as xr
 from tqdm.auto import tqdm
 
-import microhh_processing_chain.cscs as cscs
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
@@ -108,7 +108,7 @@ class PostProcessing:
             job_file.unlink()
 
         if not job_file.exists() or overwrite:
-            job_file = alps_setup.create_sbatch_script(
+            slurm_job = alps_setup.create_sbatch_script(
                 commands=cmd,
                 job_name=job_name_formatted,
                 file_path=job_file,
@@ -117,7 +117,7 @@ class PostProcessing:
         else:
             logger.info("Reading existing sbatch script %s", job_file)
 
-        slurm_job = cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
+            slurm_job = cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
 
         if start_jobs:
             slurm_job.start(wait=False)
@@ -1433,7 +1433,7 @@ def create_2d_3d_output_script(
     sample_time: Optional[int] = None,
     job_name: str = "create_2d_3d_output",
     overwrite: bool = False,
-) -> Path:
+) -> cscs.SlurmJob:
     """Create a SLURM script to create 2D and 3D output for cases in parallel.
 
     The generated script launches one unbuffered Python process per case in the
@@ -1496,7 +1496,7 @@ def create_2d_3d_output_script(
 
     if job_file.exists() and not overwrite:
         logger.info("Reading existing bash script %s", job_file)
-        return job_file
+        return cscs.SlurmJob(job_file, ssh_connect=alps_setup.ssh_connect)
 
     commands = _get_2d_3d_output_commands(
         cases=cases,
@@ -1507,14 +1507,14 @@ def create_2d_3d_output_script(
         sample_time=sample_time,
     )
 
-    job_file = alps_setup.create_sbatch_script(
+    job = alps_setup.create_sbatch_script(
         commands=commands,
         job_name=job_name_formatted,
         file_path=job_file,
         scratch_path=scratch_path,
     )
 
-    return Path(job_file)
+    return job
 
 
 def _get_2d_3d_output_commands(

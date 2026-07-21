@@ -9,10 +9,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Union
 
+import cscs
 import microhh_py.microhh_tools as mht
 import pandas as pd
 
-from microhh_processing_chain import cscs, utils
+from microhh_processing_chain import utils
 from microhh_processing_chain.enums import FileType, InitMethod
 
 logger = logging.getLogger(__name__)
