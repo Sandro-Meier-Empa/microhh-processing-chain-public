@@ -8,11 +8,11 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Union
 
+import cscs
 import ls2d
 import numpy as np
 import xarray as xr
 
-import microhh_processing_chain.cscs as cscs
 import microhh_processing_chain.initialisation as init
 from microhh_processing_chain import io, utils
 from microhh_processing_chain.enums import RunMode
@@ -152,10 +152,7 @@ class PreProcessing:
         self._check_required_files()
 
         # Create bash script if it does not exist
-        job_file = self.create_run_script(overwrite, mode=RunMode.RUN)
-        self.slurm_job = cscs.SlurmJob(
-            job_file, ssh_connect=self.alps_setup.ssh_connect
-        )
+        self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RUN)
 
         if start_jobs:
             # Launch the job on alps
@@ -212,10 +209,7 @@ class PreProcessing:
         self.copy_restart_files(origin=restart_case.directory, timestr=restart_str)
 
         # Create bash script if it does not exist
-        job_file = self.create_run_script(overwrite, mode=RunMode.RERUN)
-        self.slurm_job = cscs.SlurmJob(
-            job_file, ssh_connect=self.alps_setup.ssh_connect
-        )
+        self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RERUN)
 
         if start_jobs:
             # Launch the job on alps
@@ -282,7 +276,7 @@ class PreProcessing:
 
     def create_run_script(
         self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
-    ) -> Path:
+    ) -> cscs.SlurmJob:
         """Create a bash script to run the MicroHH simulation."""
         job_file = Path(self.case.scratch_path, "run_microhh.sbatch")
 
@@ -295,7 +289,7 @@ class PreProcessing:
         )
 
         if not job_file.exists() or overwrite:
-            job_file = self.alps_setup.create_sbatch_script(
+            slurm_job = self.alps_setup.create_sbatch_script(
                 commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
@@ -303,8 +297,9 @@ class PreProcessing:
             )
         else:
             logger.info("Reading existing sbatch script %s", job_file)
+            slurm_job = cscs.SlurmJob(job_file, ssh_connect=self.alps_setup.ssh_connect)
 
-        return Path(job_file)
+        return slurm_job
 
     def _check_ini_setup_valid(self) -> None:
         """Check if the .ini file setup is valid.
@@ -1085,7 +1080,7 @@ def create_run_4x_script(
     )
 
     if not master_job_file.exists() or overwrite:
-        master_job_file = alps_setup.create_sbatch_script(
+        slurm_job = alps_setup.create_sbatch_script(
             commands=commands,
             job_name=f"{run_mode}_microhh_{ncases}x",
             file_path=master_job_file,
@@ -1093,8 +1088,9 @@ def create_run_4x_script(
         )
     else:
         logger.info("Reading existing sbatch script %s", master_job_file)
+        slurm_job = cscs.SlurmJob(master_job_file, ssh_connect=alps_setup.ssh_connect)
 
-    return cscs.SlurmJob(master_job_file, ssh_connect=alps_setup.ssh_connect)
+    return slurm_job
 
 
 def _get_common_case_name(cases: list[init.Case]) -> str:
