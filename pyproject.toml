@@ -40,7 +40,6 @@ dependencies = [
     "ipykernel",
     "ipywidgets",
     "IPython",
-    "pre-commit",
     "seaborn",
     "tqdm",
     "ls2d",
