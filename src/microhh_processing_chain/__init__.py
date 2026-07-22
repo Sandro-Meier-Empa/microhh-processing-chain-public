@@ -1,6 +1,7 @@
 """MicroHH Processing - A package for processing MicroHH model output."""
 
 __all__ = [
+    "case_input",
     "constants",
     "cscs",
     "enums",
@@ -19,6 +20,7 @@ __all__ = [
 ]
 
 from . import (
+    case_input,
     constants,
     cscs,
     enums,
