@@ -1,3 +1,4 @@
+-e git+https://gitlab.empa.ch/abt503/atmospheric-modelling/cscs.git#egg=cscs
 -e git+https://gitlab.com/empa503/remote-sensing/ddeq.git#egg=ddeq
 -e git+https://github.com/Sandro-Meier-Empa/microhh.git@microhh-ch4#egg=microhh_py&subdirectory=microhh_py
 -e git+https://github.com/microhh/microhhpy.git#egg=microhhpy

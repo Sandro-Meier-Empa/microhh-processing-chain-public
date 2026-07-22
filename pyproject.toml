@@ -34,6 +34,7 @@ dependencies = [
     "netCDF4",
     "matplotlib",
     "cartopy",
+    "cscs @ git+https://gitlab.empa.ch/abt503/atmospheric-modelling/cscs.git",
     "ipympl",
     "ipykernel",
     "ipywidgets",
