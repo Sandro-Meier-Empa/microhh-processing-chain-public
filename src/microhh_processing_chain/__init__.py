@@ -2,12 +2,12 @@
 
 __all__ = [
     "constants",
-    "cscs",
     "enums",
     "initialisation",
     "io",
     "misc",
     "ml",
+    "monitoring",
     "plume",
     "postprocessing",
     "preprocessing",
@@ -20,12 +20,12 @@ __all__ = [
 
 from . import (
     constants,
-    cscs,
     enums,
     initialisation,
     io,
     misc,
     ml,
+    monitoring,
     plume,
     postprocessing,
     preprocessing,

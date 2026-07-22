@@ -1,4 +1,4 @@
-"""MicroHH-specific CSCS helpers."""
+"""MicroHH simulation monitoring helpers."""
 
 import concurrent.futures
 import re
