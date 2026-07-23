@@ -1,3 +1,9 @@
+"""Generate MicroHH initial, boundary, surface, and forcing inputs."""
+
+# The public types for this migrated legacy module are not yet established,
+# and argument descriptions are intentionally left blank for later completion.
+# ruff: noqa: ANN001, ANN201, ANN202, ANN204, D417
+
 import logging
 import shutil
 from datetime import datetime
@@ -14,12 +20,20 @@ from microhh_processing_chain import spatial
 
 logger = logging.getLogger(__name__)
 
-# This module is migrated legacy code whose public types and API documentation
-# have not yet been established.
-# ruff: noqa: ANN001, ANN201, ANN202, ANN204, D101, D102
-
 
 class InitialBoundaryConditions:
+    """Prepare MicroHH inputs from ERA5 and CAMS EAC4 data.
+
+    TODO: Document the required state and lifecycle of the external ERA5, CAMS,
+    TUV, and MicroHH inputs.
+
+    Args:
+        case: Case to Simulate
+        domain: Domain of the Case
+        vgrid: vertical Grid from LS2D
+        float_type: Precision type from numpy: np.float64 or np.float32
+    """
+
     def __init__(
         self,
         case: init.Case,
@@ -27,6 +41,7 @@ class InitialBoundaryConditions:
         vgrid: ls2d.grid,
         float_type=np.float32,
     ):
+        """Initialize input generation for a case, domain, and vertical grid."""
         self.case = case
         self._name = case.name
         self._working_dir = case.directory
@@ -114,91 +129,148 @@ class InitialBoundaryConditions:
 
     @property
     def chemical_species(self):
+        """Return the chemical species included in the generated inputs."""
         return self._chemical_species
 
     @chemical_species.setter
     def chemical_species(self, value: list[str]):
+        """Set the chemical species. Overwrites the default.
+
+        Args:
+            value: List of str with the chemical species.
+        """
         self._chemical_species = value
 
     @property
     def lon(self) -> float:
+        """Return the domain longitudes."""
         return self._lon
 
     @property
     def lat(self) -> float:
+        """Return the domain latitudes."""
         return self._lat
 
     @property
     def lcc_path(self) -> Path:
+        """Return the path to the land-cover classification data."""
         return Path(self._lcc_path)
 
     @lcc_path.setter
     def lcc_path(self, value: Union[Path, str]) -> None:
+        """Set the land-cover classification data path.
+
+        Args:
+            value: Path to the land use data.
+        """
         self._lcc_path = Path(value)
 
     @property
     def tuv_path(self) -> Path:
+        """Return the path to the TUV installation."""
         return Path(self._tuv_path)
 
     @tuv_path.setter
     def tuv_path(self, value: Union[Path, str]) -> None:
+        """Set the TUV installation path.
+
+        Args:
+            value: Path to TUV data
+        """
         self._tuv_path = Path(value)
 
     @property
     def microhh_path(self) -> Path:
+        """Return the path to the MicroHH installation."""
         return Path(self._microhh_path)
 
     @microhh_path.setter
     def microhh_path(self, value: Union[Path, str]) -> None:
+        """Set the MicroHH installation path.
+
+        Args:
+            value: Path to microhh source code.
+        """
         self._microhh_path = Path(value)
 
     @property
     def gpt_path(self) -> Path:
+        """Return the path containing the RRTMGP coefficient files."""
         return Path(self._gpt_path)
 
     @gpt_path.setter
     def gpt_path(self, value: Union[Path, str]) -> None:
+        """Set the RRTMGP coefficient path.
+
+        Args:
+            value: Path
+        """
         self._gpt_path = Path(value)
 
     @property
     def start_date(self):
+        """Return the start date for the generated input data."""
         return self._start_date
 
     @start_date.setter
     def start_date(self, value):
+        """Set the input-data start date.
+
+        Args:
+            value: Start date of the input data.
+        """
         self._start_date = value
 
     @property
     def end_date(self):
+        """Return the end date for the generated input data."""
         return self._end_date
 
     @end_date.setter
-    def end_date(self, value):
+    def end_date(self, value: datetime):
+        """Set the input-data end date.
+
+        Args:
+            value: Enddate for the input data
+        """
         self._end_date = value
 
     @property
     def float_type(self):
+        """Return the floating-point type used for generated data."""
         return self._float_type
 
     @property
     def era5(self):
+        """Return the configured ERA5 input reader, if available."""
         if self._era5 is None:
             print("WARNING: ERA5 needs to be defined.")
         return self._era5
 
     @era5.setter
-    def era5(self, value):
+    def era5(self, value: ls2d.Read_era5):
+        """Set the ERA5 input reader and calculates the LES input.
+
+        Args:
+            value: era5 data from ls2d.Read_era
+        """
         self.era5_les_input = self._get_les_input(value)
         self._era5 = value
 
     @property
     def cams_eac4(self):
+        """Return the configured CAMS EAC4 input reader, if available."""
         if self._cams_eac4 is None:
             print("WARNING: CAMS EAC4 data needs to be defined")
         return self._cams_eac4
 
     @cams_eac4.setter
     def cams_eac4(self, value):
+        """Set the CAMS EAC4 input reader.
+
+        Args:
+            value: cams data form ls2d.Read_cams
+        """
         if "go3" in value.ds_ml.variables:
             value.ds_ml = value.ds_ml.rename({"go3": "o3"})
         self.cams_eac4_les_input = self._get_les_input(value)
@@ -206,10 +278,16 @@ class InitialBoundaryConditions:
 
     @property
     def era5_les_input(self):
+        """Return ERA5 data interpolated to the LES grid."""
         return self._era5_les_input
 
     @era5_les_input.setter
     def era5_les_input(self, value):
+        """Set ERA5 data on the LES grid.
+
+        Args:
+            value: les input
+        """
         # Remove top ERA5 level, to ensure that pressure stays
         # above the minimum reference pressure in RRTMGP
         les_input = value.sel(lay=slice(0, 135), lev=slice(0, 136))
@@ -218,18 +296,30 @@ class InitialBoundaryConditions:
 
     @property
     def era5_les_input_mean(self):
+        """Return the time-mean ERA5 data on the LES grid."""
         return self._era5_les_input_mean
 
     @era5_les_input_mean.setter
     def era5_les_input_mean(self, value):
+        """Set the time-mean ERA5 data on the LES grid.
+
+        Args:
+            value: les input
+        """
         self._era5_les_input_mean = value
 
     @property
     def cams_eac4_les_input(self):
+        """Return CAMS EAC4 data interpolated to the LES grid."""
         return self._cams_eac4_les_input
 
     @cams_eac4_les_input.setter
     def cams_eac4_les_input(self, value):
+        """Set CAMS EAC4 data on the LES grid.
+
+        Args:
+            value: les input
+        """
         self._cams_eac4_les_input = value
 
     @wraps(microhhpy.chem.calc_tuv_photolysis)
@@ -254,6 +344,7 @@ class InitialBoundaryConditions:
         return tuv_df
 
     def get_init_profiles(self):
+        """Build the initial-profile mapping from the configured input data."""
         self._check_les_input_era5()
         self._check_les_input_cams_eac4()
         self._import_cams_species()
@@ -305,6 +396,7 @@ class InitialBoundaryConditions:
         return init_profiles
 
     def get_timedep_surface(self):
+        """Build the time-dependent surface-input mapping."""
         self._check_les_input_era5()
         timedep_surface = {
             "time_surface": self.era5_les_input["time_sec"],
@@ -315,6 +407,7 @@ class InitialBoundaryConditions:
         return timedep_surface
 
     def get_timedep_ls(self):
+        """Build the time-dependent large-scale forcing mapping."""
         self._import_cams_species()
         self._check_les_input_era5()
         timedep_ls = {
@@ -343,6 +436,7 @@ class InitialBoundaryConditions:
         return timedep_ls
 
     def get_radiation(self):
+        """Build the radiation-input mapping."""
         self._check_les_input_era5()
         self._check_era5_les_input_mean()
         radiation = {
@@ -365,6 +459,7 @@ class InitialBoundaryConditions:
         return radiation
 
     def get_tdep_chem(self):
+        """Build the time-dependent chemistry-input mapping."""
         if self._df_tuv is None:
             self.calc_photolysis_rates()
         time_chem = np.array(
@@ -389,6 +484,7 @@ class InitialBoundaryConditions:
         return tdep_chem
 
     def get_soil(self):
+        """Build the soil-input mapping from ERA5 data."""
         self._check_les_input_era5()
         # NOTE: not used with heterogeneous surface, but still required by MicroHH.
         soil_index = int(
@@ -404,6 +500,11 @@ class InitialBoundaryConditions:
         return soil
 
     def _get_les_input(self, ds: Optional[Union[ls2d.Read_era5, ls2d.Read_cams]]):
+        """Interpolate input data to the LES grid.
+
+        Args:
+            ds: dataset from eather cams eac4 or era4
+        """
         return ds.get_les_input(self.vgrid.z)
 
     def _check_era5_les_input_mean(self):
@@ -572,7 +673,13 @@ class InitialBoundaryConditions:
 
 
 def ensure_binary_precision(path, shape, dtype):
-    """Cast a raw MicroHH binary file to the requested dtype."""
+    """Cast a raw MicroHH binary file to the requested dtype.
+
+    Args:
+        path: path to file
+        shape: shape of the array
+        dtype: datatype ether double or single precision
+    """
     dtype = np.dtype(dtype)
     path = str(path)
     count = int(np.prod(shape))
@@ -594,7 +701,15 @@ def ensure_binary_precision(path, shape, dtype):
 
 
 def create_surface_input(era5, era5_mean, domain, lcc_path, float_type):
-    """Create land-surface (vegetation) and sea (SST) input."""
+    """Create land-surface (vegetation) and sea (SST) input.
+
+    Args:
+        era5:
+        era5_mean:
+        domain:
+        lcc_path:
+        float_type:
+    """
     logger.info("Creating spatial (land-) surface input")
 
     # Default soil depths IFS.
@@ -676,7 +791,12 @@ def create_surface_input(era5, era5_mean, domain, lcc_path, float_type):
 
 @wraps(microhhpy.chem.calc_tuv_photolysis)
 def calc_photolysis_rates(tuv_path, domain):
-    """Calculate photolysis rates using TUV wrapper."""
+    """Calculate photolysis rates using TUV wrapper.
+
+    Args:
+        tuv_path:
+        domain:
+    """
     name = "microh"  # Must be exactly 6 characters!
 
     # Default input file. Only start/end date and lat/lon location are updated.
@@ -697,7 +817,13 @@ def calc_photolysis_rates(tuv_path, domain):
 
 
 def copy_lookup_tables(microhh_path, gpt_path, domain):
-    """Copy required land-surface and radiation lookup tables."""
+    """Copy required land-surface and radiation lookup tables.
+
+    Args:
+        microhh_path:
+        gpt_path:
+        domain:
+    """
     logger.info("Copying lookup tables")
 
     rrtmgp_path = f"{microhh_path}/rte-rrtmgp-cpp/"
