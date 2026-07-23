@@ -1,9 +1,5 @@
 """Generate MicroHH initial, boundary, surface, and forcing inputs."""
 
-# The public types for this migrated legacy module are not yet established,
-# and argument descriptions are intentionally left blank for later completion.
-# ruff: noqa: ANN001, ANN201, ANN202, ANN204, D417
-
 import logging
 import shutil
 from datetime import datetime
@@ -13,6 +9,8 @@ from typing import Optional, Union
 
 import ls2d
 import numpy as np
+import pandas as pd
+import xarray as xr
 
 import microhhpy  # pyright: ignore[reportMissingImports]
 from microhh_processing_chain import initialisation as init
@@ -24,8 +22,9 @@ logger = logging.getLogger(__name__)
 class InitialBoundaryConditions:
     """Prepare MicroHH inputs from ERA5 and CAMS EAC4 data.
 
-    TODO: Document the required state and lifecycle of the external ERA5, CAMS,
-    TUV, and MicroHH inputs.
+    Calculates the fields necessary for generating the input netCDF which is generated
+    from the io module. The binary fields for the soil can also be generated and copy
+    the lookup tables for the radiation and chemical reactions.
 
     Args:
         case: Case to Simulate
@@ -39,8 +38,8 @@ class InitialBoundaryConditions:
         case: init.Case,
         domain: spatial.Domain,
         vgrid: ls2d.grid,
-        float_type=np.float32,
-    ):
+        float_type: type = np.float32,
+    ) -> None:
         """Initialize input generation for a case, domain, and vertical grid."""
         self.case = case
         self._name = case.name
@@ -128,12 +127,12 @@ class InitialBoundaryConditions:
         return None
 
     @property
-    def chemical_species(self):
+    def chemical_species(self) -> list[str]:
         """Return the chemical species included in the generated inputs."""
         return self._chemical_species
 
     @chemical_species.setter
-    def chemical_species(self, value: list[str]):
+    def chemical_species(self, value: list[str]) -> None:
         """Set the chemical species. Overwrites the default.
 
         Args:
@@ -208,12 +207,12 @@ class InitialBoundaryConditions:
         self._gpt_path = Path(value)
 
     @property
-    def start_date(self):
+    def start_date(self) -> datetime:
         """Return the start date for the generated input data."""
         return self._start_date
 
     @start_date.setter
-    def start_date(self, value):
+    def start_date(self, value: datetime) -> None:
         """Set the input-data start date.
 
         Args:
@@ -222,12 +221,12 @@ class InitialBoundaryConditions:
         self._start_date = value
 
     @property
-    def end_date(self):
+    def end_date(self) -> datetime:
         """Return the end date for the generated input data."""
         return self._end_date
 
     @end_date.setter
-    def end_date(self, value: datetime):
+    def end_date(self, value: datetime) -> None:
         """Set the input-data end date.
 
         Args:
@@ -236,19 +235,19 @@ class InitialBoundaryConditions:
         self._end_date = value
 
     @property
-    def float_type(self):
+    def float_type(self) -> type:
         """Return the floating-point type used for generated data."""
         return self._float_type
 
     @property
-    def era5(self):
+    def era5(self) -> ls2d.Read_era5:
         """Return the configured ERA5 input reader, if available."""
         if self._era5 is None:
             print("WARNING: ERA5 needs to be defined.")
         return self._era5
 
     @era5.setter
-    def era5(self, value: ls2d.Read_era5):
+    def era5(self, value: ls2d.Read_era5) -> None:
         """Set the ERA5 input reader and calculates the LES input.
 
         Args:
@@ -258,14 +257,14 @@ class InitialBoundaryConditions:
         self._era5 = value
 
     @property
-    def cams_eac4(self):
+    def cams_eac4(self) -> ls2d.Read_cams:
         """Return the configured CAMS EAC4 input reader, if available."""
         if self._cams_eac4 is None:
             print("WARNING: CAMS EAC4 data needs to be defined")
         return self._cams_eac4
 
     @cams_eac4.setter
-    def cams_eac4(self, value):
+    def cams_eac4(self, value: ls2d.Read_cams) -> None:
         """Set the CAMS EAC4 input reader.
 
         Args:
@@ -277,12 +276,12 @@ class InitialBoundaryConditions:
         self._cams_eac4 = value
 
     @property
-    def era5_les_input(self):
+    def era5_les_input(self) -> xr.Dataset:
         """Return ERA5 data interpolated to the LES grid."""
         return self._era5_les_input
 
     @era5_les_input.setter
-    def era5_les_input(self, value):
+    def era5_les_input(self, value: ls2d.Read_era5) -> None:
         """Set ERA5 data on the LES grid.
 
         Args:
@@ -295,12 +294,12 @@ class InitialBoundaryConditions:
         self._era5_les_input_mean = les_input.mean(dim="time")
 
     @property
-    def era5_les_input_mean(self):
+    def era5_les_input_mean(self) -> xr.Dataset:
         """Return the time-mean ERA5 data on the LES grid."""
         return self._era5_les_input_mean
 
     @era5_les_input_mean.setter
-    def era5_les_input_mean(self, value):
+    def era5_les_input_mean(self, value: xr.Dataset) -> None:
         """Set the time-mean ERA5 data on the LES grid.
 
         Args:
@@ -309,12 +308,12 @@ class InitialBoundaryConditions:
         self._era5_les_input_mean = value
 
     @property
-    def cams_eac4_les_input(self):
+    def cams_eac4_les_input(self) -> xr.Dataset:
         """Return CAMS EAC4 data interpolated to the LES grid."""
         return self._cams_eac4_les_input
 
     @cams_eac4_les_input.setter
-    def cams_eac4_les_input(self, value):
+    def cams_eac4_les_input(self, value: xr.Dataset) -> None:
         """Set CAMS EAC4 data on the LES grid.
 
         Args:
@@ -323,7 +322,7 @@ class InitialBoundaryConditions:
         self._cams_eac4_les_input = value
 
     @wraps(microhhpy.chem.calc_tuv_photolysis)
-    def calc_photolysis_rates(self):
+    def calc_photolysis_rates(self) -> pd.Dataframe:
         """Calculate photolysis rates using TUV wrapper."""
         name = "microh"  # Must be exactly 6 characters!
 
@@ -343,7 +342,7 @@ class InitialBoundaryConditions:
         self._df_tuv = tuv_df
         return tuv_df
 
-    def get_init_profiles(self):
+    def get_init_profiles(self) -> dict:
         """Build the initial-profile mapping from the configured input data."""
         self._check_les_input_era5()
         self._check_les_input_cams_eac4()
@@ -395,7 +394,7 @@ class InitialBoundaryConditions:
         }
         return init_profiles
 
-    def get_timedep_surface(self):
+    def get_timedep_surface(self) -> dict:
         """Build the time-dependent surface-input mapping."""
         self._check_les_input_era5()
         timedep_surface = {
@@ -406,7 +405,7 @@ class InitialBoundaryConditions:
         }
         return timedep_surface
 
-    def get_timedep_ls(self):
+    def get_timedep_ls(self) -> dict:
         """Build the time-dependent large-scale forcing mapping."""
         self._import_cams_species()
         self._check_les_input_era5()
@@ -435,7 +434,7 @@ class InitialBoundaryConditions:
 
         return timedep_ls
 
-    def get_radiation(self):
+    def get_radiation(self) -> dict:
         """Build the radiation-input mapping."""
         self._check_les_input_era5()
         self._check_era5_les_input_mean()
@@ -458,7 +457,7 @@ class InitialBoundaryConditions:
         }
         return radiation
 
-    def get_tdep_chem(self):
+    def get_tdep_chem(self) -> dict:
         """Build the time-dependent chemistry-input mapping."""
         if self._df_tuv is None:
             self.calc_photolysis_rates()
@@ -483,7 +482,7 @@ class InitialBoundaryConditions:
         }
         return tdep_chem
 
-    def get_soil(self):
+    def get_soil(self) -> dict:
         """Build the soil-input mapping from ERA5 data."""
         self._check_les_input_era5()
         # NOTE: not used with heterogeneous surface, but still required by MicroHH.
@@ -499,7 +498,9 @@ class InitialBoundaryConditions:
         }
         return soil
 
-    def _get_les_input(self, ds: Optional[Union[ls2d.Read_era5, ls2d.Read_cams]]):
+    def _get_les_input(
+        self, ds: Optional[Union[ls2d.Read_era5, ls2d.Read_cams]]
+    ) -> xr.Dataset:
         """Interpolate input data to the LES grid.
 
         Args:
@@ -507,19 +508,19 @@ class InitialBoundaryConditions:
         """
         return ds.get_les_input(self.vgrid.z)
 
-    def _check_era5_les_input_mean(self):
+    def _check_era5_les_input_mean(self) -> None:
         if self.era5_les_input_mean is None:
             self.check_era5_les_input_mean = self.era5_les_input.mean(dim="time")
 
-    def _check_les_input_era5(self):
+    def _check_les_input_era5(self) -> None:
         if self.era5_les_input is None:
             self.era5_les_input = self._get_les_input(self.era5)
 
-    def _check_les_input_cams_eac4(self):
+    def _check_les_input_cams_eac4(self) -> None:
         if self.cams_eac4_les_input is None:
             self.cams_eac4_les_input = self._get_les_input(self.cams_eac4)
 
-    def _import_cams_species(self):
+    def _import_cams_species(self) -> None:
         if self._species_cams is not None:
             return
 
@@ -551,7 +552,7 @@ class InitialBoundaryConditions:
         self._species_cams = species_cams
         return
 
-    def create_surface_input(self):
+    def create_surface_input(self) -> None:
         """Create land-surface (vegetation) and sea (SST) input."""
         logger.info("Creating spatial (land-) surface input")
 
@@ -642,7 +643,7 @@ class InitialBoundaryConditions:
         sst_les[sst_les < 280] = 280
         sst_les.tofile(f"{self._working_dir}/t_bot_water.0000000")
 
-    def copy_lookup_tables(self):
+    def copy_lookup_tables(self) -> None:
         """Copy required land-surface and radiation lookup tables."""
         logger.info("Copying lookup tables")
 
@@ -672,7 +673,11 @@ class InitialBoundaryConditions:
 ###############################
 
 
-def ensure_binary_precision(path, shape, dtype):
+def ensure_binary_precision(
+    path: Union[Path, str],
+    shape: tuple,
+    dtype: type,
+) -> None:
     """Cast a raw MicroHH binary file to the requested dtype.
 
     Args:
@@ -700,15 +705,21 @@ def ensure_binary_precision(path, shape, dtype):
     logger.info("Converted %s from %s to %s", path, np.dtype(source_dtype), dtype)
 
 
-def create_surface_input(era5, era5_mean, domain, lcc_path, float_type):
+def create_surface_input(
+    era5: ls2d.Read_era5,
+    era5_mean: xr.Dataset,
+    domain: spatial.Domain,
+    lcc_path: Union[Path, str],
+    float_type: type,
+) -> None:
     """Create land-surface (vegetation) and sea (SST) input.
 
     Args:
-        era5:
-        era5_mean:
-        domain:
-        lcc_path:
-        float_type:
+        era5: era5 from ls2d
+        era5_mean: time mean of the 1d era5 input data
+        domain: domain of the simulation from microhhpy
+        lcc_path: Path to land use data
+        float_type: precision of the data
     """
     logger.info("Creating spatial (land-) surface input")
 
@@ -790,12 +801,15 @@ def create_surface_input(era5, era5_mean, domain, lcc_path, float_type):
 
 
 @wraps(microhhpy.chem.calc_tuv_photolysis)
-def calc_photolysis_rates(tuv_path, domain):
+def calc_photolysis_rates(
+    tuv_path: Union[Path, str],
+    domain: spatial.Domain,
+) -> pd.DataFrame:
     """Calculate photolysis rates using TUV wrapper.
 
     Args:
-        tuv_path:
-        domain:
+        tuv_path: TUV Path
+        domain: microhhpy Domain for the simulation
     """
     name = "microh"  # Must be exactly 6 characters!
 
@@ -816,13 +830,17 @@ def calc_photolysis_rates(tuv_path, domain):
     return tuv_df
 
 
-def copy_lookup_tables(microhh_path, gpt_path, domain):
+def copy_lookup_tables(
+    microhh_path: Union[Path, str],
+    gpt_path: Union[Path, str],
+    domain: spatial.Domain,
+) -> None:
     """Copy required land-surface and radiation lookup tables.
 
     Args:
-        microhh_path:
-        gpt_path:
-        domain:
+        microhh_path: Path to microhh source code
+        gpt_path: Path to lookup tables
+        domain: domain from microhhpy
     """
     logger.info("Copying lookup tables")
 
