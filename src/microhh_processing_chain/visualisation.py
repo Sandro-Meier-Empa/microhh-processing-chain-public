@@ -12,8 +12,9 @@ import pandas as pd
 import xarray as xr
 from ddeq.gui import interactions
 from IPython.display import display
+from matplotlib import colormaps
 from matplotlib.axes import Axes
-from matplotlib.cm import ScalarMappable, get_cmap
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize, TwoSlopeNorm
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -196,7 +197,8 @@ class CaseViewer:
             )
 
             # Create a ScalarMappable and set the colormap
-            sm = ScalarMappable(cmap=get_cmap("viridis"), norm=norm)
+            cmap = colormaps["viridis"]
+            sm = ScalarMappable(cmap=cmap, norm=norm)
             sm.set_array([])  # Only needed for the colorbar to work
 
             for t in np.arange(current_data[time_dim].size, step=t_step):
@@ -206,9 +208,7 @@ class CaseViewer:
                         float(np.asarray(subset_t[time_dim].values).item())
                         / time_factor
                     )
-                    rgba = tuple(
-                        float(value) for value in get_cmap("viridis")(norm(norm_value))
-                    )
+                    rgba = tuple(float(value) for value in cmap(norm(norm_value)))
                     color = cast(tuple[float, float, float, float], rgba)
                 else:
                     color = "gray"

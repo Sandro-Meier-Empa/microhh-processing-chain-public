@@ -1,5 +1,6 @@
 import argparse
 import logging
+import sys
 from enum import StrEnum
 
 import cartopy.crs as ccrs
@@ -15,7 +16,12 @@ import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.postprocessing as post
 from microhh_processing_chain import io
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
 
 
 # =============================================================================
@@ -129,8 +135,6 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # 3) GUI Parameters
     # -------------------------------------------------------------------------
-    gui_cmap = "Reds"
-    gui_color = "black"
     gui_headless = True
     gui_detection_method = "Threshold"
     gui_thr = 0.0003
@@ -257,8 +261,6 @@ def main() -> None:
                 winds=winds_subset_t,
                 crs=crs,
                 domain=domain,
-                cmap=gui_cmap,
-                color=gui_color,
                 headless=gui_headless,
                 plume_detection_params=plume_detection_params,
                 csf_plot_params=csf_plot_params,
@@ -274,7 +276,7 @@ def main() -> None:
             ui.center_line_button.value = gui_center_line  # pyright: ignore
             ui.emissions_method_dropdown.value = gui_emissions_method  # pyright: ignore
             ui.background_dropdown.value = gui_background  # pyright: ignore
-            ui.lmax_slider.value = gui_lmax  # pyright: ignore
+            ui.plume_length_slider.value = (0, gui_lmax)  # pyright: ignore
             ui.delta_slider.value = gui_delta  # pyright: ignore
             ui.emissions_button.value = gui_emissions  # pyright: ignore
             ui.show_results_button.value = gui_show_results  # pyright: ignore
