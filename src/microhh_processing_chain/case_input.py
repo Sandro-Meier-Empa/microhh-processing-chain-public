@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Optional, Union
 
 import ls2d
+import microhhpy  # pyright: ignore[reportMissingImports]
 import numpy as np
 import pandas as pd
 import xarray as xr
 
-import microhhpy  # pyright: ignore[reportMissingImports]
 from microhh_processing_chain import initialisation as init
 from microhh_processing_chain import spatial
 
@@ -322,7 +322,7 @@ class InitialBoundaryConditions:
         self._cams_eac4_les_input = value
 
     @wraps(microhhpy.chem.calc_tuv_photolysis)
-    def calc_photolysis_rates(self) -> pd.Dataframe:
+    def calc_photolysis_rates(self) -> pd.DataFrame:
         """Calculate photolysis rates using TUV wrapper."""
         name = "microh"  # Must be exactly 6 characters!
 
