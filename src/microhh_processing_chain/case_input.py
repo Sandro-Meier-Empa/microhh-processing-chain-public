@@ -673,6 +673,66 @@ class InitialBoundaryConditions:
 ###############################
 
 
+def init_icbc(
+    case: init.Case,
+    domain: spatial.Domain,
+    vgrid: ls2d.grid,
+    start_date: datetime,
+    end_date: datetime,
+    lcc_path: Union[Path, str],
+    tuv_path: Union[Path, str],
+    microhh_src_path: Union[Path, str],
+    gpt_path: Union[Path, str],
+    era5: ls2d.Read_era5 = None,
+    cams_eac4: ls2d.Read_cams = None,
+    float_type: type = np.float32,
+) -> InitialBoundaryConditions:
+    """Initialize the initial and boundary condition generator.
+
+    Args:
+        case: Case to simulate.
+        domain: Domain of the case.
+        vgrid: Vertical grid from LS2D.
+        start_date: Start date of the simulation.
+        end_date: End date of the simulation.
+        lcc_path: Path to the land-cover classification data.
+        tuv_path: Path to the TUV photolysis lookup data.
+        microhh_src_path: Path to the MicroHH source directory.
+        gpt_path: Path to the RRTMGP coefficient data.
+        era5: Optional preloaded ERA5 data.
+        cams_eac4: Optional preloaded CAMS EAC4 data.
+        float_type: NumPy precision type, either ``np.float32`` or ``np.float64``.
+
+    Returns:
+        Configured initial and boundary condition generator.
+    """
+    icbc = InitialBoundaryConditions(
+        case=case,
+        domain=domain,
+        vgrid=vgrid,
+        float_type=float_type,
+    )
+    icbc.start_date = start_date
+    icbc.end_date = end_date
+
+    icbc.lcc_path = lcc_path
+    icbc.tuv_path = tuv_path
+    icbc.microhh_path = microhh_src_path
+    icbc.gpt_path = gpt_path
+
+    if era5 is None:
+        print("ERA 5 to be initialized.")
+    else:
+        icbc.era5 = era5
+
+    if cams_eac4 is None:
+        print("CAMS data to be initialized.")
+    else:
+        icbc.cams_eac4 = cams_eac4
+
+    return icbc
+
+
 def ensure_binary_precision(
     path: Union[Path, str],
     shape: tuple,
