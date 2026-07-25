@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=80", "setuptools-scm[simple]>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "microhh-processing-chain"
-version = "1.1.0"
+dynamic = ["version"]
 description = "Processing chain for MicroHH simulations"
 readme = "README.md"
 authors = [
@@ -47,6 +47,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "bump-my-version>=1,<2",
   "pre-commit",
   "pytest",
   "pytest-cov",
@@ -62,6 +63,18 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.bumpversion]
+allow_dirty = false
+commit = false
+tag = true
+sign_tags = false
+tag_name = "v{new_version}"
+tag_message = "Release {new_version}"
+setup_hooks = [
+  "pre-commit run --all-files",
+#  "python -m pytest",
+]
 
 [tool.ruff]
 target-version = "py39" # to prevent warnings of not using | for union types
