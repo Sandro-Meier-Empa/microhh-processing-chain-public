@@ -1,6 +1,11 @@
 """MicroHH Processing - A package for processing MicroHH model output."""
 
+from importlib.metadata import version
+
+__version__ = version("microhh-processing-chain")
+
 __all__ = [
+    "__version__",
     "constants",
     "enums",
     "initialisation",

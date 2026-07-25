@@ -44,3 +44,46 @@ Sometimes, pyright reports an error which you just fixed, but the error still ap
 pre-commit clean
 pre-commit run pyright --all-files
 ```
+
+## Releasing a new version
+
+Package versions follow [Semantic Versioning](https://semver.org/):
+
+- `patch` for backward-compatible bug fixes
+- `minor` for backward-compatible functionality
+- `major` for incompatible API changes
+
+Git tags named `vX.Y.Z` are the source of truth for package versions. Development
+builds after a release receive a PEP 440 development version containing their
+distance from the latest tag and Git commit identifier.
+
+Before releasing, update `main` and fetch all release tags:
+
+```bash
+git switch main
+git pull --ff-only --tags origin main
+```
+
+Preview the next version without modifying the repository:
+
+```bash
+bump-my-version bump patch --dry-run -vv
+```
+
+Replace `patch` with `minor` or `major` when appropriate. To run the configured
+release checks and create the annotated release tag:
+
+```bash
+bump-my-version bump patch
+```
+
+Inspect and then push the exact tag reported by Bump My Version:
+
+```bash
+git show v1.1.1
+git push origin v1.1.1
+```
+
+Use the version reported by Bump My Version in place of `v1.1.1`. Pushing is
+deliberately separate from tag creation so that the release can be reviewed
+locally first. The release command refuses to run with uncommitted changes.
