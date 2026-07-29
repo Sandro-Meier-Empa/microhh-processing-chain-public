@@ -416,7 +416,11 @@ class PostProcessing:
             data:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
-        swvmr = np.all(self.case.config["source"]["swvmr"])
+        if self.case.config["source"]["swsource"] == "3d":
+            swvmr = False
+        else:
+            swvmr = np.all(self.case.config["source"]["swvmr"])
+
         if swvmr:
             unit = "mol mol-1"
             prefix = "volume"
