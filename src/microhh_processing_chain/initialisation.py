@@ -15,6 +15,7 @@ import pandas as pd
 
 from microhh_processing_chain import utils
 from microhh_processing_chain.enums import FileType, InitMethod
+from microhh_processing_chain.spatial import Domain
 
 logger = logging.getLogger(__name__)
 
@@ -877,6 +878,23 @@ class Case:
                 logger.info("Copied %s to %s", file, case.directory)
             else:
                 logger.warning("File %s does not exist.", src)
+
+    def domain(self) -> Domain:
+        """Creates a Domain from the Case ini file.
+
+        Returns:
+            instance of spacial.Domain
+        """
+        domain = Domain(
+            xsize=self.config.grid.xsize,
+            ysize=self.config.grid.ysize,
+            itot=self.config.grid.itot,
+            jtot=self.config.grid.jtot,
+            lon=self.config.grid.lon,
+            lat=self.config.grid.lat,
+            anchor="center",
+        )
+        return domain
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:
