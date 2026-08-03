@@ -130,8 +130,6 @@ def main() -> None:
     # create folder for images
     (case.directory / "images").mkdir(exist_ok=True)
 
-    post_processing = post.PostProcessing(case)
-
     # -------------------------------------------------------------------------
     # 3) GUI Parameters
     # -------------------------------------------------------------------------
@@ -166,8 +164,8 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # 4) Generate Synthetic Wind Field
     # -------------------------------------------------------------------------
-    stats = post_processing.convert_microhh_timestep_to_date(
-        stats, start_date=case_times["start_time"]
+    stats = post.convert_microhh_timestep_to_date(
+        case, stats, start_date=case_times["start_time"]
     )
 
     plume_height = case_df["Z (m)"].iloc[0] + case_df["plume_rise (m)"].iloc[0]
@@ -194,10 +192,11 @@ def main() -> None:
     dd_ch4 = dd_ch4.rename({"ch4_path": "CH4"})
     dd_ch4.CH4.attrs["units"] = "kg m-2"
 
-    dd_coord = post_processing.convert_microhh_grid_to_coords(
-        dd_ch4, sources.isel(source=0), microhh_crs="epsg:32630"
+    dd_coord = post.convert_microhh_grid_to_coords(
+        case, dd_ch4, sources.isel(source=0), microhh_crs="epsg:32630"
     )
-    dd_coord = post_processing.convert_microhh_timestep_to_date(
+    dd_coord = post.convert_microhh_timestep_to_date(
+        case,
         dd_coord,
         case_times["start_time"],
     )

@@ -31,6 +31,170 @@ from microhh_processing_chain.enums import Precision
 logger = logging.getLogger(__name__)
 
 
+def convert_microhh_grid_to_coords(
+    case: init.Case,
+    data: xr.Dataset,
+    source: Optional[xr.Dataset] = None,
+    target_crs: str = "epsg:4326",
+    microhh_crs: str = "epsg:32632",
+) -> xr.Dataset:
+    """Convert the modelled MicroHH grid into a lat/lon grid.
+
+    If lat and lon are specified in the .ini file, these values are
+    used as domain centres.
+    If 'source' is provided, the lat and lon of the source
+    is used to convert the grid such that the source is located at the
+    latitude and longitude specified in the 'sources' dataset.
+
+    Args:
+        case:
+            MicroHH case containing the grid configuration.
+        data:
+            Dataset for which the modelled grid should be transformed to
+            a lat/lon grid.
+        source:
+            Source metadata used as the grid anchor.
+        target_crs:
+            Coordinate reference system to which the modelled data should
+            be transformed to.
+        microhh_crs:
+            Metric coordinate reference system which matches the desired
+            lat/lon location of the source.
+
+    Returns:
+        Dataset with transformed coordinates.
+    """
+    # if lat/lon is defined in .ini file: use these values to convert grid
+    if "lat" in case.config["grid"] and "lon" in case.config["grid"] and source is None:
+        lat_ref = case.config["grid"]["lat"]
+        lon_ref = case.config["grid"]["lon"]
+        grid_x_ref = case.config["grid"]["xsize"] / 2
+        grid_y_ref = case.config["grid"]["ysize"] / 2
+    elif source is not None:
+        lat_ref = source.lat.values
+        lon_ref = source.lon.values
+        grid_x_ref = source.source_x0.values
+        grid_y_ref = source.source_y0.values
+    else:
+        raise ValueError(
+            f"Provide 'lat' and 'lon' in the {case.name} "
+            f"file or 'source' and 'sources' as arguments"
+        )
+
+    # Create domain
+    domain = spatial.Domain(
+        xsize=case.config["grid"]["xsize"],
+        ysize=case.config["grid"]["ysize"],
+        itot=case.config["grid"]["itot"],
+        jtot=case.config["grid"]["jtot"],
+        lon=lon_ref,
+        lat=lat_ref,
+        anchor=(grid_x_ref, grid_y_ref),
+        epsg_code=microhh_crs,
+    )
+    lon_grid, lat_grid = domain.to_lonlat(data.x.values, data.y.values, meshgrid=True)
+
+    data = data.rename({"x": "nobs", "y": "nrows"})
+    data = data.assign_coords(
+        lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
+    )
+
+    # add attributes to lon and lat
+    data.lon.attrs["epsg"] = int(target_crs.split(":")[-1])
+    data.lat.attrs["epsg"] = int(target_crs.split(":")[-1])
+
+    # drop nrows and nobs from data vars
+    data = data.drop_vars(["nrows", "nobs"])
+
+    # add x and y coordinates
+    data["x"] = (
+        ("nrows", "nobs"),
+        domain.xx + domain.x_offset,
+        {"epsg": int(microhh_crs.split(":")[-1])},
+    )
+    data["y"] = (
+        ("nrows", "nobs"),
+        domain.yy + domain.y_offset,
+        {"epsg": int(microhh_crs.split(":")[-1])},
+    )
+
+    return data
+
+
+def convert_microhh_timestep_to_date(
+    case: init.Case,
+    data: xr.Dataset,
+    start_date: Optional[Union[str, pd.Timestamp]] = None,
+    date_format: str = "%Y-%m-%d %H:%M:%S",
+) -> xr.Dataset:
+    """Convert time into a timestamp to make the dataset digestible by `ddeq`.
+
+    Use 'datetime_utc' if available in the .ini file.
+
+    Args:
+        case:
+            MicroHH case containing the time configuration.
+        data:
+            The dataset to convert.
+        start_date:
+            The start date as a string or a pandas Timestamp object.
+        date_format:
+            The format of the start_date string.
+
+    Returns:
+        Dataset with the time converted to a timestamp.
+    """
+    # use 'datetime_utc' if available in the .ini file
+    if "datetime_utc" in case.config["time"] and start_date is None:
+        start_date = case.config["time"]["datetime_utc"]
+    elif "datetime_utc" in case.config["time"] and start_date is not None:
+        logger.info(
+            "Using %s to overwrite %s in .ini file",
+            start_date,
+            case.config["time"]["datetime_utc"],
+        )
+
+    if start_date is None:
+        raise ValueError(
+            "Please provide 'start_date' or set 'datetime_utc' in the ini file."
+        )
+
+    tz = "UTC"
+
+    if isinstance(start_date, str):
+        converted = pd.to_datetime(start_date, format=date_format)
+        if pd.isna(converted):
+            raise ValueError(f"Could not parse start_date: {start_date}")
+        start_date = cast(pd.Timestamp, converted)
+
+    if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
+        start_date = start_date.tz_convert("UTC").tz_localize(None)
+
+    # Force ns precision for the reference timestamp as well.
+    ts_start_date = pd.Timestamp(start_date).as_unit("ns")
+
+    if np.issubdtype(data["time"].dtype, np.datetime64):
+        time_values = pd.to_datetime(data["time"].values).astype("datetime64[ns]")
+        first_time = cast(pd.Timestamp, pd.to_datetime(time_values[0]))
+        time_diff = first_time - ts_start_date
+        new_time = time_values - time_diff
+
+    elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
+        data["time"].dtype, np.floating
+    ):
+        # convert MicroHH seconds to timedelta, then add to start date
+        time_delta = pd.to_timedelta(data["time"].to_numpy(), unit="s")
+        new_time = pd.DatetimeIndex(start_date + time_delta).astype("datetime64[ns]")
+
+    else:
+        raise ValueError("Data type of 'time' was not recognized.")
+
+    data = data.assign_coords(time=new_time)
+    data["time"].attrs.update({"timezone": tz})
+
+    return data
+
+
 class PostProcessing:
     """Class used for post-processing MicroHH cases and handling the output.
 
@@ -689,99 +853,6 @@ class PostProcessing:
 
         return sources
 
-    def convert_microhh_grid_to_coords(
-        self,
-        data: xr.Dataset,
-        source: Optional[xr.Dataset] = None,
-        target_crs: str = "epsg:4326",
-        microhh_crs: str = "epsg:32632",
-    ) -> xr.Dataset:
-        """Convert the modelled MicroHH grid into a lat/lon grid.
-
-        If lat and lon are specified in the .ini file, these values are
-        used as domain centres.
-        If 'source' is provided, the lat and lon of the source
-        is used to convert the grid such that the source is located at the
-        latitude and longitude specified in the 'sources' dataset.
-
-        Args:
-            data:
-                Dataset for which the modelled grid should be transformed to
-                a lat/lon grid.
-            source:
-                Source metadata used as the grid anchor.
-            target_crs:
-                Coordinate reference system to which the modelled data should
-                be transformed to.
-            microhh_crs:
-                Metric coordinate reference system which matches the desired
-                lat/lon location of the source.
-
-        Returns:
-            Dataset with transformed coordinates.
-        """
-        # if lat/lon is defined in .ini file: use these values to convert grid
-        if (
-            "lat" in self.case.config["grid"]
-            and "lon" in self.case.config["grid"]
-            and source is None
-        ):
-            lat_ref = self.case.config["grid"]["lat"]
-            lon_ref = self.case.config["grid"]["lon"]
-            grid_x_ref = self.case.config["grid"]["xsize"] / 2
-            grid_y_ref = self.case.config["grid"]["ysize"] / 2
-        elif source is not None:
-            lat_ref = source.lat.values
-            lon_ref = source.lon.values
-            grid_x_ref = source.source_x0.values
-            grid_y_ref = source.source_y0.values
-        else:
-            raise ValueError(
-                f"Provide 'lat' and 'lon' in the {self.case.name} "
-                f"file or 'source' and 'sources' as arguments"
-            )
-
-        # Create domain
-        domain = spatial.Domain(
-            xsize=self.case.config["grid"]["xsize"],
-            ysize=self.case.config["grid"]["ysize"],
-            itot=self.case.config["grid"]["itot"],
-            jtot=self.case.config["grid"]["jtot"],
-            lon=lon_ref,
-            lat=lat_ref,
-            anchor=(grid_x_ref, grid_y_ref),
-            epsg_code=microhh_crs,
-        )
-        lon_grid, lat_grid = domain.to_lonlat(
-            data.x.values, data.y.values, meshgrid=True
-        )
-
-        data = data.rename({"x": "nobs", "y": "nrows"})
-        data = data.assign_coords(
-            lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
-        )
-
-        # add attributes to lon and lat
-        data.lon.attrs["epsg"] = int(target_crs.split(":")[-1])
-        data.lat.attrs["epsg"] = int(target_crs.split(":")[-1])
-
-        # drop nrows and nobs from data vars
-        data = data.drop_vars(["nrows", "nobs"])
-
-        # add x and y coordinates
-        data["x"] = (
-            ("nrows", "nobs"),
-            domain.xx + domain.x_offset,
-            {"epsg": int(microhh_crs.split(":")[-1])},
-        )
-        data["y"] = (
-            ("nrows", "nobs"),
-            domain.yy + domain.y_offset,
-            {"epsg": int(microhh_crs.split(":")[-1])},
-        )
-
-        return data
-
     def _broadcast_coords_to_2d_grid(
         self, data: xr.Dataset, coord_names: tuple[str, str]
     ) -> xr.Dataset:
@@ -801,79 +872,6 @@ class PostProcessing:
 
         # Assign the new 2D coordinates
         data = data.assign_coords(x=(coord_names, x_2d), y=(coord_names, y_2d))
-
-        return data
-
-    def convert_microhh_timestep_to_date(
-        self,
-        data: xr.Dataset,
-        start_date: Optional[Union[str, pd.Timestamp]] = None,
-        date_format: str = "%Y-%m-%d %H:%M:%S",
-    ) -> xr.Dataset:
-        """Convert time into a timestamp to make the dataset digestible by `ddeq`.
-
-        Use 'datetime_utc' if available in the .ini file.
-
-        Args:
-            data:
-                The dataset to convert.
-            start_date:
-                The start date as a string or a pandas Timestamp object.
-            date_format:
-                The format of the start_date string.
-
-        Returns:
-            Dataset with the time converted to a timestamp.
-        """
-        # use 'datetime_utc' if available in the .ini file
-        if "datetime_utc" in self.case.config["time"] and start_date is None:
-            start_date = self.case.config["time"]["datetime_utc"]
-        elif "datetime_utc" in self.case.config["time"] and start_date is not None:
-            logger.info(
-                "Using %s to overwrite %s in .ini file",
-                start_date,
-                self.case.config["time"]["datetime_utc"],
-            )
-
-        if start_date is None:
-            raise ValueError(
-                "Please provide 'start_date' or set 'datetime_utc' in the ini file."
-            )
-
-        tz = "UTC"
-
-        if isinstance(start_date, str):
-            converted = pd.to_datetime(start_date, format=date_format)
-            if pd.isna(converted):
-                raise ValueError(f"Could not parse start_date: {start_date}")
-            start_date = cast(pd.Timestamp, converted)
-
-        if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
-            start_date = start_date.tz_convert("UTC").tz_localize(None)
-
-        # Force ns precision for the reference timestamp as well.
-        ts_start_date = pd.Timestamp(start_date).as_unit("ns")
-
-        if np.issubdtype(data["time"].dtype, np.datetime64):
-            time_values = pd.to_datetime(data["time"].values).astype("datetime64[ns]")
-            first_time = cast(pd.Timestamp, pd.to_datetime(time_values[0]))
-            time_diff = first_time - ts_start_date
-            new_time = time_values - time_diff
-
-        elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
-            data["time"].dtype, np.floating
-        ):
-            # convert MicroHH seconds to timedelta, then add to start date
-            time_delta = pd.to_timedelta(data["time"].to_numpy(), unit="s")
-            new_time = pd.DatetimeIndex(start_date + time_delta).astype(
-                "datetime64[ns]"
-            )
-
-        else:
-            raise ValueError("Data type of 'time' was not recognized.")
-
-        data = data.assign_coords(time=new_time)
-        data["time"].attrs.update({"timezone": tz})
 
         return data
 
