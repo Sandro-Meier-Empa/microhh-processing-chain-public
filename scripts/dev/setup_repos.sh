@@ -43,6 +43,7 @@ clone_or_update () {
   fi
 }
 # Clone repos
+clone_or_update https://gitlab.empa.ch/abt503/users/mesa/cscs.git cscs
 clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq ddeq-gui-refactored
 clone_or_update git@github.com:LS2D/LS2D.git LS2D
 # clone_or_update https://github.com/Sandro-Meier-Empa/LS2D.git LS2D
@@ -62,6 +63,7 @@ clone_or_update https://github.com/Vex-Titan/microhh.git microhh develop_kpp_gpu
 cp -r microhh-ch4/microhh_py .
 
 # Install in editable mode
+pip install -e ./cscs
 pip install -e ./ddeq
 pip install -e ./LS2D
 pip install -e ./microhh_py
