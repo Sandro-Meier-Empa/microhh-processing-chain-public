@@ -1,6 +1,4 @@
 images/
-notebooks/archive/
-notebooks/*.ipynb
 data/
 
 *.egg-info
