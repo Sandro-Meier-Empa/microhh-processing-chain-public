@@ -1,9 +1,12 @@
 """Plume geometry and spectral diagnostics."""
 
+import logging
 from typing import Optional, Union
 
 import numpy as np
 import xarray as xr
+
+logger = logging.getLogger(__name__)
 
 
 def calculate_plume_centerline(
@@ -335,10 +338,11 @@ def apply_2d_taper(
 def compute_total_slant_column(
     gas_data: xr.DataArray,
     density_data: xr.DataArray,
-    sza: float,
-    saa: float,
-    vza: float = 0.0,
-    vaa: float = 0.0,
+    sza: Union[float, np.ndarray],
+    saa: Union[float, np.ndarray],
+    vza: Union[float, np.ndarray] = 0.0,
+    vaa: Union[float, np.ndarray] = 0.0,
+    dim_names: tuple[str, str, str] = ("x", "y", "z"),
 ) -> xr.Dataset:
     """Compute total 2D Slant Column Density (SCD) for CH4.
 
@@ -350,31 +354,80 @@ def compute_total_slant_column(
     Args:
         gas_data (xr.DataArray): 3D gas mixing ratio (e.g. CH4 in kg/kg).
         density_data (xr.DataArray): 3D air density (kg/m^3) matching gas_data.
-        sza (float): Solar zenith angle in degrees.
-        saa (float): Solar azimuth angle in degrees (clockwise from North).
-        vza (float, optional): Viewing zenith angle in degrees. Defaults to 0.0.
-        vaa (float, optional): Viewing azimuth angle in degrees. Defaults to 0.0.
+        sza: Solar zenith angle in degrees, either scalar or one-dimensional
+            time-varying array.
+        saa: Solar azimuth angle in degrees (clockwise from North), either
+            scalar or one-dimensional time-varying array.
+        vza: Viewing zenith angle in degrees, either scalar or
+            one-dimensional time-varying array. Defaults to 0.0.
+        vaa: Viewing azimuth angle in degrees, either scalar or
+            one-dimensional time-varying array. Defaults to 0.0.
+        dim_names: Tuple of dimension names for (x, y, z) in the input arrays.
 
     Returns:
         xr.Dataset: Total Slant Column Density (kg/m^2) with horizontal
-            dimensions (y, x) and any additional dimensions (e.g. time).
+            dimensions (x, y) and any additional dimensions (e.g. time).
     """
+    assert len(dim_names) == 3, "dim_names must be a tuple of three dimension names."
+    x_name, y_name, z_name = dim_names
+
     if gas_data.chunks is not None:
-        safe_chunks = {dim: -1 for dim in ["x", "y", "z"] if dim in gas_data.dims}
+        safe_chunks = {dim: -1 for dim in dim_names if dim in gas_data.dims}
         # Keep existing chunking for other dimensions (like 'time')
         for dim, chunks in gas_data.chunksizes.items():
             if dim not in safe_chunks:
                 safe_chunks[dim] = chunks[0]
         gas_data = gas_data.chunk(safe_chunks)
 
+    gas_data, density_data = xr.align(gas_data, density_data, join="exact")
     ch4_dens = gas_data * density_data
 
+    def _prepare_angle(
+        angle: Union[float, np.ndarray], name: str, template: xr.DataArray
+    ) -> Union[float, xr.DataArray]:
+        """Convert a public angle input to an internal scalar or time series."""
+        if not isinstance(angle, np.ndarray):
+            return float(angle)
+
+        angle_values = np.asarray(angle, dtype=float)
+        if angle_values.ndim != 1:
+            raise ValueError(f"{name} must be a scalar or one-dimensional array.")
+        if "time" not in template.dims:
+            raise ValueError(
+                f"{name} was provided as an array, but gas_data has no time dimension."
+            )
+        if angle_values.size != template.sizes["time"]:
+            raise ValueError(
+                f"{name} length ({angle_values.size}) does not match the time "
+                f"dimension ({template.sizes['time']})."
+            )
+
+        return xr.DataArray(
+            angle_values,
+            dims=("time",),
+            coords={"time": template["time"]},
+            name=name,
+        )
+
+    def _is_zero_zenith(zenith: Union[float, xr.DataArray]) -> bool:
+        if isinstance(zenith, xr.DataArray):
+            return bool(np.all(np.asarray(zenith.data) == 0.0))
+        return zenith == 0.0
+
+    sza_calc = _prepare_angle(sza, "sza", ch4_dens)
+    saa_calc = _prepare_angle(saa, "saa", ch4_dens)
+    vza_calc = _prepare_angle(vza, "vza", ch4_dens)
+    vaa_calc = _prepare_angle(vaa, "vaa", ch4_dens)
+
     def _compute_single_path(
-        gas_dens: xr.DataArray, zenith: float, azimuth: float
+        gas_dens: xr.DataArray,
+        zenith: Union[float, xr.DataArray],
+        azimuth: Union[float, xr.DataArray],
+        path_name: str,
     ) -> xr.DataArray:
         """Helper to calculate SCD for a single ray path line."""
-        if zenith == 0.0:
-            return gas_dens.integrate("z")
+        if _is_zero_zenith(zenith):
+            return gas_dens.integrate(z_name)
 
         zenith_rad = np.radians(zenith)
         azimuth_rad = np.radians(azimuth)
@@ -383,32 +436,56 @@ def compute_total_slant_column(
         dx_factor = np.tan(zenith_rad) * np.sin(azimuth_rad)
         dy_factor = np.tan(zenith_rad) * np.cos(azimuth_rad)
 
-        # Vectorized coordinate creation:
-        # (gas_dens.z * dx_factor) creates a ('z',) array.
-        # Adding it to gas_dens.x ('x',) implicitly broadcasts to a
-        # 2D ('z', 'x') coordinate array.
-        x_target = gas_dens.x + (gas_dens.z * dx_factor)
-        y_target = gas_dens.y + (gas_dens.z * dy_factor)
+        # Vectorized coordinate creation. Scalar angles produce 2D target
+        # coordinates; time-varying angles add the time dimension.
+        x_target = gas_dens[x_name] + (gas_dens[z_name] * dx_factor)
+        y_target = gas_dens[y_name] + (gas_dens[z_name] * dy_factor)
 
         da_shifted = gas_dens.interp(
-            x=x_target, y=y_target, method="linear", kwargs={"fill_value": np.nan}
+            {
+                x_name: x_target,
+                y_name: y_target,
+            },
+            method="linear",
+            kwargs={"fill_value": np.nan},
         )
 
-        path_scd = da_shifted.integrate("z") / np.cos(zenith_rad)
+        path_scd = da_shifted.integrate(z_name) / np.cos(zenith_rad)
         return path_scd
 
-    scd_incoming = _compute_single_path(ch4_dens, sza, saa)
-    scd_outgoing = _compute_single_path(ch4_dens, vza, vaa)
+    scd_incoming = _compute_single_path(ch4_dens, sza_calc, saa_calc, "Incoming")
+    scd_outgoing = _compute_single_path(ch4_dens, vza_calc, vaa_calc, "Outgoing")
 
     # when we compute the modelled vcd, we integrate vertically one way
     # when we compute the modelled scd, we integrate two-way
     # => the scd is expected to be larger than the vcd by a factor
     # of (1/cos(SZA) + 1/cos(VZA)) for a homogeneous atmosphere.
     # => have to correct for that if we want to compare the two.
-    geom_amf = 1.0 / np.cos(np.radians(sza)) + 1.0 / np.cos(np.radians(vza))
-    scd_incoming /= geom_amf
-    scd_outgoing /= geom_amf
+    geom_amf = 1.0 / np.cos(np.radians(sza_calc)) + 1.0 / np.cos(np.radians(vza_calc))
+    scd_incoming = scd_incoming / geom_amf
+    scd_outgoing = scd_outgoing / geom_amf
     total_scd = scd_incoming + scd_outgoing
+
+    def _angle_to_output(
+        angle: Union[float, xr.DataArray], name: str, template: xr.DataArray
+    ) -> xr.DataArray:
+        """Convert an angle to the public output shape."""
+        if isinstance(angle, xr.DataArray):
+            angle_out = angle.copy()
+        elif "time" in template.dims:
+            angle_out = xr.DataArray(
+                np.full(template.sizes["time"], angle, dtype=float),
+                dims=("time",),
+                coords={"time": template["time"]},
+            )
+        else:
+            angle_out = xr.DataArray(float(angle))
+        angle_out.name = name
+        angle_out.attrs = {
+            "units": "degrees",
+            "description": f"{name} used for slant-column calculation",
+        }
+        return angle_out
 
     # save in xr dataset
     scd_incoming.name = "scd_incoming"
@@ -431,16 +508,13 @@ def compute_total_slant_column(
             "scd_incoming": scd_incoming,
             "scd_outgoing": scd_outgoing,
             "total_scd": total_scd,
-        },
-        coords={dim: total_scd[dim] for dim in total_scd.dims},
-        attrs={
-            "sza": sza,
-            "saa": saa,
-            "vza": vza,
-            "vaa": vaa,
-            "geom_amf": geom_amf,
-        },
+            "sza": _angle_to_output(sza_calc, "sza", ch4_dens),
+            "saa": _angle_to_output(saa_calc, "saa", ch4_dens),
+            "vza": _angle_to_output(vza_calc, "vza", ch4_dens),
+            "vaa": _angle_to_output(vaa_calc, "vaa", ch4_dens),
+        }
     )
+    data_out = data_out.drop_vars([x_name, y_name], errors="ignore")
     return data_out
 
 
