@@ -3,6 +3,7 @@
 from typing import Literal, Optional, Union, cast
 
 import cartopy.crs as ccrs
+import ddeq
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -11,8 +12,6 @@ from matplotlib.figure import Figure
 from pyproj import Transformer
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
-
-import ddeq
 
 
 class Domain:
@@ -61,6 +60,7 @@ class Domain:
             epsg_code_str = get_epsg_from_pyproj(lat, lon)
             epsg_code = f"epsg:{epsg_code_str}"
 
+        self.epsg_code = epsg_code
         self.transformer = Transformer.from_crs("epsg:4326", epsg_code, always_xy=True)
 
         self.itot, self.jtot = itot, jtot
