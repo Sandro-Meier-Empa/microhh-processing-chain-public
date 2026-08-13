@@ -549,15 +549,6 @@ class WindProcessing:
         return scipy.stats.circstd(a, high=360, nan_policy="omit", axis=axes)
 
 
-class EffectiveWind:
-    """Placeholder for effective-wind calculations."""
-
-    # TODO
-    def _init__(self) -> None:
-        """Initialise the effective-wind placeholder."""
-        return None
-
-
 ################ other functions ################
 ################################################################################
 
@@ -1724,10 +1715,18 @@ __all__ = [
     "calculate_monin_obukhov_length",
     "calculate_richardson_number",
     "calculate_smagorinsky_constant",
+    "calculate_spatial_psd_2d",
+    "calculate_temporal_variance_psd",
+    "calculate_tke_spatial_profile_dask",
+    "calculate_tke_temporal_profile",
+    "calculate_tke_temporal_profile_dask",
     "calculate_u_star",
     "calculate_u_star_stable",
     "calculate_virtual_temperature",
     "calculate_virtual_turbulent_heat_flux",
     "get_wind_profile",
+    "radial_spectrum_from_spatial_psd",
+    "ramp",
     "solve_wind_profile",
+    "wind_profile_from_given_wind",
 ]
