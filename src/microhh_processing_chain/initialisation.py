@@ -714,7 +714,7 @@ class Case:
         ]
 
         if keep_microhh_binary:
-            files_to_keep = files_to_keep + "microhh"
+            files_to_keep = [*files_to_keep, "microhh"]
         if keep_chemistry:
             chem_fields = [
                 "van_genuchten_parameters.nc",
