@@ -1,7 +1,7 @@
 from collections.abc import Hashable, Iterable
 from datetime import date, datetime
 from pathlib import Path
-from typing import TypeAlias
+from typing import Optional, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -95,6 +95,7 @@ class CorsoEmissions:
         lon_max: float,
         lat_min: float,
         lat_max: float,
+        min_emission: Optional[float] = None,
     ) -> None:
         """Filter the emission catalogue to an open longitude/latitude box.
 
@@ -103,13 +104,33 @@ class CorsoEmissions:
             lon_max: Exclusive upper longitude bound.
             lat_min: Exclusive lower latitude bound.
             lat_max: Exclusive upper latitude bound.
+            min_emission: Minimal emission required to be imported in kt per year.
         """
+        if min_emission is not None:
+            emissions = self.df_emiss["co2_kty"]
+            plant_emissions = emissions.groupby(self.df_emiss["plant_name"]).transform(
+                "sum"
+            )
+            emission_mask = emissions.ge(min_emission) | plant_emissions.ge(
+                min_emission
+            )
         lat = self.df_emiss.latitude
         lon = self.df_emiss.longitude
 
         mask = (lon > lon_min) & (lon < lon_max) & (lat > lat_min) & (lat < lat_max)
+        if min_emission is not None:
+            mask &= emission_mask
 
         self.df_emiss = self.df_emiss[mask]
+
+    def get_dataset(self) -> xr.Dataset:
+        """This methods returns the raw Corso emission database as dataset.
+
+        Return:
+            Dataset with corso emissions
+        """
+        # return xr.Dataset.from_dataframe(self.df_emiss)
+        return self.df_emiss.to_xarray()
 
     def get_emission_tser(
         self,
