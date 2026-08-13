@@ -7,7 +7,7 @@ import shutil
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Literal, Optional, Union, cast
+from typing import Literal, Optional, Union
 
 import cscs
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
@@ -33,19 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 def convert_microhh_grid_to_coords(
-    case: init.Case,
     data: xr.Dataset,
     source: Optional[xr.Dataset] = None,
+    case: Optional[init.Case] = None,
     target_crs: str = "epsg:4326",
     microhh_crs: str = "epsg:32632",
 ) -> xr.Dataset:
-    """Convert the modelled MicroHH grid into a lat/lon grid.
+    """Convert MicroHH metric grid coordinates to georeferenced coordinates.
 
     If lat and lon are specified in the .ini file, these values are
     used as domain centres.
     If 'source' is provided, the lat and lon of the source
     is used to convert the grid such that the source is located at the
     latitude and longitude specified in the 'sources' dataset.
+
+    The input may be on the native MicroHH ``x``/``y`` grid or already use
+    converted ``nobs``/``nrows`` dimensions with projected ``x``/``y``
+    variables. This allows the dataset resolution to be degraded before or
+    after coordinate conversion.
 
     Args:
         case:
@@ -66,11 +71,17 @@ def convert_microhh_grid_to_coords(
         Dataset with transformed coordinates.
     """
     # if lat/lon is defined in .ini file: use these values to convert grid
-    if "lat" in case.config["grid"] and "lon" in case.config["grid"] and source is None:
+    if (
+        case is not None
+        and "lat" in case.config["grid"]
+        and "lon" in case.config["grid"]
+        and source is None
+    ):
         lat_ref = case.config["grid"]["lat"]
         lon_ref = case.config["grid"]["lon"]
         grid_x_ref = case.config["grid"]["xsize"] / 2
         grid_y_ref = case.config["grid"]["ysize"] / 2
+
     elif source is not None:
         lat_ref = source.lat.values
         lon_ref = source.lon.values
@@ -78,16 +89,23 @@ def convert_microhh_grid_to_coords(
         grid_y_ref = source.source_y0.values
     else:
         raise ValueError(
-            f"Provide 'lat' and 'lon' in the {case.name} "
-            f"file or 'source' and 'sources' as arguments"
+            "Provide either a case with grid lat/lon coordinates or a source dataset."
         )
+
+    # get xsize, ysize, itot, jtot from the data
+    itot = data.sizes["x"]
+    jtot = data.sizes["y"]
+
+    resolution = data.x.diff(dim="x").mean().values
+    xsize = int(data.x.max() + resolution / 2)
+    ysize = int(data.y.max() + resolution / 2)
 
     # Create domain
     domain = spatial.Domain(
-        xsize=case.config["grid"]["xsize"],
-        ysize=case.config["grid"]["ysize"],
-        itot=case.config["grid"]["itot"],
-        jtot=case.config["grid"]["jtot"],
+        xsize=xsize,
+        ysize=ysize,
+        itot=itot,
+        jtot=jtot,
         lon=lon_ref,
         lat=lat_ref,
         anchor=(grid_x_ref, grid_y_ref),
@@ -105,7 +123,7 @@ def convert_microhh_grid_to_coords(
     data.lat.attrs["epsg"] = int(target_crs.split(":")[-1])
 
     # drop nrows and nobs from data vars
-    data = data.drop_vars(["nrows", "nobs"])
+    data = data.drop_vars(["nrows", "nobs"], errors="ignore")
 
     # add x and y coordinates
     data["x"] = (
@@ -123,77 +141,191 @@ def convert_microhh_grid_to_coords(
 
 
 def convert_microhh_timestep_to_date(
-    case: init.Case,
-    data: xr.Dataset,
+    data_or_case: Union[xr.Dataset, init.Case],
+    data: Optional[Union[xr.Dataset, str, pd.Timestamp]] = None,
     start_date: Optional[Union[str, pd.Timestamp]] = None,
     date_format: str = "%Y-%m-%d %H:%M:%S",
+    case: Optional[init.Case] = None,
 ) -> xr.Dataset:
-    """Convert time into a timestamp to make the dataset digestible by `ddeq`.
+    """Convert MicroHH model time into UTC timestamps.
 
-    Use 'datetime_utc' if available in the .ini file.
+    The function accepts both ``convert_microhh_timestep_to_date(case, data)``
+    and ``convert_microhh_timestep_to_date(data, case=case)``. When ``case``
+    contains ``time.datetime_utc``, that value is used as the authoritative
+    model start date. Numeric time coordinates are interpreted as MicroHH model
+    seconds, so missing output timesteps remain missing after conversion.
 
     Args:
+        data_or_case:
+            Dataset to convert, or a MicroHH case when using case-first calls.
+        data:
+            Dataset for case-first calls. For backwards-compatible dataset-first
+            calls, this may also be a positional ``start_date``.
+        start_date:
+            Model start date as a string or pandas timestamp. Ignored when
+            ``case.config["time"]["datetime_utc"]`` is available.
+        date_format:
+            Format used to parse string start dates.
         case:
             MicroHH case containing the time configuration.
-        data:
-            The dataset to convert.
-        start_date:
-            The start date as a string or a pandas Timestamp object.
-        date_format:
-            The format of the start_date string.
 
     Returns:
-        Dataset with the time converted to a timestamp.
+        Dataset with ``time`` converted to UTC timestamps.
     """
-    # use 'datetime_utc' if available in the .ini file
-    if "datetime_utc" in case.config["time"] and start_date is None:
-        start_date = case.config["time"]["datetime_utc"]
-    elif "datetime_utc" in case.config["time"] and start_date is not None:
-        logger.info(
-            "Using %s to overwrite %s in .ini file",
-            start_date,
-            case.config["time"]["datetime_utc"],
-        )
+    dataset, case, start_date = _normalise_timestep_conversion_args(
+        data_or_case=data_or_case,
+        data=data,
+        start_date=start_date,
+        case=case,
+    )
+
+    start_timestamp = _get_microhh_start_timestamp(
+        case=case,
+        start_date=start_date,
+        date_format=date_format,
+    )
+    new_time = _convert_microhh_time_coord(dataset["time"], start_timestamp)
+
+    dataset = dataset.assign_coords(time=new_time)
+    dataset["time"].attrs.update({"timezone": "UTC"})
+
+    return dataset
+
+
+def _normalise_timestep_conversion_args(
+    data_or_case: Union[xr.Dataset, init.Case],
+    data: Optional[Union[xr.Dataset, str, pd.Timestamp]],
+    start_date: Optional[Union[str, pd.Timestamp]],
+    case: Optional[init.Case],
+) -> tuple[xr.Dataset, Optional[init.Case], Optional[Union[str, pd.Timestamp]]]:
+    """Normalise supported timestep conversion call styles."""
+    if isinstance(data_or_case, xr.Dataset):
+        dataset = data_or_case
+        if isinstance(data, xr.Dataset):
+            raise TypeError("Received two datasets. Provide only one dataset argument.")
+
+        if data is not None:
+            if start_date is not None:
+                raise TypeError("Received start_date both positionally and by keyword.")
+            start_date = data
+
+        return dataset, case, start_date
+
+    if case is not None:
+        raise TypeError("Received case both positionally and by keyword.")
+
+    case = data_or_case
+    if not isinstance(data, xr.Dataset):
+        raise TypeError("Expected an xarray Dataset after the case argument.")
+
+    return data, case, start_date
+
+
+def _get_microhh_start_timestamp(
+    case: Optional[init.Case],
+    start_date: Optional[Union[str, pd.Timestamp]],
+    date_format: str,
+) -> pd.Timestamp:
+    """Return the authoritative MicroHH start timestamp as timezone-naive UTC."""
+    if case is not None and "datetime_utc" in case.config["time"]:
+        case_start_date = case.config["time"]["datetime_utc"]
+        if start_date is not None:
+            logger.info(
+                "Using datetime_utc=%s from the .ini file and ignoring start_date=%s.",
+                case_start_date,
+                start_date,
+            )
+        start_date = case_start_date
 
     if start_date is None:
         raise ValueError(
             "Please provide 'start_date' or set 'datetime_utc' in the ini file."
         )
 
-    tz = "UTC"
+    return _as_naive_utc_timestamp(start_date, date_format=date_format)
 
-    if isinstance(start_date, str):
-        converted = pd.to_datetime(start_date, format=date_format)
+
+def _as_naive_utc_timestamp(
+    value: Union[str, pd.Timestamp], date_format: Optional[str] = None
+) -> pd.Timestamp:
+    """Parse a timestamp and return it as timezone-naive UTC with ns precision."""
+    if isinstance(value, str):
+        converted = pd.to_datetime(value, format=date_format)
         if pd.isna(converted):
-            raise ValueError(f"Could not parse start_date: {start_date}")
-        start_date = cast(pd.Timestamp, converted)
-
-    if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
-        start_date = start_date.tz_convert("UTC").tz_localize(None)
-
-    # Force ns precision for the reference timestamp as well.
-    ts_start_date = pd.Timestamp(start_date).as_unit("ns")
-
-    if np.issubdtype(data["time"].dtype, np.datetime64):
-        time_values = pd.to_datetime(data["time"].values).astype("datetime64[ns]")
-        first_time = cast(pd.Timestamp, pd.to_datetime(time_values[0]))
-        time_diff = first_time - ts_start_date
-        new_time = time_values - time_diff
-
-    elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
-        data["time"].dtype, np.floating
-    ):
-        # convert MicroHH seconds to timedelta, then add to start date
-        time_delta = pd.to_timedelta(data["time"].to_numpy(), unit="s")
-        new_time = pd.DatetimeIndex(start_date + time_delta).astype("datetime64[ns]")
-
+            raise ValueError(f"Could not parse timestamp: {value}")
+        timestamp = pd.Timestamp(converted)
     else:
-        raise ValueError("Data type of 'time' was not recognized.")
+        timestamp = pd.Timestamp(value)
 
-    data = data.assign_coords(time=new_time)
-    data["time"].attrs.update({"timezone": tz})
+    if timestamp.tz is not None:
+        timestamp = timestamp.tz_convert("UTC").tz_localize(None)
 
-    return data
+    timestamp_ns = timestamp.as_unit("ns")
+    if timestamp_ns is pd.NaT:
+        raise ValueError(f"Could not parse timestamp: {value}")
+    if not isinstance(timestamp_ns, pd.Timestamp):
+        raise TypeError(
+            f"Expected pandas Timestamp, got {type(timestamp_ns).__name__}."
+        )
+
+    return timestamp_ns
+
+
+def _convert_microhh_time_coord(
+    time_coord: xr.DataArray, start_timestamp: pd.Timestamp
+) -> pd.DatetimeIndex:
+    """Convert a MicroHH time coordinate to datetimes without filling gaps."""
+    if np.issubdtype(time_coord.dtype, np.datetime64):
+        return _convert_datetime_time_coord(time_coord, start_timestamp)
+
+    if np.issubdtype(time_coord.dtype, np.integer) or np.issubdtype(
+        time_coord.dtype, np.floating
+    ):
+        time_delta = pd.to_timedelta(time_coord.to_numpy(), unit="s")
+        return pd.DatetimeIndex(
+            pd.DatetimeIndex(start_timestamp + time_delta).astype("datetime64[ns]")
+        )
+
+    raise ValueError("Data type of 'time' was not recognized.")
+
+
+def _convert_datetime_time_coord(
+    time_coord: xr.DataArray, start_timestamp: pd.Timestamp
+) -> pd.DatetimeIndex:
+    """Convert decoded model-time datetimes to timestamps."""
+    time_values = pd.DatetimeIndex(pd.to_datetime(time_coord.values))
+    if time_values.tz is not None:
+        time_values = time_values.tz_convert("UTC").tz_localize(None)
+    time_values = pd.DatetimeIndex(time_values.astype("datetime64[ns]"))
+
+    origin = _get_time_origin_from_cf_units(time_coord)
+    if origin is None:
+        logger.debug(
+            "No decodable CF time origin found. Preserving existing datetime values."
+        )
+        return time_values
+
+    time_delta = time_values - origin
+    return pd.DatetimeIndex(
+        pd.DatetimeIndex(start_timestamp + time_delta).astype("datetime64[ns]")
+    )
+
+
+def _get_time_origin_from_cf_units(time_coord: xr.DataArray) -> Optional[pd.Timestamp]:
+    """Return the origin from a CF-style time units string, if available."""
+    units = time_coord.encoding.get("units") or time_coord.attrs.get("units")
+    if not isinstance(units, str):
+        return None
+
+    match = re.match(r"^\s*\w+\s+since\s+(.+?)\s*$", units)
+    if match is None:
+        return None
+
+    try:
+        return _as_naive_utc_timestamp(match.group(1))
+    except (ValueError, TypeError):
+        logger.debug("Could not parse time origin from units=%r.", units)
+        return None
 
 
 class PostProcessing:
@@ -1487,10 +1619,14 @@ def add_gaussian_noise(
 def degrade_resolution(
     data: xr.Dataset, zonal_res: int, meridional_res: int
 ) -> xr.Dataset:
-    """Degrade resolution of 3D or 2D MicroHH output by aggregating pixels.
+    """Degrade resolution of gridded output by aggregating pixels.
+
+    The input may still use native MicroHH ``x``/``y`` dimensions or already
+    use converted ``nrows``/``nobs`` dimensions with two-dimensional coordinate
+    variables such as ``lon``, ``lat``, ``x``, and ``y``.
 
     Args:
-        data: 3D or 2D data
+        data: 3D or 2D gridded data.
         zonal_res:
             Number of pixels in zonal direction which should be aggregated.
         meridional_res:
@@ -1499,24 +1635,36 @@ def degrade_resolution(
     Returns:
         Data with coarser resolution.
     """
-    spatial_dims = {
-        ("x", "y"): ("x", "y"),
-        ("lon", "lat"): ("lon", "lat"),
-        ("nrows", "nobs"): ("nrows", "nobs"),
-        ("longitude", "latitude"): ("longitude", "latitude"),
-    }
+    if zonal_res < 1 or meridional_res < 1:
+        raise ValueError("zonal_res and meridional_res must be positive integers.")
 
-    for dims, (zonal_dim, meridional_dim) in spatial_dims.items():
-        if all(dim in data.dims for dim in dims):
-            degraded_data = (
-                data.coarsen(
-                    {zonal_dim: zonal_res, meridional_dim: meridional_res},
-                    boundary="trim",
-                )
-            ).mean()  # pyright: ignore[reportAttributeAccessIssue]
-            return degraded_data
+    zonal_dim, meridional_dim = _get_horizontal_dims(data)
+    degraded_data = data.coarsen(
+        {zonal_dim: zonal_res, meridional_dim: meridional_res},
+        boundary="trim",
+    ).mean(keep_attrs=True)  # pyright: ignore[reportAttributeAccessIssue]
 
-    raise ValueError(f"Unknown spatial dimensions: {data.dims}")
+    return degraded_data
+
+
+def _get_horizontal_dims(data: xr.Dataset) -> tuple[str, str]:
+    """Return zonal and meridional dimension names for a gridded dataset."""
+    candidates = (
+        ("x", "y"),
+        ("nobs", "nrows"),
+        ("lon", "lat"),
+        ("longitude", "latitude"),
+    )
+
+    for zonal_dim, meridional_dim in candidates:
+        if zonal_dim in data.sizes and meridional_dim in data.sizes:
+            return zonal_dim, meridional_dim
+
+    raise ValueError(
+        "Unknown spatial dimensions. Expected one of "
+        "('x', 'y'), ('nobs', 'nrows'), ('lon', 'lat'), or "
+        f"('longitude', 'latitude'); got {dict(data.sizes)}."
+    )
 
 
 def format_data_for_cdo(
