@@ -802,6 +802,9 @@ class PreProcessing:
 
     def _check_tdep_source_strength(self) -> None:
         """Check if switches for source strength and initial conditions align."""
+        if self.case.config.source.swsource == "3d":
+            return
+
         self._check_alignment(
             group="source",
             key="swtimedep_strength",
