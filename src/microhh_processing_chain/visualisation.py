@@ -1217,10 +1217,300 @@ def _get_norm(vmin: float, vmax: float, difference: bool) -> Normalize:
         return Normalize(vmin=0.0, vmax=vmax)
 
 
+def plot_optical_flow_wind_snapshots(
+    concentration: xr.DataArray,
+    flow: xr.Dataset,
+    *,
+    start: int = 0,
+    n: int = 3,
+    time_dim: Optional[str] = None,
+    x_dim: Optional[str] = None,
+    y_dim: Optional[str] = None,
+    quiver_step: Union[int, tuple[int, int]] = 10,
+    quiver_scale: Optional[float] = None,
+    cmap: str = "viridis",
+    diff_cmap: str = "RdBu_r",
+    figsize: Optional[tuple[float, float]] = None,
+) -> Figure:
+    """Plot concentration snapshots and optical-flow displacement vectors.
+
+    Args:
+        concentration:
+            Concentration field with two horizontal dimensions and time.
+        flow:
+            Dataset returned by ``compute_optical_flow_displacement``.
+        start:
+            First concentration snapshot index to plot.
+        n:
+            Number of consecutive frame pairs to plot.
+        time_dim:
+            Name of the time dimension. Inferred when omitted.
+        x_dim:
+            Name of the column/zonal dimension. Inferred when omitted.
+        y_dim:
+            Name of the row/meridional dimension. Inferred when omitted.
+        quiver_step:
+            Vector thinning step. A tuple is interpreted as ``(y_step, x_step)``.
+        quiver_scale:
+            Matplotlib quiver scale. ``None`` uses Matplotlib autoscaling.
+        cmap:
+            Colormap for concentration snapshots.
+        diff_cmap:
+            Colormap for concentration differences.
+        figsize:
+            Optional figure size.
+
+    Returns:
+        Figure containing the snapshot and displacement panels.
+    """
+    time_dim = wind_proc._infer_time_dim(concentration, time_dim)
+    x_dim, y_dim = wind_proc._infer_horizontal_dims(
+        concentration, time_dim, x_dim, y_dim
+    )
+    _check_optical_flow_plot_inputs(
+        concentration, flow, time_dim, x_dim, y_dim, start, n
+    )
+
+    concentration_tyx = concentration.transpose(time_dim, y_dim, x_dim)
+    if figsize is None:
+        figsize = (10, max(3.0, 3.0 * n))
+
+    fig, axs = plt.subplots(
+        nrows=n,
+        ncols=2,
+        sharex=True,
+        sharey=True,
+        figsize=figsize,
+        squeeze=False,
+        layout="constrained",
+    )
+    x_coord, y_coord, x_label, y_label = _get_plot_coordinates(
+        concentration_tyx, x_dim, y_dim
+    )
+    concentration_norm = _robust_norm(
+        concentration_tyx.isel({time_dim: slice(start, start + n)}).values
+    )
+    diff_values = (
+        concentration_tyx.isel({time_dim: slice(start + 1, start + n + 1)}).values
+        - concentration_tyx.isel({time_dim: slice(start, start + n)}).values
+    )
+    diff_norm = _symmetric_norm(diff_values)
+    y_step, x_step = _normalise_quiver_step(quiver_step)
+
+    concentration_mesh = None
+    diff_mesh = None
+    for row in range(n):
+        concentration_index = start + row
+        flow_index = start + row
+        snapshot = concentration_tyx.isel({time_dim: concentration_index})
+        next_snapshot = concentration_tyx.isel({time_dim: concentration_index + 1})
+        difference = next_snapshot - snapshot
+
+        concentration_mesh = axs[row, 0].pcolormesh(
+            x_coord,
+            y_coord,
+            snapshot.values,
+            cmap=cmap,
+            norm=concentration_norm,
+            shading="auto",
+        )
+        diff_mesh = axs[row, 1].pcolormesh(
+            x_coord,
+            y_coord,
+            difference.values,
+            cmap=diff_cmap,
+            norm=diff_norm,
+            shading="auto",
+        )
+
+        displacement_x = flow["displacement_x"].isel({time_dim: flow_index})
+        displacement_y = flow["displacement_y"].isel({time_dim: flow_index})
+        arrow_x, arrow_y = _displacement_to_coordinate_delta(
+            x_coord,
+            y_coord,
+            displacement_x.transpose(y_dim, x_dim).values,
+            displacement_y.transpose(y_dim, x_dim).values,
+        )
+        row_slice = slice(None, None, y_step)
+        col_slice = slice(None, None, x_step)
+        axs[row, 1].quiver(
+            np.asarray(x_coord)[row_slice, col_slice],
+            np.asarray(y_coord)[row_slice, col_slice],
+            arrow_x[row_slice, col_slice],
+            arrow_y[row_slice, col_slice],
+            angles="xy",
+            scale_units="xy",
+            scale=quiver_scale,
+            color="k",
+            width=0.0025,
+        )
+
+        title_time = _format_time_label(
+            concentration_tyx[time_dim].values[concentration_index]
+        )
+        axs[row, 0].set_title(f"Snapshot {title_time}")
+        axs[row, 1].set_title("Difference and displacement")
+        for ax in axs[row, :]:
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+
+    if concentration_mesh is not None:
+        label = concentration.attrs.get("units", "-")
+        fig.colorbar(concentration_mesh, ax=axs[:, 0], label=f"Concentration [{label}]")
+    if diff_mesh is not None:
+        label = concentration.attrs.get("units", "-")
+        fig.colorbar(diff_mesh, ax=axs[:, 1], label=f"Difference [{label}]")
+
+    return fig
+
+
+def _check_optical_flow_plot_inputs(
+    concentration: xr.DataArray,
+    flow: xr.Dataset,
+    time_dim: str,
+    x_dim: str,
+    y_dim: str,
+    start: int,
+    n: int,
+) -> None:
+    """Validate inputs for optical-flow plotting."""
+    if "displacement_x" not in flow or "displacement_y" not in flow:
+        raise ValueError("flow must contain displacement_x and displacement_y.")
+    if n < 1:
+        raise ValueError("n must be at least 1.")
+    if start < 0:
+        raise ValueError("start must be non-negative.")
+    if concentration.sizes[time_dim] < start + n + 1:
+        raise ValueError("Need at least n + 1 concentration snapshots from start.")
+    if flow.sizes[time_dim] < start + n:
+        raise ValueError("Need at least n optical-flow intervals from start.")
+    for dim in (y_dim, x_dim):
+        if dim not in flow["displacement_x"].dims:
+            raise ValueError(f"flow displacement fields must include dimension {dim}.")
+
+
+def _get_plot_coordinates(
+    concentration: xr.DataArray, x_dim: str, y_dim: str
+) -> tuple[np.ndarray, np.ndarray, str, str]:
+    """Return coordinate grids and labels, preferring lon/lat when available."""
+    lon_name = "lon" if "lon" in concentration.coords else "longitude"
+    lat_name = "lat" if "lat" in concentration.coords else "latitude"
+
+    if lon_name in concentration.coords and lat_name in concentration.coords:
+        x_coord = concentration.coords[lon_name]
+        y_coord = concentration.coords[lat_name]
+        x_values, y_values = _coordinate_arrays(x_coord, y_coord, x_dim, y_dim)
+        return x_values, y_values, "Longitude", "Latitude"
+
+    x_coord = concentration.coords.get(x_dim, None)
+    y_coord = concentration.coords.get(y_dim, None)
+    x_values, y_values = _coordinate_arrays(
+        x_coord,
+        y_coord,
+        x_dim,
+        y_dim,
+        x_size=concentration.sizes[x_dim],
+        y_size=concentration.sizes[y_dim],
+    )
+    return x_values, y_values, x_dim, y_dim
+
+
+def _coordinate_arrays(
+    x_coord: Optional[xr.DataArray],
+    y_coord: Optional[xr.DataArray],
+    x_dim: str,
+    y_dim: str,
+    *,
+    x_size: Optional[int] = None,
+    y_size: Optional[int] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return two-dimensional coordinate arrays for plotting and quiver deltas."""
+    if x_coord is None or y_coord is None:
+        if x_size is None or y_size is None:
+            raise ValueError(f"Coordinates for {x_dim}/{y_dim} are incomplete.")
+        x_values = np.arange(x_size)
+        y_values = np.arange(y_size)
+    else:
+        x_values = np.asarray(x_coord.values)
+        y_values = np.asarray(y_coord.values)
+
+    if x_values.ndim == 2 and y_values.ndim == 2:
+        return x_values, y_values
+    if x_values.ndim == 1 and y_values.ndim == 1:
+        return np.meshgrid(x_values, y_values, indexing="xy")
+
+    raise ValueError(
+        "Plot coordinates must both be one-dimensional or both be two-dimensional."
+    )
+
+
+def _displacement_to_coordinate_delta(
+    x_coord: np.ndarray,
+    y_coord: np.ndarray,
+    displacement_x: np.ndarray,
+    displacement_y: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert pixel displacement to plot-coordinate displacement."""
+    x_col_gradient = np.gradient(x_coord, axis=1)
+    y_col_gradient = np.gradient(y_coord, axis=1)
+    x_row_gradient = np.gradient(x_coord, axis=0)
+    y_row_gradient = np.gradient(y_coord, axis=0)
+
+    arrow_x = displacement_x * x_col_gradient + displacement_y * x_row_gradient
+    arrow_y = displacement_x * y_col_gradient + displacement_y * y_row_gradient
+    return arrow_x, arrow_y
+
+
+def _normalise_quiver_step(quiver_step: Union[int, tuple[int, int]]) -> tuple[int, int]:
+    """Return positive row and column thinning steps."""
+    if isinstance(quiver_step, int):
+        y_step = x_step = quiver_step
+    else:
+        y_step, x_step = quiver_step
+
+    if y_step < 1 or x_step < 1:
+        raise ValueError("quiver_step values must be positive.")
+
+    return y_step, x_step
+
+
+def _robust_norm(values: np.ndarray) -> Normalize:
+    """Return a robust color normalization for snapshot values."""
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return Normalize(vmin=0.0, vmax=1.0)
+
+    vmin, vmax = np.nanquantile(finite, [0.001, 0.999])
+    if np.isclose(vmin, vmax):
+        vmax = vmin + 1.0
+    return Normalize(vmin=float(vmin), vmax=float(vmax))
+
+
+def _symmetric_norm(values: np.ndarray) -> Normalize:
+    """Return a zero-centered normalization for difference values."""
+    finite = np.abs(values[np.isfinite(values)])
+    if finite.size == 0:
+        return Normalize(vmin=-1.0, vmax=1.0)
+
+    vmax = float(np.nanquantile(finite, 0.999))
+    if np.isclose(vmax, 0.0):
+        vmax = 1.0
+    return TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+
+def _format_time_label(value: object) -> str:
+    """Format a time coordinate value for plot titles."""
+    value_array = np.asarray(value)
+    if np.issubdtype(value_array.dtype, np.datetime64):
+        return str(np.datetime_as_string(value_array, unit="s"))
+    return str(value)
+
+
 __all__ = [
     "CaseViewer",
     "VariableViewer",
     "plot_case_comparison",
     "plot_gas_weight",
     "plot_initial_conditions_comparison",
+    "plot_optical_flow_wind_snapshots",
 ]
