@@ -244,10 +244,8 @@ def main() -> None:
         data_coord_noisy_slice.time, desc="Processing timesteps", disable=None
     ):
         data_coord_subset_t = data_coord_noisy_slice.sel(time=t)
-        _tolerance = pd.Timedelta(seconds=sampletime)
-        winds_subset_t = winds.sel(
-            time=t, method="nearest", tolerance=_tolerance.total_seconds()
-        )
+        tolerance = pd.Timedelta(seconds=sampletime)
+        winds_subset_t = winds.sel(time=t, method="nearest", tolerance=tolerance)  # pyright: ignore[reportArgumentType]
 
         try:
             ui = ddeq.gui.UserInterface(
