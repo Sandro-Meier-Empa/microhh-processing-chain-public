@@ -52,6 +52,9 @@ dev = [
   "pytest-cov",
   "mypy",
 ]
+optical-flow = [
+  "opencv-python-headless",
+]
 
 [project.urls]
 Homepage = "https://gitlab.empa.ch/abt503/atmospheric-modelling/microhh-processing-chain"
