@@ -267,8 +267,7 @@ class CorsoEmissions:
             return df[df.index == profile_id].values.astype(float).flatten()
 
         # Emission heights.
-        z = np.arange(50, 1500, 100)
-        z = np.append(z, 1500)
+        z = np.arange(0, 1501, 100)
 
         return z, get_prof(self.df_vert, id_prof)
 
