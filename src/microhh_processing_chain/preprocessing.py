@@ -802,7 +802,56 @@ class PreProcessing:
 
     def _check_tdep_source_strength(self) -> None:
         """Check if switches for source strength and initial conditions align."""
-        if self.case.config.source.swsource == "3d":
+        if "source" not in self.case.config.groups:
+            return
+
+        if self.case.config.get("source", "swsource", "0") == "3d":
+            source_names = list(
+                np.atleast_1d(self.case.config.get("source", "sourcelist", []))
+            )
+            if self.case.config.get("source", "swheat", False):
+                source_names.extend(("te", "qe"))
+            swtimedep = self.case.config.get("source", "swtimedep", False)
+            is_timedep = (
+                bool(swtimedep)
+                and swtimedep != "0"
+                and str(swtimedep).lower() != "false"
+            )
+
+            if is_timedep:
+                loadtime = self.case.config.get("source", "loadtime", None)
+                if loadtime is None or loadtime <= 0:
+                    raise ValueError(
+                        "[source] loadtime must be positive for time-dependent "
+                        "3D sources."
+                    )
+
+                starttime = self.case.config["time"]["starttime"]
+                endtime = self.case.config["time"]["endtime"]
+                first_time = int(starttime // loadtime) * loadtime
+                last_time = int(np.ceil(endtime / loadtime)) * loadtime
+                emission_times = range(first_time, last_time + 1, loadtime)
+            else:
+                emission_times = (0,)
+
+            iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
+            io_time_factor = 10**iotimeprec
+            case_directory = Path(self.case.directory)
+            expected_files = [
+                f"{source_name}_emission.{int(time / io_time_factor):07d}"
+                for source_name in source_names
+                for time in emission_times
+            ]
+            available_files = {path.name for path in case_directory.iterdir()}
+            missing_files = [
+                filename
+                for filename in expected_files
+                if filename not in available_files
+            ]
+            if missing_files:
+                raise FileNotFoundError(
+                    "Missing 3D emission file(s): " + ", ".join(missing_files)
+                )
             return
 
         self._check_alignment(
