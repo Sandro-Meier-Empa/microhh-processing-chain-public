@@ -339,6 +339,16 @@ class InitialBoundaryConditions:
             self.central_lat,
             suppress_stdout=True,
         )
+
+        for name, value in tuv_df.items():
+            value = np.asarray(value, dtype=self.float_type)
+            if np.any(~np.isfinite(value)):
+                logging.warning(
+                    "Chemistry timedep %s contains NaNs/Infs; replacing with zero.",
+                    name,
+                )
+            tuv_df[name] = np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0)
+
         self._df_tuv = tuv_df
         return tuv_df
 
