@@ -44,12 +44,8 @@ clone_or_update () {
 }
 # Clone repos
 clone_or_update https://gitlab.empa.ch/abt503/users/mesa/cscs.git cscs
-clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq ddeq-gui-refactored
-clone_or_update git@github.com:LS2D/LS2D.git LS2D
-# clone_or_update https://github.com/Sandro-Meier-Empa/LS2D.git LS2D
-# clone_or_update https://github.com/Vex-Titan/microhh.git microhh
-# clone_or_update https://github.com/bartvstratum/microhh.git microhh
-clone_or_update https://github.com/Sandro-Meier-Empa/microhh.git microhh-ch4 microhh-ch4
+clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq
+clone_or_update https://github.com/Sandro-Meier-Empa/microhh.git microhh
 clone_or_update https://github.com/microhh/microhhpy.git microhhpy
 clone_or_update https://gitlab.com/empa503/general-tools/u-cat.git u-cat ucat-bugfix
 
