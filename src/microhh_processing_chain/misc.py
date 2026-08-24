@@ -232,7 +232,176 @@ def calculate_sun_position(
     return sun_altaz
 
 
+class CamsGlobInventoryPaths:
+    """Class to manage paths to CAMS global inventory NetCDF files for a specific year.
+
+    Parameters:
+    ----------
+    data_path : str or Path
+        The base path where the CAMS global inventory data is stored.
+    year : int
+        The year for which to retrieve the inventory files.
+    lumping_co2 : list of str, optional
+        List of CO2 species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_co : list of str, optional
+        List of CO species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_nox : list of str, optional
+        List of NOx species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_vocs : list of str, optional
+        List of VOC species to lump together. Default is None, which uses a
+        predefined list.
+    source_cams_glob : list of str, optional
+        List of source categories to include. Default is None, which uses a
+        predefined list.
+
+    """
+
+    def __init__(
+        self,
+        data_path: Union[str, Path],
+        year: int,
+        lumping_co2: Optional[list[str]] = None,
+        lumping_co: Optional[list[str]] = None,
+        lumping_nox: Optional[list[str]] = None,
+        lumping_vocs: Optional[list[str]] = None,
+        source_cams_glob: Optional[list[str]] = None,
+    ) -> None:
+        self.path = Path(data_path) / str(year)
+        self.year = year
+
+        self.nc_files = []  # list(self.path.rglob("*.nc"))
+
+        self.source_cams_glob = (
+            [
+                "anthropogenic",
+                "biogenic",
+                "oceanic",
+                "shipping",
+            ]
+            if source_cams_glob is None
+            else source_cams_glob
+        )
+
+        for source in self.source_cams_glob:
+            path_sector = self.path / source
+            if path_sector.exists():
+                self.nc_files.extend(list(path_sector.rglob("*.nc")))
+
+        self.lumping_co2 = (
+            [
+                "co2-excl-short",
+                "co2-short-cycle",
+                "carbon-dioxide",
+            ]
+            if lumping_co2 is None
+            else lumping_co2
+        )
+
+        self.lumping_co = (
+            [
+                "carbon-monoxide",
+                "carbon-monoxide",
+            ]
+            if lumping_co is None
+            else lumping_co
+        )
+
+        self.lumping_nox = (
+            [
+                "nitrogen-oxides",
+                "nitrogen-oxides",
+            ]
+            if lumping_nox is None
+            else lumping_nox
+        )
+
+        self.lumping_vocs = (
+            [
+                "acetylene",
+                "alcohols",
+                "benzene",
+                "butanes",
+                "chlorinated-hydrocarbons",
+                "esters",
+                "ethane",
+                "ethene",
+                "ethers",
+                "formaldehyde",
+                "hexanes",
+                "isoprene",
+                "monoterpenes",
+                "non-methane-vocs",
+                "other-aldehydes",
+                "other-alkenes-alkynes",
+                "other-aromatics",
+                "other-vocs",
+                "pentanes",
+                "propane",
+                "propene",
+                "toluene",
+                "total-acids",
+                "total-ketones",
+                "trimethylbenzenes",
+                "xylenes",
+                "isoprene",
+                "dimethyl-sulphide",
+                "tribromomethane",
+                "vocs-all",
+            ]
+            if lumping_vocs is None
+            else lumping_vocs
+        )
+
+    def co2(self) -> list[Path]:
+        """Return a list of NetCDF files for CO2 species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_co2
+            )
+        ]
+
+    def co(self) -> list[Path]:
+        """Return a list of NetCDF files for CO species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_co
+            )
+        ]
+
+    def nox(self) -> list[Path]:
+        """Return a list of NetCDF files for NOx species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_nox
+            )
+        ]
+
+    def vocs(self) -> list[Path]:
+        """Return a list of NetCDF files for VOCs species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_vocs
+            )
+        ]
+
+
 __all__ = [
+    "CamsGlobInventoryPaths",
     "calculate_sun_position",
     "compare_all_group_variables",
     "make_white_inferno",
