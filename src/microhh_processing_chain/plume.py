@@ -1,12 +1,15 @@
 """Plume geometry and spectral diagnostics."""
 
 import logging
+from collections.abc import Sequence
 from typing import Optional, Union
 
 import numpy as np
 import xarray as xr
 
 logger = logging.getLogger(__name__)
+
+AngleInput = Union[float, Sequence[float], np.ndarray]
 
 
 def calculate_plume_centerline(
@@ -338,35 +341,52 @@ def apply_2d_taper(
 def compute_total_slant_column(
     gas_data: xr.DataArray,
     density_data: xr.DataArray,
-    sza: Union[float, np.ndarray],
-    saa: Union[float, np.ndarray],
-    vza: Union[float, np.ndarray] = 0.0,
-    vaa: Union[float, np.ndarray] = 0.0,
+    sza: AngleInput,
+    saa: AngleInput,
+    vza: AngleInput = 0.0,
+    vaa: AngleInput = 0.0,
     dim_names: tuple[str, str, str] = ("x", "y", "z"),
 ) -> xr.Dataset:
-    """Compute total 2D Slant Column Density (SCD) for CH4.
+    """Compute physical and retrieval-equivalent methane columns.
 
-    This computes the SCD by integrating CH4 mass density along two slant
-    paths (solar and viewing) accounting for horizontal displacement caused
-    by zenith and azimuth angles. The implementation is vectorized and
-    supports Dask-backed xarray DataArrays.
+    The true MicroHH column is the direct vertical integral of methane mass
+    density. Raw solar and viewing path integrals are physical slant columns,
+    and their sum is the physical two-way slant column. The AVIRIS-4-like
+    matched-filter contributions and retrieved column divide those raw paths
+    by the assumed two-way geometric air-mass factor, so they are
+    vertical-column equivalents rather than SCDs. The corrected shadow and
+    plume branches instead divide each raw path by its own air-mass factor.
+    Their sum is a double-plume diagnostic, not a physical SCD or a single
+    mass-conserving VCD.
+
+    Horizontal ray displacement is calculated from the supplied zenith and
+    azimuth angles. The calculation remains vectorized for scalar or
+    time-dependent angles and supports Dask-backed xarray data.
 
     Args:
-        gas_data (xr.DataArray): 3D gas mixing ratio (e.g. CH4 in kg/kg).
-        density_data (xr.DataArray): 3D air density (kg/m^3) matching gas_data.
-        sza: Solar zenith angle in degrees, either scalar or one-dimensional
-            time-varying array.
+        gas_data: Gas mass mixing ratio, such as CH4 in kg/kg.
+        density_data: Air density in kg/m3 aligned with ``gas_data``.
+        sza: Solar zenith angle in degrees, either scalar or a one-dimensional
+            time-varying list or array.
         saa: Solar azimuth angle in degrees (clockwise from North), either
-            scalar or one-dimensional time-varying array.
-        vza: Viewing zenith angle in degrees, either scalar or
-            one-dimensional time-varying array. Defaults to 0.0.
-        vaa: Viewing azimuth angle in degrees, either scalar or
-            one-dimensional time-varying array. Defaults to 0.0.
-        dim_names: Tuple of dimension names for (x, y, z) in the input arrays.
+            scalar or a one-dimensional time-varying list or array.
+        vza: Viewing zenith angle in degrees, either scalar or a
+            one-dimensional time-varying list or array.
+        vaa: Viewing azimuth angle in degrees, either scalar or a
+            one-dimensional time-varying list or array.
+        dim_names: Dimension names for the horizontal x, horizontal y, and
+            vertical axes, respectively.
 
     Returns:
-        xr.Dataset: Total Slant Column Density (kg/m^2) with horizontal
-            dimensions (x, y) and any additional dimensions (e.g. time).
+        Physical columns, matched-filter-equivalent retrieval products,
+        corrected branch diagnostics, geometric and correction factors, and
+        the input angles. Time-dependent outputs retain the input time
+        coordinate.
+
+    Raises:
+        AssertionError: If ``dim_names`` does not contain three names.
+        ValueError: If an angle is not scalar or one-dimensional, or if its
+            length is incompatible with the input time dimension.
     """
     assert len(dim_names) == 3, "dim_names must be a tuple of three dimension names."
     x_name, y_name, z_name = dim_names
@@ -380,21 +400,35 @@ def compute_total_slant_column(
         gas_data = gas_data.chunk(safe_chunks)
 
     gas_data, density_data = xr.align(gas_data, density_data, join="exact")
-    ch4_dens = gas_data * density_data
+    rho_ch4 = gas_data * density_data
 
     def _prepare_angle(
-        angle: Union[float, np.ndarray], name: str, template: xr.DataArray
-    ) -> Union[float, xr.DataArray]:
-        """Convert a public angle input to an internal scalar or time series."""
-        if not isinstance(angle, np.ndarray):
-            return float(angle)
-
+        angle: AngleInput, name: str, template: xr.DataArray
+    ) -> xr.DataArray:
+        """Convert an angle input to a scalar or time-indexed DataArray."""
         angle_values = np.asarray(angle, dtype=float)
+        if angle_values.ndim == 0:
+            angle_scalar = float(angle_values.item())
+            if "time" in template.dims:
+                angle_values = np.full(
+                    template.sizes["time"], angle_scalar, dtype=float
+                )
+            else:
+                angle_out = xr.DataArray(angle_scalar, name=name)
+                angle_out.attrs = {
+                    "units": "degrees",
+                    "description": f"{name} used for slant-column calculation",
+                }
+                return angle_out
+
         if angle_values.ndim != 1:
-            raise ValueError(f"{name} must be a scalar or one-dimensional array.")
+            raise ValueError(
+                f"{name} must be a scalar or one-dimensional list or array."
+            )
         if "time" not in template.dims:
             raise ValueError(
-                f"{name} was provided as an array, but gas_data has no time dimension."
+                f"{name} was provided as a list or array, but gas_data has no "
+                "time dimension."
             )
         if angle_values.size != template.sizes["time"]:
             raise ValueError(
@@ -402,30 +436,32 @@ def compute_total_slant_column(
                 f"dimension ({template.sizes['time']})."
             )
 
-        return xr.DataArray(
+        angle_out = xr.DataArray(
             angle_values,
             dims=("time",),
             coords={"time": template["time"]},
             name=name,
         )
+        angle_out.attrs = {
+            "units": "degrees",
+            "description": f"{name} used for slant-column calculation",
+        }
+        return angle_out
 
-    def _is_zero_zenith(zenith: Union[float, xr.DataArray]) -> bool:
-        if isinstance(zenith, xr.DataArray):
-            return bool(np.all(np.asarray(zenith.data) == 0.0))
-        return zenith == 0.0
+    def _is_zero_zenith(zenith: xr.DataArray) -> bool:
+        return bool(np.all(np.asarray(zenith.data) == 0.0))
 
-    sza_calc = _prepare_angle(sza, "sza", ch4_dens)
-    saa_calc = _prepare_angle(saa, "saa", ch4_dens)
-    vza_calc = _prepare_angle(vza, "vza", ch4_dens)
-    vaa_calc = _prepare_angle(vaa, "vaa", ch4_dens)
+    sza_calc = _prepare_angle(sza, "sza", rho_ch4)
+    saa_calc = _prepare_angle(saa, "saa", rho_ch4)
+    vza_calc = _prepare_angle(vza, "vza", rho_ch4)
+    vaa_calc = _prepare_angle(vaa, "vaa", rho_ch4)
 
     def _compute_single_path(
         gas_dens: xr.DataArray,
-        zenith: Union[float, xr.DataArray],
-        azimuth: Union[float, xr.DataArray],
-        path_name: str,
+        zenith: xr.DataArray,
+        azimuth: xr.DataArray,
     ) -> xr.DataArray:
-        """Helper to calculate SCD for a single ray path line."""
+        """Integrate methane density along one displaced ray path."""
         if _is_zero_zenith(zenith):
             return gas_dens.integrate(z_name)
 
@@ -436,8 +472,8 @@ def compute_total_slant_column(
         dx_factor = np.tan(zenith_rad) * np.sin(azimuth_rad)
         dy_factor = np.tan(zenith_rad) * np.cos(azimuth_rad)
 
-        # Vectorized coordinate creation. Scalar angles produce 2D target
-        # coordinates; time-varying angles add the time dimension.
+        # Vectorized coordinate creation. Time-indexed angles add the time
+        # dimension; scalar angles remain scalar when the gas data has no time.
         x_target = gas_dens[x_name] + (gas_dens[z_name] * dx_factor)
         y_target = gas_dens[y_name] + (gas_dens[z_name] * dy_factor)
 
@@ -450,68 +486,279 @@ def compute_total_slant_column(
             kwargs={"fill_value": np.nan},
         )
 
-        path_scd = da_shifted.integrate(z_name) / np.cos(zenith_rad)
-        return path_scd
+        return da_shifted.integrate(z_name) / np.cos(zenith_rad)
 
-    scd_incoming = _compute_single_path(ch4_dens, sza_calc, saa_calc, "Incoming")
-    scd_outgoing = _compute_single_path(ch4_dens, vza_calc, vaa_calc, "Outgoing")
+    microhh_vertical_column = rho_ch4.integrate(z_name)
+    solar_path_slant_column = _compute_single_path(rho_ch4, sza_calc, saa_calc)
+    viewing_path_slant_column = _compute_single_path(rho_ch4, vza_calc, vaa_calc)
+    two_way_slant_column = solar_path_slant_column + viewing_path_slant_column
 
-    # when we compute the modelled vcd, we integrate vertically one way
-    # when we compute the modelled scd, we integrate two-way
-    # => the scd is expected to be larger than the vcd by a factor
-    # of (1/cos(SZA) + 1/cos(VZA)) for a homogeneous atmosphere.
-    # => have to correct for that if we want to compare the two.
-    geom_amf = 1.0 / np.cos(np.radians(sza_calc)) + 1.0 / np.cos(np.radians(vza_calc))
-    scd_incoming = scd_incoming / geom_amf
-    scd_outgoing = scd_outgoing / geom_amf
-    total_scd = scd_incoming + scd_outgoing
+    solar_air_mass_factor = 1.0 / np.cos(np.radians(sza_calc))
+    viewing_air_mass_factor = 1.0 / np.cos(np.radians(vza_calc))
+    two_way_geometric_air_mass_factor = solar_air_mass_factor + viewing_air_mass_factor
 
-    def _angle_to_output(
-        angle: Union[float, xr.DataArray], name: str, template: xr.DataArray
-    ) -> xr.DataArray:
-        """Convert an angle to the public output shape."""
-        if isinstance(angle, xr.DataArray):
-            angle_out = angle.copy()
-        elif "time" in template.dims:
-            angle_out = xr.DataArray(
-                np.full(template.sizes["time"], angle, dtype=float),
-                dims=("time",),
-                coords={"time": template["time"]},
-            )
-        else:
-            angle_out = xr.DataArray(float(angle))
-        angle_out.name = name
-        angle_out.attrs = {
+    solar_path_mf_contribution = (
+        solar_path_slant_column / two_way_geometric_air_mass_factor
+    )
+    viewing_path_mf_contribution = (
+        viewing_path_slant_column / two_way_geometric_air_mass_factor
+    )
+    mf_retrieved_column = solar_path_mf_contribution + viewing_path_mf_contribution
+
+    shadow_branch_vcd_equivalent = solar_path_slant_column / solar_air_mass_factor
+    plume_branch_vcd_equivalent = viewing_path_slant_column / viewing_air_mass_factor
+    corrected_double_plume_branch_sum = (
+        shadow_branch_vcd_equivalent + plume_branch_vcd_equivalent
+    )
+
+    shadow_branch_correction_factor = (
+        two_way_geometric_air_mass_factor / solar_air_mass_factor
+    )
+    plume_branch_correction_factor = (
+        two_way_geometric_air_mass_factor / viewing_air_mass_factor
+    )
+
+    variable_metadata = {
+        "microhh_vertical_column": {
+            "units": "kg m-2",
+            "long_name": "True MicroHH vertical methane column",
+            "description": (
+                "Direct physical vertical column obtained by integrating "
+                "MicroHH methane mass density through the atmosphere."
+            ),
+            "formula": "microhh_vertical_column = rho_ch4.integrate(z_name)",
+        },
+        "solar_path_slant_column": {
+            "units": "kg m-2",
+            "long_name": "Raw incoming solar-path methane slant column",
+            "description": (
+                "Raw physical slant column integrated along the incoming "
+                "solar line of sight before any air-mass-factor normalization."
+            ),
+            "formula": "solar_path_slant_column = L_solar",
+        },
+        "viewing_path_slant_column": {
+            "units": "kg m-2",
+            "long_name": "Raw outgoing viewing-path methane slant column",
+            "description": (
+                "Raw physical slant column integrated along the outgoing "
+                "viewing line of sight before any air-mass-factor normalization."
+            ),
+            "formula": "viewing_path_slant_column = L_viewing",
+        },
+        "two_way_slant_column": {
+            "units": "kg m-2",
+            "long_name": "Raw two-way physical methane slant column",
+            "description": (
+                "Physical slant column accumulated along the complete incoming "
+                "solar plus outgoing viewing photon path."
+            ),
+            "formula": "two_way_slant_column = L_solar + L_viewing",
+        },
+        "solar_path_mf_contribution": {
+            "units": "kg m-2",
+            "long_name": (
+                "Incoming-path contribution to the matched-filter "
+                "vertical-column equivalent"
+            ),
+            "description": (
+                "Incoming solar-path contribution to the AVIRIS-4-like "
+                "matched-filter retrieved vertical-column equivalent, obtained "
+                "by dividing the raw solar slant column by the assumed two-way "
+                "geometric air-mass factor."
+            ),
+            "formula": "solar_path_mf_contribution = L_solar / m_two_way",
+        },
+        "viewing_path_mf_contribution": {
+            "units": "kg m-2",
+            "long_name": (
+                "Outgoing-path contribution to the matched-filter "
+                "vertical-column equivalent"
+            ),
+            "description": (
+                "Outgoing viewing-path contribution to the AVIRIS-4-like "
+                "matched-filter retrieved vertical-column equivalent, obtained "
+                "by dividing the raw viewing slant column by the assumed two-way "
+                "geometric air-mass factor."
+            ),
+            "formula": "viewing_path_mf_contribution = L_viewing / m_two_way",
+        },
+        "mf_retrieved_column": {
+            "units": "kg m-2",
+            "long_name": (
+                "AVIRIS-4-like matched-filter retrieved vertical-column equivalent"
+            ),
+            "description": (
+                "AVIRIS-4-like matched-filter-equivalent vertical column. It "
+                "uses the assumed two-way geometric air-mass factor even when "
+                "the two paths traverse the plume at different projected "
+                "locations; it is not a physical slant column."
+            ),
+            "formula": ("mf_retrieved_column = (L_solar + L_viewing) / m_two_way"),
+        },
+        "shadow_branch_vcd_equivalent": {
+            "units": "kg m-2",
+            "long_name": "Corrected shadow-branch vertical-column equivalent",
+            "description": (
+                "Path-specific corrected vertical-column equivalent of the "
+                "displaced plume-shadow branch, formed by normalizing the raw "
+                "incoming solar-path column by its own air-mass factor."
+            ),
+            "formula": "shadow_branch_vcd_equivalent = L_solar / m_solar",
+        },
+        "plume_branch_vcd_equivalent": {
+            "units": "kg m-2",
+            "long_name": "Corrected plume-branch vertical-column equivalent",
+            "description": (
+                "Path-specific corrected vertical-column equivalent of the "
+                "source-plume branch, formed by normalizing the raw outgoing "
+                "viewing-path column by its own air-mass factor."
+            ),
+            "formula": "plume_branch_vcd_equivalent = L_viewing / m_viewing",
+        },
+        "corrected_double_plume_branch_sum": {
+            "units": "kg m-2",
+            "long_name": "Diagnostic sum of corrected plume and shadow branches",
+            "description": (
+                "Diagnostic image containing both individually corrected "
+                "double-plume branches. It is not a physical SCD and not a "
+                "single mass-conserving VCD: it sums two alternative "
+                "projections of the same MicroHH plume and equals 2 * "
+                "microhh_vertical_column for a horizontally homogeneous "
+                "atmosphere."
+            ),
+            "formula": (
+                "corrected_double_plume_branch_sum = "
+                "shadow_branch_vcd_equivalent + plume_branch_vcd_equivalent"
+            ),
+        },
+        "solar_air_mass_factor": {
+            "units": "1",
+            "long_name": "Solar geometric air-mass factor",
+            "description": (
+                "Geometric air-mass factor for the incoming solar path, equal "
+                "to the secant of the solar zenith angle."
+            ),
+            "formula": "solar_air_mass_factor = sec(SZA)",
+        },
+        "viewing_air_mass_factor": {
+            "units": "1",
+            "long_name": "Viewing geometric air-mass factor",
+            "description": (
+                "Geometric air-mass factor for the outgoing viewing path, equal "
+                "to the secant of the viewing zenith angle."
+            ),
+            "formula": "viewing_air_mass_factor = sec(VZA)",
+        },
+        "two_way_geometric_air_mass_factor": {
+            "units": "1",
+            "long_name": "Two-way geometric air-mass factor",
+            "description": (
+                "Assumed two-way geometric air-mass factor given by the sum of "
+                "the incoming solar and outgoing viewing air-mass factors."
+            ),
+            "formula": (
+                "two_way_geometric_air_mass_factor = "
+                "solar_air_mass_factor + viewing_air_mass_factor"
+            ),
+        },
+        "shadow_branch_correction_factor": {
+            "units": "1",
+            "long_name": "Shadow-branch correction factor",
+            "description": (
+                "Multiplicative Meier et al. correction that converts the "
+                "incoming solar-path matched-filter contribution into the "
+                "shadow-branch vertical-column equivalent."
+            ),
+            "formula": (
+                "shadow_branch_correction_factor = "
+                "two_way_geometric_air_mass_factor / solar_air_mass_factor"
+            ),
+        },
+        "plume_branch_correction_factor": {
+            "units": "1",
+            "long_name": "Plume-branch correction factor",
+            "description": (
+                "Multiplicative Meier et al. correction that converts the "
+                "outgoing viewing-path matched-filter contribution into the "
+                "plume-branch vertical-column equivalent."
+            ),
+            "formula": (
+                "plume_branch_correction_factor = "
+                "two_way_geometric_air_mass_factor / viewing_air_mass_factor"
+            ),
+        },
+    }
+
+    canonical_variables = {
+        "microhh_vertical_column": microhh_vertical_column,
+        "solar_path_slant_column": solar_path_slant_column,
+        "viewing_path_slant_column": viewing_path_slant_column,
+        "two_way_slant_column": two_way_slant_column,
+        "solar_path_mf_contribution": solar_path_mf_contribution,
+        "viewing_path_mf_contribution": viewing_path_mf_contribution,
+        "mf_retrieved_column": mf_retrieved_column,
+        "shadow_branch_vcd_equivalent": shadow_branch_vcd_equivalent,
+        "plume_branch_vcd_equivalent": plume_branch_vcd_equivalent,
+        "corrected_double_plume_branch_sum": corrected_double_plume_branch_sum,
+        "solar_air_mass_factor": solar_air_mass_factor,
+        "viewing_air_mass_factor": viewing_air_mass_factor,
+        "two_way_geometric_air_mass_factor": two_way_geometric_air_mass_factor,
+        "shadow_branch_correction_factor": shadow_branch_correction_factor,
+        "plume_branch_correction_factor": plume_branch_correction_factor,
+    }
+    for name, variable in canonical_variables.items():
+        variable.name = name
+        variable.attrs = variable_metadata[name]
+
+    angle_metadata = {
+        "sza": {
             "units": "degrees",
-            "description": f"{name} used for slant-column calculation",
-        }
-        return angle_out
-
-    # save in xr dataset
-    scd_incoming.name = "scd_incoming"
-    scd_incoming.attrs = {
-        "units": "kg m-2",
-        "description": (f"Incoming slant column density (SZA={sza}, SAA={saa})"),
+            "long_name": "Solar zenith angle",
+            "description": (
+                "Solar zenith angle used to define the incoming solar path and "
+                "solar geometric air-mass factor."
+            ),
+        },
+        "saa": {
+            "units": "degrees",
+            "long_name": "Solar azimuth angle",
+            "description": (
+                "Solar azimuth angle measured clockwise from North and used to "
+                "define the horizontal displacement of the incoming solar path."
+            ),
+        },
+        "vza": {
+            "units": "degrees",
+            "long_name": "Viewing zenith angle",
+            "description": (
+                "Viewing zenith angle used to define the outgoing viewing path "
+                "and viewing geometric air-mass factor."
+            ),
+        },
+        "vaa": {
+            "units": "degrees",
+            "long_name": "Viewing azimuth angle",
+            "description": (
+                "Viewing azimuth angle measured clockwise from North and used "
+                "to define the horizontal displacement of the outgoing path."
+            ),
+        },
     }
-    scd_outgoing.name = "scd_outgoing"
-    scd_outgoing.attrs = {
-        "units": "kg m-2",
-        "description": (f"Outgoing slant column density (VZA={vza}, VAA={vaa})"),
+    angle_variables = {
+        "sza": sza_calc,
+        "saa": saa_calc,
+        "vza": vza_calc,
+        "vaa": vaa_calc,
     }
-    total_scd.attrs = {
-        "units": "kg m-2",
-        "description": ("Total slant column density "),
-    }
+    for name, variable in angle_variables.items():
+        variable.name = name
+        variable.attrs = angle_metadata[name]
 
     data_out = xr.Dataset(
         {
-            "scd_incoming": scd_incoming,
-            "scd_outgoing": scd_outgoing,
-            "total_scd": total_scd,
-            "sza": _angle_to_output(sza_calc, "sza", ch4_dens),
-            "saa": _angle_to_output(saa_calc, "saa", ch4_dens),
-            "vza": _angle_to_output(vza_calc, "vza", ch4_dens),
-            "vaa": _angle_to_output(vaa_calc, "vaa", ch4_dens),
+            **canonical_variables,
+            **angle_variables,
         }
     )
     data_out = data_out.drop_vars([x_name, y_name], errors="ignore")
