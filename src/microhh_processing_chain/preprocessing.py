@@ -15,9 +15,37 @@ import xarray as xr
 
 import microhh_processing_chain.initialisation as init
 from microhh_processing_chain import io, utils
+from microhh_processing_chain.case_input import ensure_binary_precision
 from microhh_processing_chain.enums import RunMode
 
 logger = logging.getLogger(__name__)
+
+_TWO_DIMENSIONAL_INPUT_FIELDS = frozenset(
+    {
+        "alb_dif",
+        "alb_dir",
+        "c_veg",
+        "cs_veg",
+        "dem",
+        "gD",
+        "index_veg",
+        "lai",
+        "lambda_stable",
+        "lambda_unstable",
+        "rs_soil_min",
+        "rs_veg_min",
+        "t_bot_water",
+        "water_mask",
+        "z0h",
+        "z0m",
+    }
+)
+_SOIL_INPUT_FIELDS = frozenset({"index_soil", "root_frac", "t_soil", "theta_soil"})
+
+
+def _is_switch_active(value: object) -> bool:
+    """Return whether a MicroHH configuration switch is active."""
+    return bool(value) and value != "0" and value != 0 and str(value).lower() != "false"
 
 
 class PreProcessing:
@@ -34,6 +62,8 @@ class PreProcessing:
             MicroHH executable.
         jobreport_path:
             Path to the GPU job report executable. Only supported on GPU.
+        binary_precision:
+            Target precision for raw MicroHH binary files.
     """
 
     def __init__(
@@ -42,11 +72,29 @@ class PreProcessing:
         alps_setup: cscs.AlpsSetup,
         microhh_executable_path: Union[str, Path],
         jobreport_path: Optional[Union[str, Path]] = None,
+        binary_precision: Optional[type] = None,
     ) -> None:
         self.case = case
         self.alps_setup = alps_setup
         self._microhh_executable_path = microhh_executable_path
         self.jobreport_path = jobreport_path
+        if binary_precision is None:
+            self.binary_precision = None
+        else:
+            try:
+                dtype = np.dtype(binary_precision)
+            except TypeError as e:
+                raise ValueError(
+                    "Binary precision must be either np.float32 or np.float64."
+                ) from e
+
+            supported_dtypes = {np.dtype(np.float32), np.dtype(np.float64)}
+            if dtype not in supported_dtypes:
+                raise ValueError(
+                    "Binary precision must be either np.float32 or np.float64, "
+                    f"not {dtype}."
+                )
+            self.binary_precision = dtype
 
         self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_architecture()
@@ -124,7 +172,10 @@ class PreProcessing:
 
     def _check_jobpreport_gpu(self) -> None:
         """Check if GPU jobreport is only provided when using GPU partition."""
-        if self.alps_setup.processor != "gpu" and self.jobreport_path is not None:
+        if (
+            self.alps_setup.processor != cscs.Processor.GPU
+            and self.jobreport_path is not None
+        ):
             raise ValueError(
                 "GPU jobreport is only supported when using GPU partition."
             )
@@ -151,6 +202,9 @@ class PreProcessing:
         # Check if required files are present
         self._check_required_files()
 
+        if self.binary_precision is not None:
+            self._ensure_input_file_precision()
+
         # Create bash script if it does not exist
         self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RUN)
 
@@ -173,6 +227,70 @@ class PreProcessing:
                     f"Required file '{filename}' not found in "
                     f"'{self.case.scratch_path}'."
                 )
+
+    def _ensure_input_file_precision(self) -> None:
+        """Convert recognized MicroHH binary inputs to configured precision.
+
+        Each recognized filename is assigned its exact MicroHH field shape.
+        Timestep-suffixed files that are not known inputs are left untouched.
+
+        Raises:
+            ValueError: If a recognized file has an invalid size, a soil input
+                is present without a ``[land_surface]`` configuration, or an
+                emission input has no valid ``[source] ktot`` value.
+            RuntimeError: If binary precision has not been configured.
+        """
+        dtype = self.binary_precision
+        if dtype is None:
+            raise RuntimeError("Binary precision has not been configured.")
+
+        case_directory = Path(self.case.directory)
+        itot = self.case.config.grid.itot
+        jtot = self.case.config.grid.jtot
+
+        binary_files = sorted(
+            file
+            for file in case_directory.iterdir()
+            if file.is_file() and len(file.suffix) == 8 and file.suffix[1:].isdigit()
+        )
+
+        for file in binary_files:
+            field_name = file.stem
+            if field_name in _TWO_DIMENSIONAL_INPUT_FIELDS or field_name.endswith(
+                ("_bot_in", "_sbot")
+            ):
+                shape = (jtot, itot)
+            elif field_name in _SOIL_INPUT_FIELDS:
+                if "land_surface" not in self.case.config.groups:
+                    raise ValueError(
+                        f"Cannot determine the shape of soil input {file}: "
+                        "the configuration has no [land_surface] group."
+                    )
+                shape = (self.case.config.land_surface.ktot, jtot, itot)
+            elif field_name.endswith("_emission"):
+                emission_ktot = self.case.config.get("source", "ktot", None)
+                if isinstance(emission_ktot, bool) or not isinstance(
+                    emission_ktot, (int, np.integer)
+                ):
+                    raise ValueError(
+                        f"Cannot determine the shape of emission input {file}: "
+                        "[source] ktot must be a positive integer."
+                    )
+                if emission_ktot <= 0:
+                    raise ValueError(
+                        f"Cannot determine the shape of emission input {file}: "
+                        "[source] ktot must be a positive integer."
+                    )
+                shape = (int(emission_ktot), jtot, itot)
+            else:
+                logger.warning(
+                    "Skipping precision conversion for unrecognized MicroHH "
+                    "binary file %s.",
+                    file,
+                )
+                continue
+
+            ensure_binary_precision(file, shape, dtype.type)
 
     def prepare_restart_simulation(
         self,
@@ -244,6 +362,17 @@ class PreProcessing:
                 Specify if the next job should only be submitted
                 after the previous one has stopped.
         """
+        if self._skip_debug_submission():
+            self.case.job_id = None
+            return
+
+        self.case.job_id = self.slurm_job.start(wait=wait)
+
+    def _skip_debug_submission(self) -> bool:
+        """Return whether a submission should be skipped for debug queue protection."""
+        if self.alps_setup.partition_key != "debug":
+            return False
+
         running_jobs = cscs.jobs_in_queue()
         jobs_in_debug_queue = False
 
@@ -253,16 +382,14 @@ class PreProcessing:
                 running_jobs["PARTITION"] == "debug"
             ].empty
 
-        if self.alps_setup.partition == "debug" and jobs_in_debug_queue:
-            logger.warning(
-                "There are other jobs in the queue. "
-                "No new job will be started in the debug partition."
-            )
+        if not jobs_in_debug_queue:
+            return False
 
-            self.case.job_id = None
-            return
-
-        self.case.job_id = self.slurm_job.start(wait=wait)
+        logger.warning(
+            "There are other jobs in the queue. "
+            "No new job will be started in the debug partition."
+        )
+        return True
 
     def cancel_simulation(self) -> None:
         """Cancel the running MicroHH simulation."""
@@ -317,12 +444,7 @@ class PreProcessing:
         self._check_boundary_logic()
         self._check_forcing_logic()
         self._check_thermo_logic()
-        self._check_source_position()
-        self._check_source_height()
-        self._check_source_sigma()
-        self._check_source_list()
-        self._check_tdep_source_location()
-        self._check_tdep_source_strength()
+        self._check_source_setup()
         self._check_buffer_height()
         self._check_surface_roughness_height()
         self._check_sample_times()
@@ -336,7 +458,7 @@ class PreProcessing:
     def _adjust_mpi_settings(self) -> None:
         """Adjust MPI settings if MPI is disabled."""
         if (
-            self.alps_setup.processor == "gpu"
+            self.alps_setup.processor == cscs.Processor.GPU
             and self.case.config["master"]["npx"] != 1
             and self.case.config["master"]["npy"] != 1
         ):
@@ -477,12 +599,7 @@ class PreProcessing:
         """Check that active switches have matching variables in a NetCDF group."""
         switch_val = self.case.config.get(group, key, default)
 
-        is_active = (
-            bool(switch_val)
-            and switch_val != "0"
-            and switch_val != 0
-            and str(switch_val).lower() != "false"
-        )
+        is_active = _is_switch_active(switch_val)
 
         available_vars = self._get_vars_in_group(nc_group)
         matching_vars = [v for v in available_vars if fnmatch.fnmatch(v, var_pattern)]
@@ -643,11 +760,72 @@ class PreProcessing:
                     f"swspatialorder ({spatial})."
                 )
 
-    def _check_source_position(self) -> None:
-        """Check if the source position conflicts with the domain size."""
+    def _check_source_setup(self) -> None:
+        """Validate inputs for the configured source implementation."""
         if "source" not in self.case.config.groups:
             return
 
+        if self.case.config.get("source", "swsource", "0") == "3d":
+            self._check_3d_source_files()
+            return
+
+        self._check_source_position()
+        self._check_source_height()
+        self._check_source_sigma()
+        self._check_source_list()
+        self._check_tdep_source_location()
+        self._check_tdep_source_strength()
+
+    def _check_3d_source_files(self) -> None:
+        """Check that all required 3D emission files are present."""
+        source_names = utils.object_to_list(
+            self.case.config.get("source", "sourcelist", [])
+        )
+        if _is_switch_active(self.case.config.get("source", "swheat", False)):
+            source_names.extend(("te", "qe"))
+        source_names = list(dict.fromkeys(source_names))
+
+        if _is_switch_active(self.case.config.get("source", "swtimedep", False)):
+            loadtime = self.case.config.get("source", "loadtime", None)
+            if (
+                isinstance(loadtime, bool)
+                or not isinstance(loadtime, (int, np.integer))
+                or loadtime <= 0
+            ):
+                raise ValueError(
+                    "[source] loadtime must be a positive integer for "
+                    "time-dependent 3D sources."
+                )
+
+            loadtime = int(loadtime)
+            starttime = self.case.config["time"]["starttime"]
+            endtime = self.case.config["time"]["endtime"]
+            first_time = int(starttime // loadtime) * loadtime
+            last_time = int(np.ceil(endtime / loadtime)) * loadtime
+            emission_times = range(first_time, last_time + 1, loadtime)
+        else:
+            emission_times = (0,)
+
+        iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
+        io_time_factor = 10**iotimeprec
+        expected_files = [
+            f"{source_name}_emission.{int(time / io_time_factor):07d}"
+            for source_name in source_names
+            for time in emission_times
+        ]
+        case_directory = Path(self.case.directory)
+        missing_files = [
+            filename
+            for filename in expected_files
+            if not (case_directory / filename).is_file()
+        ]
+        if missing_files:
+            raise FileNotFoundError(
+                "Missing 3D emission file(s): " + ", ".join(missing_files)
+            )
+
+    def _check_source_position(self) -> None:
+        """Check if the source position conflicts with the domain size."""
         for coord in ["x", "y", "z"]:
             source_0 = np.atleast_1d(self.case.config["source"][f"source_{coord}0"])
             sigma = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
@@ -668,9 +846,6 @@ class PreProcessing:
 
     def _check_source_height(self) -> None:
         """Check if source height is greater than vertical resolution."""
-        if "source" not in self.case.config.groups:
-            return
-
         source_heights = np.atleast_1d(self.case.config["source"]["source_z0"])
         lowest_grid_level = self._get_lowest_grid_level()
 
@@ -688,9 +863,6 @@ class PreProcessing:
         It must be >0 and between grid size/4 and grid size/2 since the source is
         simulated within 4*sigma.
         """
-        if "source" not in self.case.config.groups:
-            return
-
         # check if sigma is zero
         for coord in ["x", "y", "z"]:
             sigmas = np.atleast_1d(self.case.config["source"][f"sigma_{coord}"])
@@ -699,9 +871,6 @@ class PreProcessing:
 
     def _check_source_list(self) -> None:
         """Check if all required variables have the same length."""
-        if "source" not in self.case.config.groups:
-            return
-
         sourcelist = np.atleast_1d(self.case.config["source"]["sourcelist"])
         source_x0 = np.atleast_1d(self.case.config["source"]["source_x0"])
         source_y0 = np.atleast_1d(self.case.config["source"]["source_y0"])
@@ -1061,7 +1230,7 @@ def _get_multi_run_commands(
 def create_run_4x_script(
     cases: list[init.Case],
     alps_setup: cscs.AlpsSetup,
-    scratch_path: str,
+    scratch_path: Union[str, Path],
     mode: Union[RunMode, str] = RunMode.RUN,
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
@@ -1076,7 +1245,9 @@ def create_run_4x_script(
     master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbatch")
 
     commands = _get_microhh_run_commands(
-        case_list=cases, mode=mode, jobreport_path=jobreport_path
+        case_list=cases,
+        mode=mode,
+        jobreport_path=jobreport_path,
     )
 
     if not master_job_file.exists() or overwrite:

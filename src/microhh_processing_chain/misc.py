@@ -1,11 +1,160 @@
-import datetime
-from typing import Union
+"""Miscellaneous utility functions."""
 
+import datetime
+from pathlib import Path
+from typing import Optional, Union
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from astropy import units
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_sun
 from astropy.time import Time
+from matplotlib.colors import LinearSegmentedColormap
+from netCDF4 import Dataset, Group
+
+
+def make_white_inferno(
+    n: int = 256, white_fraction: float = 0.25, inferno_start: float = 0.10
+) -> LinearSegmentedColormap:
+    """Create an inferno-like colormap with a smooth transition from white.
+
+    Parameters
+    ----------
+    n : int
+        Number of colors in the colormap.
+    white_fraction : float
+        Fraction of the colormap used for the white-to-inferno transition.
+        Larger values make the transition softer.
+    inferno_start : float
+        Where to start sampling inferno. Higher values skip the very dark colors.
+    """
+    inferno = plt.get_cmap("inferno_r")
+
+    n_white = int(n * white_fraction)
+    n_inferno = n - n_white
+
+    # First inferno color used after the white transition
+    target = inferno(inferno_start)
+
+    # Smooth interpolation from white to the first inferno color
+    white = np.array([1, 1, 1, 1])
+    ramp = np.linspace(0, 1, n_white)[:, None]
+    transition = white * (1 - ramp) + np.array(target) * ramp
+
+    # Then continue through inferno
+    inferno_colors = inferno(np.linspace(inferno_start, 1, n_inferno))
+
+    colors = np.vstack([transition, inferno_colors])
+
+    return LinearSegmentedColormap.from_list("white_inferno_soft", colors)
+
+
+def make_white_plasma(
+    n: int = 256, white_fraction: float = 0.25, plasma_start: float = 0.10
+) -> LinearSegmentedColormap:
+    """Create an inferno-like colormap with a smooth transition from white.
+
+    Parameters
+    ----------
+    n : int
+        Number of colors in the colormap.
+    white_fraction : float
+        Fraction of the colormap used for the white-to-inferno transition.
+        Larger values make the transition softer.
+    inferno_start : float
+        Where to start sampling inferno. Higher values skip the very dark colors.
+    """
+    inferno = plt.get_cmap("plasma_r")
+
+    n_white = int(n * white_fraction)
+    n_inferno = n - n_white
+
+    # First inferno color used after the white transition
+    target = inferno(plasma_start)
+
+    # Smooth interpolation from white to the first inferno color
+    white = np.array([1, 1, 1, 1])
+    ramp = np.linspace(0, 1, n_white)[:, None]
+    transition = white * (1 - ramp) + np.array(target) * ramp
+
+    # Then continue through inferno
+    inferno_colors = inferno(np.linspace(plasma_start, 1, n_inferno))
+
+    colors = np.vstack([transition, inferno_colors])
+
+    return LinearSegmentedColormap.from_list("white_plasma_soft", colors)
+
+
+def _collect_group_variables(
+    group: Union[Dataset, Group],
+) -> dict[str, set[str]]:
+    """Collect locally defined variable names by absolute group path."""
+    group_variables = {group.path: set(group.variables)}
+
+    for subgroup in group.groups.values():
+        group_variables.update(_collect_group_variables(subgroup))
+
+    return group_variables
+
+
+def compare_netcdf_structure(
+    nc_path_1: Union[str, Path],
+    nc_path_2: Union[str, Path],
+) -> None:
+    """Print differences between group paths and variable names in NetCDF files.
+
+    The comparison includes the root group and recursively nested groups. It does
+    not inspect variable values, dimensions, data types, or attributes.
+
+    Args:
+        nc_path_1: First NetCDF file to compare.
+        nc_path_2: Second NetCDF file to compare.
+    """
+    with Dataset(nc_path_1, "r") as ds1, Dataset(nc_path_2, "r") as ds2:
+        group_variables1 = _collect_group_variables(ds1)
+        group_variables2 = _collect_group_variables(ds2)
+
+        groups1 = set(group_variables1)
+        groups2 = set(group_variables2)
+
+        only_groups_1 = sorted(groups1 - groups2)
+        only_groups_2 = sorted(groups2 - groups1)
+        common_groups = sorted(groups1 & groups2)
+
+        print("=" * 80)
+        print("GROUP COMPARISON")
+        print("=" * 80)
+
+        print(f"\nGroups only in {nc_path_1}:")
+        print("\n".join(f"  {g}" for g in only_groups_1) or "  None")
+
+        print(f"\nGroups only in {nc_path_2}:")
+        print("\n".join(f"  {g}" for g in only_groups_2) or "  None")
+
+        print("\nGroups in both files:")
+        print("\n".join(f"  {g}" for g in common_groups) or "  None")
+
+        for group in sorted(groups1 | groups2):
+            vars1 = group_variables1.get(group, set())
+            vars2 = group_variables2.get(group, set())
+
+            only_vars_1 = sorted(vars1 - vars2)
+            only_vars_2 = sorted(vars2 - vars1)
+            common_vars = sorted(vars1 & vars2)
+
+            print("\n" + "=" * 80)
+            print(f"VARIABLE COMPARISON FOR GROUP {group}")
+            print("=" * 80)
+
+            print(f"\nOnly in {nc_path_1}:")
+            print("\n".join(f"  {v}" for v in only_vars_1) or "  None")
+
+            print(f"\nOnly in {nc_path_2}:")
+            print("\n".join(f"  {v}" for v in only_vars_2) or "  None")
+
+            print("\n" + "In both:")
+            print("\n".join(f"  {v}" for v in common_vars) or "  None")
 
 
 def calculate_sun_position(
@@ -40,4 +189,175 @@ def calculate_sun_position(
     return sun_altaz
 
 
-__all__ = ["calculate_sun_position"]
+class CamsGlobInventoryPaths:
+    """Class to manage paths to CAMS global inventory NetCDF files for a specific year.
+
+    Parameters:
+    ----------
+    data_path : str or Path
+        The base path where the CAMS global inventory data is stored.
+    year : int
+        The year for which to retrieve the inventory files.
+    lumping_co2 : list of str, optional
+        List of CO2 species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_co : list of str, optional
+        List of CO species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_nox : list of str, optional
+        List of NOx species to lump together. Default is None, which uses a
+        predefined list.
+    lumping_vocs : list of str, optional
+        List of VOC species to lump together. Default is None, which uses a
+        predefined list.
+    source_cams_glob : list of str, optional
+        List of source categories to include. Default is None, which uses a
+        predefined list.
+
+    """
+
+    def __init__(
+        self,
+        data_path: Union[str, Path],
+        year: int,
+        lumping_co2: Optional[list[str]] = None,
+        lumping_co: Optional[list[str]] = None,
+        lumping_nox: Optional[list[str]] = None,
+        lumping_vocs: Optional[list[str]] = None,
+        source_cams_glob: Optional[list[str]] = None,
+    ) -> None:
+        self.path = Path(data_path) / str(year)
+        self.year = year
+
+        self.nc_files = []  # list(self.path.rglob("*.nc"))
+
+        self.source_cams_glob = (
+            [
+                "anthropogenic",
+                "biogenic",
+                "oceanic",
+                "shipping",
+            ]
+            if source_cams_glob is None
+            else source_cams_glob
+        )
+
+        for source in self.source_cams_glob:
+            path_sector = self.path / source
+            if path_sector.exists():
+                self.nc_files.extend(list(path_sector.rglob("*.nc")))
+
+        self.lumping_co2 = (
+            [
+                "co2-excl-short",
+                "co2-short-cycle",
+                "carbon-dioxide",
+            ]
+            if lumping_co2 is None
+            else lumping_co2
+        )
+
+        self.lumping_co = (
+            [
+                "carbon-monoxide",
+            ]
+            if lumping_co is None
+            else lumping_co
+        )
+
+        self.lumping_nox = (
+            [
+                "nitrogen-oxides",
+            ]
+            if lumping_nox is None
+            else lumping_nox
+        )
+
+        self.lumping_vocs = (
+            [
+                "acetylene",
+                "alcohols",
+                "benzene",
+                "butanes",
+                "chlorinated-hydrocarbons",
+                "esters",
+                "ethane",
+                "ethene",
+                "ethers",
+                "formaldehyde",
+                "hexanes",
+                "isoprene",
+                "monoterpenes",
+                "non-methane-vocs",
+                "other-aldehydes",
+                "other-alkenes-alkynes",
+                "other-aromatics",
+                "other-vocs",
+                "pentanes",
+                "propane",
+                "propene",
+                "toluene",
+                "total-acids",
+                "total-ketones",
+                "trimethylbenzenes",
+                "xylenes",
+                "dimethyl-sulphide",
+                "tribromomethane",
+                "vocs-all",
+            ]
+            if lumping_vocs is None
+            else lumping_vocs
+        )
+
+    def co2(self) -> list[Path]:
+        """Return a list of NetCDF files for CO2 species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_co2
+            )
+        ]
+
+    def co(self) -> list[Path]:
+        """Return a list of NetCDF files for CO species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_co
+            )
+        ]
+
+    def nox(self) -> list[Path]:
+        """Return a list of NetCDF files for NOx species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_nox
+            )
+        ]
+
+    def vocs(self) -> list[Path]:
+        """Return a list of NetCDF files for VOCs species."""
+        return [
+            file
+            for file in self.nc_files
+            if any(
+                file.name.endswith(f"_{species}_{self.year}.nc")
+                for species in self.lumping_vocs
+            )
+        ]
+
+
+__all__ = [
+    "CamsGlobInventoryPaths",
+    "calculate_sun_position",
+    "compare_netcdf_structure",
+    "make_white_inferno",
+    "make_white_plasma",
+]

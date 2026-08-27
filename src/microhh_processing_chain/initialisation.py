@@ -15,6 +15,7 @@ import pandas as pd
 
 from microhh_processing_chain import utils
 from microhh_processing_chain.enums import FileType, InitMethod
+from microhh_processing_chain.spatial import Domain
 
 logger = logging.getLogger(__name__)
 
@@ -684,33 +685,218 @@ class Case:
         self._directory = new_file_directory
         self._ini_file_path = Path(new_file_directory, f"{new_name}.ini")
 
-    def clean(self) -> None:
-        """Clean this MicroHH case by removing all files and directories.
+    def _config_list(self, group: str, variable: str) -> list[str]:
+        """Return an INI value as a list of non-empty strings."""
+        value = self.config.get(group, variable, None)
+        values = value if isinstance(value, list) else [value]
+        return [str(item).strip() for item in values if item not in (None, "")]
 
-        The following files are preserved:
+    def _config_bool(self, group: str, variable: str, default: bool) -> bool:
+        """Return a boolean INI value while handling string representations."""
+        value = self.config.get(group, variable, default)
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
-        - ``{name}.ini``
-        - ``{name}_input.nc``
-        - ``microhh`` executable
+    def _prognostic_scalar_names(self) -> set[str]:
+        """Return the scalar fields saved by MicroHH for the active setup."""
+        scalars = set(self._config_list("fields", "slist"))
 
-        The user is prompted for confirmation before deletion.
+        swthermo = str(self.config.get("thermo", "swthermo", "0")).lower()
+        thermo_scalars = {
+            "dry": {"th"},
+            "moist": {"thl", "qt"},
+            "buoy": {"b"},
+        }
+        scalars.update(thermo_scalars.get(swthermo, set()))
+
+        swmicro = str(self.config.get("micro", "swmicro", "0")).lower()
+        microphysics_scalars = {
+            "2mom_warm": {"qr", "nr"},
+            "nsw6": {"qr", "qs", "qg"},
+        }
+        scalars.update(microphysics_scalars.get(swmicro, set()))
+
+        swdiff_default = self.config.get("grid", "swspatialorder", "2")
+        swdiff = str(self.config.get("diff", "swdiff", swdiff_default)).lower()
+        if swdiff == "tke2":
+            scalars.add("sgstke")
+
+        return scalars
+
+    def _microhh_output_stems(self) -> set[str]:
+        """Return time-suffixed output stems for the active MicroHH setup."""
+        scalars = self._prognostic_scalar_names()
+        stems = {
+            "fftwplan",
+            "grid",
+            "rhoref",
+            "thermo_basestate",
+            "time",
+            "u",
+            "v",
+            "w",
+            *scalars,
+        }
+
+        swthermo = str(self.config.get("thermo", "swthermo", "0")).lower()
+        if swthermo == "moist":
+            stems.update({"thl_bot", "qt_bot"})
+
+        swboundary = str(self.config.get("boundary", "swboundary", "default")).lower()
+        if swboundary == "surface":
+            stems.update({"dudz_mo", "dvdz_mo"})
+            if swthermo != "0":
+                stems.add("dbdz_mo")
+            if not self._config_bool("boundary", "swconstantz0", True):
+                stems.add("obuk")
+
+            default_sbcbot = self.config.get("boundary", "sbcbot", None)
+            for scalar in scalars:
+                sbcbot = self.config.get(
+                    "boundary", f"sbcbot[{scalar}]", default_sbcbot
+                )
+                if str(sbcbot).lower() == "flux":
+                    stems.add(f"{scalar}_gradbot")
+        elif swboundary == "surface_bulk":
+            stems.update({"dudz_mo", "dvdz_mo", "dbdz_mo"})
+        elif swboundary == "surface_lsm":
+            stems.update(
+                {
+                    "dudz_mo",
+                    "dvdz_mo",
+                    "dbdz_mo",
+                    "wl_skin",
+                    "thl_bot_veg",
+                    "thl_bot_soil",
+                    "thl_bot_wet",
+                    "qt_bot_veg",
+                    "qt_bot_soil",
+                    "qt_bot_wet",
+                }
+            )
+            if not self._config_bool("boundary", "swconstantz0", True):
+                stems.update({"obuk_veg", "obuk_soil", "obuk_wet"})
+
+        if self._config_bool("dump", "swdump", False):
+            stems.update(self._config_list("dump", "dumplist"))
+
+        return stems
+
+    def _is_microhh_output(self, path: Path) -> bool:
+        """Return whether *path* is an output created directly by MicroHH."""
+        if not path.is_file() and not path.is_symlink():
+            return False
+
+        name = path.name
+        if name == f"{self.name}.out":
+            return True
+
+        case_netcdf_pattern = rf"{re.escape(self.name)}\..+\.\d{{7,}}\.nc"
+        if re.fullmatch(case_netcdf_pattern, name):
+            return True
+
+        cross_names = (
+            self._config_list("cross", "crosslist")
+            if self._config_bool("cross", "swcross", False)
+            else []
+        )
+        for cross_name in cross_names:
+            cross_pattern = rf"{re.escape(cross_name)}\.(?:xy|xz|yz)\..+\.\d{{7,}}"
+            if re.fullmatch(cross_pattern, name):
+                return True
+
+        timed_output_match = re.fullmatch(r"(.+)\.(\d{7,})", name)
+        if timed_output_match is None:
+            return False
+
+        stem, time_str = timed_output_match.groups()
+        if stem in self._microhh_output_stems():
+            return True
+
+        if stem in {"t_soil", "theta_soil"}:
+            swboundary = str(
+                self.config.get("boundary", "swboundary", "default")
+            ).lower()
+            if swboundary != "surface_lsm":
+                return False
+            return (
+                self._config_bool("land_surface", "swhomogeneous", True)
+                or int(time_str) > 0
+            )
+
+        return False
+
+    def _get_clean_paths(
+        self, additional_patterns: Optional[list[str]] = None
+    ) -> list[Path]:
+        """Collect MicroHH outputs and explicitly requested additional paths."""
+        paths = {
+            path for path in self.directory.iterdir() if self._is_microhh_output(path)
+        }
+
+        if additional_patterns is not None and not isinstance(
+            additional_patterns, list
+        ):
+            raise TypeError("Additional cleanup patterns must be provided as a list.")
+
+        for pattern in additional_patterns or []:
+            if not isinstance(pattern, str):
+                raise TypeError("Additional cleanup patterns must be strings.")
+
+            pattern_path = Path(pattern)
+            if (
+                not pattern
+                or pattern_path.is_absolute()
+                or len(pattern_path.parts) != 1
+                or "**" in pattern
+                or pattern in {".", ".."}
+            ):
+                raise ValueError(
+                    "Additional cleanup patterns must match names directly inside "
+                    "the case directory."
+                )
+
+            paths.update(
+                path
+                for path in self.directory.glob(pattern)
+                if path.parent == self.directory
+            )
+
+        return sorted(paths, key=lambda path: path.name)
+
+    def clean(self, additional_patterns: Optional[list[str]] = None) -> None:
+        """Remove outputs created by MicroHH from this case.
+
+        Args:
+            additional_patterns: Additional filenames or glob patterns to remove.
+                Patterns are matched directly inside the case directory and may
+                explicitly select files or directories that are otherwise preserved.
+
+        The paths selected for deletion are printed before the user is prompted
+        for confirmation. Nothing is deleted unless the user enters ``y``.
         """
-        files_to_keep = [
-            f"{self.name}.ini",
-            f"{self.name}_input.nc",
-            "microhh",
-        ]
-        with utils.confirm_action(
-            f"Are you sure you want to clean the case at {self.directory}?"
-        ) as confirmed:
-            if confirmed:
-                for item in self.directory.iterdir():
-                    if item.name not in files_to_keep:
-                        if item.is_file():
-                            item.unlink()
-                        elif item.is_dir():
-                            shutil.rmtree(item)
-                logger.info("Cleaned case at %s.", self.directory)
+        paths_to_delete = self._get_clean_paths(additional_patterns)
+        if not paths_to_delete:
+            print(f"No files to delete in {self.directory}.")
+            return
+
+        print(f"The following paths will be deleted from {self.directory}:")
+        for path in paths_to_delete:
+            suffix = "/" if path.is_dir() and not path.is_symlink() else ""
+            print(f"  {path.name}{suffix}")
+
+        with utils.confirm_action("Continue with cleanup?") as confirmed:
+            if not confirmed:
+                logger.info("Cleanup cancelled for %s.", self.directory)
+                return
+
+            for path in paths_to_delete:
+                if path.is_symlink() or path.is_file():
+                    path.unlink(missing_ok=True)
+                elif path.is_dir():
+                    shutil.rmtree(path)
+            logger.info("Cleaned case at %s.", self.directory)
 
     def delete(self) -> None:
         """Delete this MicroHH case by removing its directory.
@@ -826,6 +1012,23 @@ class Case:
                 logger.info("Copied %s to %s", file, case.directory)
             else:
                 logger.warning("File %s does not exist.", src)
+
+    def domain(self) -> Domain:
+        """Creates a Domain from the Case ini file.
+
+        Returns:
+            instance of spacial.Domain
+        """
+        domain = Domain(
+            xsize=self.config.grid.xsize,
+            ysize=self.config.grid.ysize,
+            itot=self.config.grid.itot,
+            jtot=self.config.grid.jtot,
+            lon=self.config.grid.lon,
+            lat=self.config.grid.lat,
+            anchor="center",
+        )
+        return domain
 
 
 def compare_ini(case_path1: Union[str, Path], case_path2: Union[str, Path]) -> None:

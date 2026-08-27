@@ -15,7 +15,6 @@ import microhh_py.microhh_tools as mht
 import netCDF4
 import numpy as np
 import pandas as pd
-import scipy
 import ucat
 import xarray as xr
 from tqdm.auto import tqdm
@@ -24,6 +23,7 @@ import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
 import microhh_processing_chain.spatial as spatial
+import microhh_processing_chain.thermodynamics as thermodynamics
 from microhh_processing_chain import utils
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
 from microhh_processing_chain.enums import Precision
@@ -711,7 +711,11 @@ class PostProcessing:
             data:
                 MicroHH dataset to which the attributes and units should be assigned.
         """
-        swvmr = np.all(self.case.config["source"]["swvmr"])
+        if self.case.config["source"]["swsource"] == "3d":
+            swvmr = False
+        else:
+            swvmr = np.all(self.case.config["source"]["swvmr"])
+
         if swvmr:
             unit = "mol mol-1"
             prefix = "volume"
@@ -1139,8 +1143,10 @@ class PostProcessing:
                 data = self.add_statistics_variable(data, variable=var)
 
         # Calculate absolute temperature
-        data["ta"] = PostProcessing.calculate_absolute_temperature(
-            theta=data.th, p=data.phydro, p0=data.phydroh.sel(zh=0)
+        data["ta"] = thermodynamics.absolute_temperature(
+            potential_temperature=data.th,
+            pressure=data.phydro,
+            reference_pressure=data.phydroh.sel(zh=0),
         )
 
         # Add attributes to 'ta' variable
@@ -1148,31 +1154,6 @@ class PostProcessing:
         data["ta"].attrs["units"] = "K"
 
         return data
-
-    @staticmethod
-    def calculate_absolute_temperature(
-        theta: Union[xr.DataArray, np.ndarray, int, float],
-        p: Union[xr.DataArray, np.ndarray, int, float],
-        p0: Union[xr.DataArray, np.ndarray, int, float],
-    ) -> Union[xr.DataArray, np.ndarray, int, float]:
-        """Calculate absolute temperature from potential temperature and pressure.
-
-        Args:
-            theta: Potential temperature.
-            p: Pressure at the target level.
-            p0: Reference pressure.
-
-        Returns:
-            Absolute temperature using Poisson's equation.
-        """
-        # Constants
-        r = scipy.constants.R  # Specific gas constant for dry air in J/(kg·K)
-        cp = 1004  # Specific heat capacity at constant pressure for dry air in J/(kg·K)
-
-        # Calculate absolute temperature
-        absolute_temperature = theta * (p / p0) ** (r / cp)
-
-        return absolute_temperature
 
     def calculate_3d_tke(
         self, data: xr.Dataset, chunks: Optional[Union[str, dict]] = None
