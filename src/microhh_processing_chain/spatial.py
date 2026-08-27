@@ -67,6 +67,8 @@ class Domain:
 
         self.dx, self.dy = xsize / itot, ysize / jtot
         self.xsize, self.ysize = xsize, ysize
+        self.itot, self.jtot = itot, jtot
+        self.epsg_code = epsg_code
 
         # Grid definitions (Arakawa C-grid style)
         self.x = np.linspace(self.dx / 2, xsize - self.dx / 2, itot)  # Centers

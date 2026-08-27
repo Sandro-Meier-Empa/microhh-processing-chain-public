@@ -12,7 +12,7 @@ from astropy import units
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_sun
 from astropy.time import Time
 from matplotlib.colors import LinearSegmentedColormap
-from netCDF4 import Dataset
+from netCDF4 import Dataset, Group
 
 
 def make_white_inferno(
@@ -87,79 +87,37 @@ def make_white_plasma(
     return LinearSegmentedColormap.from_list("white_plasma_soft", colors)
 
 
-def potential_temperature(
-    temperature: Union[xr.DataArray, np.ndarray, float],
-    pressure: Union[xr.DataArray, np.ndarray, float],
-    qv: Optional[Union[xr.DataArray, np.ndarray, float]] = None,
-) -> xr.DataArray:
-    """Calculate potential temperature from temperature and pressure.
+def _collect_group_variables(
+    group: Union[Dataset, Group],
+) -> dict[str, set[str]]:
+    """Collect locally defined variable names by absolute group path."""
+    group_variables = {group.path: set(group.variables)}
 
-    Parameters
-    ----------
-    temperature : xarray.DataArray
-        Temperature in K.
-    pressure : xarray.DataArray
-        Pressure in Pa.
+    for subgroup in group.groups.values():
+        group_variables.update(_collect_group_variables(subgroup))
 
-    Returns:
-    -------
-    xarray.DataArray
-        Potential temperature in K.
-    """
-    # reference pressure in Pa
-    p0 = 100000.0
-    # specific gas constant for dry air in J/(kg*K)
-    r_d = 287.05
-    # specific heat capacity at constant pressure for dry air in J/(kg*K)
-    c_p = 1004.0
-
-    theta = temperature * (p0 / pressure) ** (r_d / c_p)
-    theta.attrs = {"units": "K", "long_name": "potential_temperature"}
-    if qv is None:
-        return theta
-    else:
-        # virtual potential temperature
-        theta_v = theta * (1 + 0.61 * qv)
-        theta_v.attrs = {"units": "K", "long_name": "virtual_potential_temperature"}
-        return theta_v
+    return group_variables
 
 
-def nearest_idx(array: xr.DataArray, value: float) -> int:
-    """Find the index of the nearest value in an xarray DataArray."""
-    if array.ndim == 1:
-        idx = np.abs(array - value).argmin().item()
-        return idx
-    else:
-        flat_idx = np.abs(array - value).argmin()
-        idx = np.unravel_index(flat_idx, array.shape)
-        return idx
-
-
-def nearest_lat_lon_idx(
-    lat_array: Union[xr.DataArray, np.ndarray],
-    lon_array: Union[xr.DataArray, np.ndarray],
-    lat: float,
-    lon: float,
-) -> tuple[int, int]:
-    """Find the 2D grid index nearest to a latitude/longitude coordinate."""
-    lat_values = np.asarray(lat_array)
-    lon_values = np.asarray(lon_array)
-
-    lat_diff = lat_values - lat
-    lon_diff = (lon_values - lon + 180.0) % 360.0 - 180.0
-    lon_scale = np.cos(np.deg2rad(lat))
-
-    flat_idx = np.argmin(lat_diff * lat_diff + (lon_diff * lon_scale) ** 2)
-    return tuple(int(i) for i in np.unravel_index(flat_idx, lat_values.shape))
-
-
-def compare_all_group_variables(
+def compare_netcdf_structure(
     nc_path_1: Union[str, Path],
     nc_path_2: Union[str, Path],
 ) -> None:
+    """Print differences between group paths and variable names in NetCDF files.
+
+    The comparison includes the root group and recursively nested groups. It does
+    not inspect variable values, dimensions, data types, or attributes.
+
+    Args:
+        nc_path_1: First NetCDF file to compare.
+        nc_path_2: Second NetCDF file to compare.
+    """
     with Dataset(nc_path_1, "r") as ds1, Dataset(nc_path_2, "r") as ds2:
-        groups1 = set(ds1.groups.keys())
-        groups2 = set(ds2.groups.keys())
+        group_variables1 = _collect_group_variables(ds1)
+        group_variables2 = _collect_group_variables(ds2)
+
+        groups1 = set(group_variables1)
+        groups2 = set(group_variables2)
 
         only_groups_1 = sorted(groups1 - groups2)
         only_groups_2 = sorted(groups2 - groups1)
@@ -178,16 +136,16 @@ def compare_all_group_variables(
         print("\nGroups in both files:")
         print("\n".join(f"  {g}" for g in common_groups) or "  None")
 
-        for group in common_groups:
-            vars1 = set(ds1.groups[group].variables.keys())
-            vars2 = set(ds2.groups[group].variables.keys())
+        for group in sorted(groups1 | groups2):
+            vars1 = group_variables1.get(group, set())
+            vars2 = group_variables2.get(group, set())
 
             only_vars_1 = sorted(vars1 - vars2)
             only_vars_2 = sorted(vars2 - vars1)
             common_vars = sorted(vars1 & vars2)
 
             print("\n" + "=" * 80)
-            print(f"VARIABLE COMPARISON FOR GROUP /{group}")
+            print(f"VARIABLE COMPARISON FOR GROUP {group}")
             print("=" * 80)
 
             print(f"\nOnly in {nc_path_1}:")
@@ -303,7 +261,6 @@ class CamsGlobInventoryPaths:
         self.lumping_co = (
             [
                 "carbon-monoxide",
-                "carbon-monoxide",
             ]
             if lumping_co is None
             else lumping_co
@@ -311,7 +268,6 @@ class CamsGlobInventoryPaths:
 
         self.lumping_nox = (
             [
-                "nitrogen-oxides",
                 "nitrogen-oxides",
             ]
             if lumping_nox is None
@@ -346,7 +302,6 @@ class CamsGlobInventoryPaths:
                 "total-ketones",
                 "trimethylbenzenes",
                 "xylenes",
-                "isoprene",
                 "dimethyl-sulphide",
                 "tribromomethane",
                 "vocs-all",
@@ -403,10 +358,7 @@ class CamsGlobInventoryPaths:
 __all__ = [
     "CamsGlobInventoryPaths",
     "calculate_sun_position",
-    "compare_all_group_variables",
+    "compare_netcdf_structure",
     "make_white_inferno",
     "make_white_plasma",
-    "nearest_idx",
-    "nearest_lat_lon_idx",
-    "potential_temperature",
 ]

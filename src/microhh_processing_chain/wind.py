@@ -734,24 +734,6 @@ def get_wind_profile(
     return uz
 
 
-def calculate_virtual_temperature(
-    t: Union[int, float, list, np.ndarray], q: Union[int, float, list, np.ndarray]
-) -> np.ndarray:
-    """Calculate the virtual (potential) temperature t_v.
-
-    Args:
-        t: (Potential) temperature (in K).
-        q: Specific humidity (dimensionless, in kg/kg).
-
-    Returns:
-        Virtual temperature.
-    """
-    t = np.array(t)
-    q = np.array(q)
-    t_v = t * (1 + 0.608 * q)
-    return t_v
-
-
 def calculate_virtual_turbulent_heat_flux(
     h: float, e: float, t: float, rho: float = 1.225, cp: float = 1003.5
 ) -> float:
@@ -2479,7 +2461,6 @@ __all__ = [
     "calculate_tke_temporal_profile_dask",
     "calculate_u_star",
     "calculate_u_star_stable",
-    "calculate_virtual_temperature",
     "calculate_virtual_turbulent_heat_flux",
     "compute_grid_resolution",
     "compute_optical_flow_displacement",

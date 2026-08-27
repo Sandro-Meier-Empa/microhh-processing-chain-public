@@ -1,69 +1,63 @@
 #!/usr/bin/env bash
+set -euo pipefail
+
 echo "Setting up repositories for microhh-processing-chain..."
-set -e  # stop on error
 
-# go to parent directory of microhh_processing
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "Script directory: $SCRIPT_DIR"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-TARGET_DIR="$SCRIPT_DIR"
+if [ ! -d "$REPO_DIR/src/microhh_processing_chain" ]; then
+  echo "Could not locate the microhh-processing-chain repository." >&2
+  exit 1
+fi
 
-while [ ! -d "$TARGET_DIR/src/microhh_processing_chain" ]; do
-  TARGET_DIR="$(dirname "$TARGET_DIR")"
-  echo "Checking directory: $TARGET_DIR"
-done
-
+TARGET_DIR="$(dirname "$REPO_DIR")"
 echo "Target directory for repositories: $TARGET_DIR"
 
 cd "$TARGET_DIR"
 
 
 clone_or_update () {
-  REPO_URL=$1
-  DIR_NAME=$2
-  BRANCH=$3
+  local repo_url=$1
+  local dir_name=$2
+  local branch=${3:-}
 
-  if [ -d "$DIR_NAME" ]; then
-    echo "Updating $DIR_NAME"
-    cd "$DIR_NAME"
-    if [ -n "$BRANCH" ]; then
-      git checkout "$BRANCH"
+  if [ -e "$dir_name" ] || [ -L "$dir_name" ]; then
+    if ! git -C "$dir_name" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "$TARGET_DIR/$dir_name exists but is not a Git repository." >&2
+      exit 1
     fi
-    git pull
-    git submodule update --init --recursive
-    cd ..
+
+    echo "Updating $dir_name"
+    if [ -n "$branch" ]; then
+      git -C "$dir_name" switch "$branch"
+    fi
+    git -C "$dir_name" pull
+    git -C "$dir_name" submodule update --init --recursive
   else
-    echo "Cloning $DIR_NAME"
-    git clone --recursive "$REPO_URL" "$DIR_NAME"
-    if [ -n "$BRANCH" ]; then
-      git clone --branch "$BRANCH" --recursive "$REPO_URL" "$DIR_NAME"
+    echo "Cloning $dir_name"
+    if [ -n "$branch" ]; then
+      git clone --branch "$branch" --recursive "$repo_url" "$dir_name"
     else
-      git clone --recursive "$REPO_URL" "$DIR_NAME"
+      git clone --recursive "$repo_url" "$dir_name"
     fi
   fi
 }
-# Clone repos
-clone_or_update https://gitlab.empa.ch/abt503/users/mesa/cscs.git cscs
-clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq
-clone_or_update https://github.com/Sandro-Meier-Empa/microhh.git microhh
+
+# Clone repositories next to microhh-processing-chain.
+clone_or_update https://gitlab.empa.ch/abt503/general-tools/cscs.git cscs
+clone_or_update https://gitlab.com/empa503/remote-sensing/ddeq.git ddeq ddeq-gui-refactored
+clone_or_update https://github.com/Sandro-Meier-Empa/microhh.git microhh microhh-ch4
 clone_or_update https://github.com/microhh/microhhpy.git microhhpy
 clone_or_update https://gitlab.com/empa503/general-tools/u-cat.git u-cat ucat-bugfix
+clone_or_update https://github.com/LS2D/LS2D LS2D
 
-clone_or_update https://github.com/Vex-Titan/microhh.git microhh develop_kpp_gpu
-
-# Checkout required branches
-# cd microhh
-# git checkout develop_kpp_gpu
-# cd ..
-
-cp -r microhh-ch4/microhh_py .
-
-# Install in editable mode
-pip install -e ./cscs
-pip install -e ./ddeq
-pip install -e ./LS2D
-pip install -e ./microhh_py
-pip install -e ./microhhpy
-pip install -e ./u-cat
+# Install in editable mode.
+python -m pip install -e ./cscs
+python -m pip install -e ./ddeq
+python -m pip install -e ./LS2D
+python -m pip install -e ./microhh/microhh_py
+python -m pip install -e ./microhhpy
+python -m pip install -e ./u-cat
 
 echo "Done."
