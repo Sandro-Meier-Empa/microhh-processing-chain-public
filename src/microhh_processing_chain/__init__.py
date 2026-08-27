@@ -6,6 +6,7 @@ __version__ = version("microhh-processing-chain")
 
 __all__ = [
     "__version__",
+    "case_input",
     "constants",
     "enums",
     "initialisation",
@@ -18,12 +19,14 @@ __all__ = [
     "preprocessing",
     "sources",
     "spatial",
+    "thermodynamics",
     "utils",
     "visualisation",
     "wind",
 ]
 
 from . import (
+    case_input,
     constants,
     enums,
     initialisation,
@@ -36,6 +39,7 @@ from . import (
     preprocessing,
     sources,
     spatial,
+    thermodynamics,
     utils,
     visualisation,
     wind,
