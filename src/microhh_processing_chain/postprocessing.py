@@ -956,6 +956,79 @@ class PostProcessing:
 
         return data
 
+    def convert_microhh_timestep_to_date(
+        self,
+        data: xr.Dataset,
+        start_date: Optional[Union[str, pd.Timestamp]] = None,
+        date_format: str = "%Y-%m-%d %H:%M:%S",
+    ) -> xr.Dataset:
+        """Convert time into a timestamp to make the dataset digestible by `ddeq`.
+
+        Use 'datetime_utc' if available in the .ini file.
+
+        Args:
+            data:
+                The dataset to convert.
+            start_date:
+                The start date as a string or a pandas Timestamp object.
+            date_format:
+                The format of the start_date string.
+
+        Returns:
+            Dataset with the time converted to a timestamp.
+        """
+        # use 'datetime_utc' if available in the .ini file
+        if "datetime_utc" in self.case.config["time"] and start_date is None:
+            start_date = self.case.config["time"]["datetime_utc"]
+        elif "datetime_utc" in self.case.config["time"] and start_date is not None:
+            logger.info(
+                "Using %s to overwrite %s in .ini file",
+                start_date,
+                self.case.config["time"]["datetime_utc"],
+            )
+
+        if start_date is None:
+            raise ValueError(
+                "Please provide 'start_date' or set 'datetime_utc' in the ini file."
+            )
+
+        tz = "UTC"
+
+        if isinstance(start_date, str):
+            converted = pd.to_datetime(start_date, format=date_format)
+            if pd.isna(converted):
+                raise ValueError(f"Could not parse start_date: {start_date}")
+            start_date = cast(pd.Timestamp, converted)
+
+        if isinstance(start_date, pd.Timestamp) and start_date.tz is not None:
+            start_date = start_date.tz_convert("UTC").tz_localize(None)
+
+        # Force ns precision for the reference timestamp as well.
+        ts_start_date = pd.Timestamp(start_date).as_unit("ns")
+
+        if np.issubdtype(data["time"].dtype, np.datetime64):
+            time_values = pd.to_datetime(data["time"].values).astype("datetime64[ns]")
+            first_time = cast(pd.Timestamp, pd.to_datetime(time_values[0]))
+            time_diff = first_time - ts_start_date
+            new_time = time_values - time_diff
+
+        elif np.issubdtype(data["time"].dtype, np.integer) or np.issubdtype(
+            data["time"].dtype, np.floating
+        ):
+            # convert MicroHH seconds to timedelta, then add to start date
+            time_delta = pd.to_timedelta(data["time"].to_numpy(), unit="s")
+            new_time = pd.DatetimeIndex(start_date + time_delta).astype(
+                "datetime64[ns]"
+            )
+
+        else:
+            raise ValueError("Data type of 'time' was not recognized.")
+
+        data = data.assign_coords(time=new_time)
+        data["time"].attrs.update({"timezone": tz})
+
+        return data
+
     def _broadcast_coords_to_2d_grid(
         self, data: xr.Dataset, coord_names: tuple[str, str]
     ) -> xr.Dataset:
