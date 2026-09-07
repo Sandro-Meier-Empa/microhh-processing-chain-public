@@ -11,8 +11,10 @@ pip install -e .
 ```
 
 This repository also relies on several local companion packages such as
-- [`cscs`](https://gitlab.empa.ch/abt503/users/mesa/cscs)
+
+- [`cscs`](https://gitlab.empa.ch/abt503/general-tools/cscs)
 - [`ddeq`](https://gitlab.com/empa503/remote-sensing/ddeq)
+- [`LS2D`](https://github.com/LS2D/LS2D)
 - [`u-cat`](https://gitlab.com/empa503/general-tools/u-cat)
 - [`microhh_py`](https://github.com/Sandro-Meier-Empa/microhh) (fork to make python scripts available as a package)
 - [`microhhpy`](https://github.com/microhh/microhhpy)
