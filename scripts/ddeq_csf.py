@@ -192,8 +192,14 @@ def main() -> None:
     dd_ch4 = dd_ch4.rename({"ch4_path": "CH4"})
     dd_ch4.CH4.attrs["units"] = "kg m-2"
 
+    selected_source = sources.isel(source=0)
     dd_coord = post.convert_microhh_grid_to_coords(
-        dd_ch4, sources.isel(source=0), microhh_crs="epsg:32630"
+        dd_ch4,
+        anchor_lat=selected_source.lat.item(),
+        anchor_lon=selected_source.lon.item(),
+        anchor_x=selected_source.source_x0.item(),
+        anchor_y=selected_source.source_y0.item(),
+        projected_crs="EPSG:32630",
     )
     dd_coord = post.convert_microhh_timestep_to_date(
         dd_coord,
