@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 import zipfile
+from collections.abc import Hashable
 from pathlib import Path
 from typing import Literal, Optional, Union
 
@@ -15,6 +16,7 @@ import microhh_py.microhh_tools as mht
 import netCDF4
 import numpy as np
 import pandas as pd
+import pyproj
 import ucat
 import xarray as xr
 from tqdm.auto import tqdm
@@ -22,7 +24,6 @@ from tqdm.auto import tqdm
 import microhh_processing_chain.initialisation as init
 import microhh_processing_chain.io as io
 import microhh_processing_chain.sources as src
-import microhh_processing_chain.spatial as spatial
 import microhh_processing_chain.thermodynamics as thermodynamics
 from microhh_processing_chain import utils
 from microhh_processing_chain.constants import GAS_MOLAR_MASS
@@ -33,110 +34,128 @@ logger = logging.getLogger(__name__)
 
 def convert_microhh_grid_to_coords(
     data: xr.Dataset,
-    source: Optional[xr.Dataset] = None,
-    case: Optional[init.Case] = None,
-    target_crs: str = "epsg:4326",
-    microhh_crs: str = "epsg:32632",
+    *,
+    anchor_lat: float,
+    anchor_lon: float,
+    anchor_x: float,
+    anchor_y: float,
+    projected_crs: Union[str, int, pyproj.CRS] = "EPSG:32632",
 ) -> xr.Dataset:
-    """Convert MicroHH metric grid coordinates to georeferenced coordinates.
+    """Georeference a native MicroHH grid from one explicit anchor point.
 
-    If lat and lon are specified in the .ini file, these values are
-    used as domain centres.
-    If 'source' is provided, the lat and lon of the source
-    is used to convert the grid such that the source is located at the
-    latitude and longitude specified in the 'sources' dataset.
-
-    The input may be on the native MicroHH ``x``/``y`` grid or already use
-    converted ``nobs``/``nrows`` dimensions with projected ``x``/``y``
-    variables. This allows the dataset resolution to be degraded before or
-    after coordinate conversion.
+    The native point ``(anchor_x, anchor_y)`` is translated to the projected
+    representation of ``(anchor_lon, anchor_lat)``. The translation is applied
+    to every native cell centre without changing the underlying data arrays.
 
     Args:
-        case:
-            MicroHH case containing the grid configuration.
-        data:
-            Dataset for which the modelled grid should be transformed to
-            a lat/lon grid.
-        source:
-            Source metadata used as the grid anchor.
-        target_crs:
-            Coordinate reference system to which the modelled data should
-            be transformed to.
-        microhh_crs:
-            Metric coordinate reference system which matches the desired
-            lat/lon location of the source.
+        data: Dataset on one-dimensional ``x`` and ``y`` cell-centre
+            coordinates.
+        anchor_lat: WGS84 latitude of the anchor point.
+        anchor_lon: WGS84 longitude of the anchor point.
+        anchor_x: Native MicroHH x coordinate of the anchor point.
+        anchor_y: Native MicroHH y coordinate of the anchor point.
+        projected_crs: Projected metre-based CRS used to place the grid.
 
     Returns:
-        Dataset with transformed coordinates.
+        Dataset using ``nrows``/``nobs`` dimensions with two-dimensional
+        projected ``x``/``y`` variables and WGS84 ``lon``/``lat`` coordinates.
+
+    Raises:
+        TypeError: If an anchor is not a real scalar.
+        ValueError: If coordinates, anchors, or the projected CRS are invalid.
     """
-    # if lat/lon is defined in .ini file: use these values to convert grid
-    if (
-        case is not None
-        and "lat" in case.config["grid"]
-        and "lon" in case.config["grid"]
-        and source is None
+    for dimension in ("x", "y"):
+        if dimension not in data.dims or dimension not in data.coords:
+            raise ValueError(
+                f"MicroHH data must have a '{dimension}' dimension coordinate."
+            )
+        coordinate = data.coords[dimension]
+        if coordinate.dims != (dimension,) or coordinate.size == 0:
+            raise ValueError(
+                f"MicroHH '{dimension}' must be a non-empty one-dimensional coordinate."
+            )
+        if not np.all(np.isfinite(coordinate.values)):
+            raise ValueError(f"MicroHH '{dimension}' coordinates must be finite.")
+
+    anchors = {
+        "anchor_lat": anchor_lat,
+        "anchor_lon": anchor_lon,
+        "anchor_x": anchor_x,
+        "anchor_y": anchor_y,
+    }
+    anchor_values: dict[str, float] = {}
+    for name, value in anchors.items():
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError) as error:
+            raise TypeError(f"{name} must be a real scalar.") from error
+        if not np.isfinite(scalar):
+            raise ValueError(f"{name} must be finite.")
+        anchor_values[name] = scalar
+    if not -90.0 <= anchor_values["anchor_lat"] <= 90.0:
+        raise ValueError("anchor_lat must be between -90 and 90 degrees.")
+    if not -180.0 <= anchor_values["anchor_lon"] <= 180.0:
+        raise ValueError("anchor_lon must be between -180 and 180 degrees.")
+
+    crs = pyproj.CRS.from_user_input(projected_crs)
+    if not crs.is_projected:
+        raise ValueError("projected_crs must be a projected coordinate system.")
+    if len(crs.axis_info) < 2 or any(
+        not np.isclose(axis.unit_conversion_factor, 1.0) for axis in crs.axis_info[:2]
     ):
-        lat_ref = case.config["grid"]["lat"]
-        lon_ref = case.config["grid"]["lon"]
-        grid_x_ref = case.config["grid"]["xsize"] / 2
-        grid_y_ref = case.config["grid"]["ysize"] / 2
+        raise ValueError("projected_crs must use metres on both horizontal axes.")
 
-    elif source is not None:
-        lat_ref = source.lat.values
-        lon_ref = source.lon.values
-        grid_x_ref = source.source_x0.values
-        grid_y_ref = source.source_y0.values
-    else:
-        raise ValueError(
-            "Provide either a case with grid lat/lon coordinates or a source dataset."
-        )
-
-    # get xsize, ysize, itot, jtot from the data
-    itot = data.sizes["x"]
-    jtot = data.sizes["y"]
-
-    resolution = data.x.diff(dim="x").mean().values
-    xsize = int(data.x.max() + resolution / 2)
-    ysize = int(data.y.max() + resolution / 2)
-
-    # Create domain
-    domain = spatial.Domain(
-        xsize=xsize,
-        ysize=ysize,
-        itot=itot,
-        jtot=jtot,
-        lon=lon_ref,
-        lat=lat_ref,
-        anchor=(grid_x_ref, grid_y_ref),
-        epsg_code=microhh_crs,
+    to_projected = pyproj.Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+    projected_anchor_x, projected_anchor_y = to_projected.transform(
+        anchor_values["anchor_lon"], anchor_values["anchor_lat"]
     )
-    lon_grid, lat_grid = domain.to_lonlat(data.x.values, data.y.values, meshgrid=True)
-
-    data = data.rename({"x": "nobs", "y": "nrows"})
-    data = data.assign_coords(
-        lon=(("nrows", "nobs"), lon_grid), lat=(("nrows", "nobs"), lat_grid)
+    if not np.isfinite(projected_anchor_x) or not np.isfinite(projected_anchor_y):
+        raise ValueError("The anchor cannot be represented in projected_crs.")
+    x_values = np.asarray(data.coords["x"].values, dtype=float) + (
+        projected_anchor_x - anchor_values["anchor_x"]
     )
+    y_values = np.asarray(data.coords["y"].values, dtype=float) + (
+        projected_anchor_y - anchor_values["anchor_y"]
+    )
+    center_x, center_y = np.meshgrid(x_values, y_values, indexing="xy")
 
-    # add attributes to lon and lat
-    data.lon.attrs["epsg"] = int(target_crs.split(":")[-1])
-    data.lat.attrs["epsg"] = int(target_crs.split(":")[-1])
+    to_geographic = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    lon_grid, lat_grid = to_geographic.transform(center_x, center_y)
 
-    # drop nrows and nobs from data vars
-    data = data.drop_vars(["nrows", "nobs"], errors="ignore")
-
-    # add x and y coordinates
-    data["x"] = (
+    converted = data.rename({"x": "nobs", "y": "nrows"})
+    converted = converted.drop_vars(["nrows", "nobs"], errors="ignore")
+    converted = converted.assign_coords(
+        lon=(
+            ("nrows", "nobs"),
+            lon_grid,
+            {"units": "degrees_east", "standard_name": "longitude", "epsg": 4326},
+        ),
+        lat=(
+            ("nrows", "nobs"),
+            lat_grid,
+            {"units": "degrees_north", "standard_name": "latitude", "epsg": 4326},
+        ),
+    )
+    crs_attrs = _coordinate_crs_attrs(crs)
+    converted["x"] = (
         ("nrows", "nobs"),
-        domain.xx + domain.x_offset,
-        {"epsg": int(microhh_crs.split(":")[-1])},
+        center_x,
+        {"units": "m", **crs_attrs},
     )
-    data["y"] = (
+    converted["y"] = (
         ("nrows", "nobs"),
-        domain.yy + domain.y_offset,
-        {"epsg": int(microhh_crs.split(":")[-1])},
+        center_y,
+        {"units": "m", **crs_attrs},
     )
+    return converted
 
-    return data
+
+def _coordinate_crs_attrs(crs: pyproj.CRS) -> dict[str, Union[int, str]]:
+    """Return a compact CRS identifier for projected coordinate variables."""
+    authority = crs.to_authority()
+    if authority is not None and authority[0].upper() == "EPSG":
+        return {"epsg": int(authority[1])}
+    return {"crs": crs.to_string()}
 
 
 def convert_microhh_timestep_to_date(
@@ -1473,41 +1492,91 @@ def _get_horizontal_dims(data: xr.Dataset) -> tuple[str, str]:
 
 
 def format_data_for_cdo(
-    data_coord: xr.Dataset, out_path: Union[str, Path], save: bool = True
+    data_coord: xr.Dataset,
+    out_path: Optional[Union[str, Path]] = None,
+    save: bool = True,
 ) -> xr.Dataset:
-    """Format the data for use with the CDO library.
+    """Return a lazy, CF-compatible dataset suitable for CDO remapping.
 
     Args:
-        data_coord: Dataset with coordinates to format for CDO
-            compatibility.
-        out_path: Path where the formatted dataset should be saved.
+        data_coord: Dataset with two-dimensional ``lon`` and ``lat`` variables.
+        out_path: Path where the formatted dataset should be saved. Required
+            only when ``save`` is true.
         save: Whether to save the formatted dataset to out_path.
 
     Returns:
-        Formatted dataset.
+        Shallow dataset copy with CDO-compatible dimensions, attributes, and
+        encodings. Lazy source arrays remain lazy.
+
+    Raises:
+        ValueError: If the horizontal geometry or output arguments are invalid.
     """
-    # Ensure out_path is a Path object
-    out_path = Path(out_path)
+    if "lon" not in data_coord or "lat" not in data_coord:
+        raise ValueError("CDO data must contain 'lon' and 'lat' variables.")
+    if data_coord["lon"].ndim != 2 or data_coord["lon"].dims != data_coord["lat"].dims:
+        raise ValueError(
+            "lon and lat must be two-dimensional with matching dimensions."
+        )
 
-    ds = data_coord.copy(deep=True)
+    horizontal_dims = data_coord["lon"].dims
+    has_lonc = "lonc" in data_coord
+    has_latc = "latc" in data_coord
+    if has_lonc != has_latc:
+        raise ValueError("lonc and latc must either both be present or both be absent.")
+    if has_lonc:
+        for name in ("lonc", "latc"):
+            bounds = data_coord[name]
+            if (
+                bounds.ndim != 3
+                or bounds.dims[:2] != horizontal_dims
+                or bounds.shape[-1] != 4
+            ):
+                raise ValueError(
+                    f"{name} must use the lon/lat dimensions followed by four vertices."
+                )
 
-    # Clean up dimensions and old vars
-    ds = ds.drop_vars(["x", "y"], errors="ignore")
+    ds = data_coord.copy(deep=False)
     if "vertices" not in ds.dims and "corners" in ds.dims:
         ds = ds.rename({"corners": "vertices"})
+    ds = ds.drop_vars(["x", "y"], errors="ignore")
 
-    data_vars = [v for v in ds.data_vars if v not in ["lonc", "latc", "time"]]
-
-    # Force these variables to associate with lat/lon
-    for var in data_vars:
-        ds[var].encoding = {}
-        ds[var].attrs["coordinates"] = "lat lon"
+    for name in list(ds.data_vars):
+        if name in {"lonc", "latc", "time"}:
+            continue
+        variable = ds[name]
+        if not set(horizontal_dims).issubset(variable.dims):
+            continue
+        output_dims = (
+            tuple(dim for dim in variable.dims if dim not in horizontal_dims)
+            + horizontal_dims
+        )
+        original_dims = variable.dims
+        if original_dims != output_dims:
+            variable = variable.transpose(*output_dims)
+        variable = variable.copy(deep=False)
+        variable.attrs = {**variable.attrs, "coordinates": "lat lon"}
+        variable.encoding = _cdo_safe_encoding(
+            variable.encoding, original_dims=original_dims, output_dims=output_dims
+        )
+        ds[name] = variable
 
     if "time" in ds.coords:
-        ds["time"].encoding["units"] = "seconds since 1970-01-01 00:00:00"
-        ds["time"].encoding["calendar"] = "proleptic_gregorian"
+        time = ds["time"].copy(deep=False)
+        time.attrs = dict(time.attrs)
+        time.encoding = _cdo_safe_encoding(
+            time.encoding, original_dims=time.dims, output_dims=time.dims
+        )
+        if np.issubdtype(time.dtype, np.datetime64):
+            time.attrs.pop("units", None)
+            time.attrs.pop("calendar", None)
+            time.encoding.update(
+                {
+                    "units": "seconds since 1970-01-01 00:00:00",
+                    "calendar": "proleptic_gregorian",
+                }
+            )
+        ds["time"] = time
 
-    # Define metadata
     targets = {
         "lon": {
             "units": "degrees_east",
@@ -1522,25 +1591,64 @@ def format_data_for_cdo(
         "lonc": {"units": "degrees_east"},
         "latc": {"units": "degrees_north"},
     }
-
-    # reset attributes for the main variables and bounds, to ensure CDO compatibility
     for var_name, new_attrs in targets.items():
         if var_name in ds.variables:
-            ds[var_name].encoding = {}
-
-            # Wipe and replace attributes
-            ds[var_name].attrs = new_attrs
-
-    # Remove automatically added 'coordinates' attributes that caused CDO warnings
-    for bnd in ["lonc", "latc"]:
-        if bnd in ds.variables:
-            ds[bnd].encoding["coordinates"] = None
-            ds[bnd].attrs.pop("coordinates", None)
+            variable = ds[var_name].copy(deep=False)
+            variable.attrs = {**variable.attrs, **new_attrs}
+            variable.attrs.pop("coordinates", None)
+            variable.encoding = _cdo_safe_encoding(
+                variable.encoding,
+                original_dims=variable.dims,
+                output_dims=variable.dims,
+            )
+            ds[var_name] = variable
 
     if save:
-        ds.to_netcdf(out_path)
+        if out_path is None:
+            raise ValueError("out_path is required when save=True.")
+        output_path = Path(out_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        ds.to_netcdf(output_path)
 
     return ds
+
+
+def _cdo_safe_encoding(
+    encoding: dict[str, object],
+    original_dims: tuple[Hashable, ...],
+    output_dims: tuple[Hashable, ...],
+) -> dict[str, object]:
+    """Keep portable NetCDF encodings and reorder dimension-based chunks."""
+    supported = {
+        "_FillValue",
+        "add_offset",
+        "chunksizes",
+        "complevel",
+        "contiguous",
+        "dtype",
+        "endian",
+        "fletcher32",
+        "least_significant_digit",
+        "quantize_mode",
+        "scale_factor",
+        "shuffle",
+        "significant_digits",
+        "zlib",
+    }
+    cleaned = {key: value for key, value in encoding.items() if key in supported}
+    chunksizes = cleaned.get("chunksizes")
+    if chunksizes is not None and original_dims != output_dims:
+        if isinstance(chunksizes, (tuple, list)) and len(chunksizes) == len(
+            original_dims
+        ):
+            chunks = tuple(chunksizes)
+            chunks_by_dim = dict(zip(original_dims, chunks))
+            cleaned["chunksizes"] = tuple(chunks_by_dim[dim] for dim in output_dims)
+        else:
+            cleaned.pop("chunksizes")
+    if cleaned.get("contiguous") and "chunksizes" in cleaned:
+        cleaned.pop("contiguous")
+    return cleaned
 
 
 def create_2d_3d_output_script(
