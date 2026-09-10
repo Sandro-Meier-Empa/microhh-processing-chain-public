@@ -133,7 +133,6 @@ def save_case_input(
     soil: Optional[dict[str, Any]] = None,
     source: Optional[dict[str, Any]] = None,
     trajectories: Optional[dict[str, Any]] = None,
-    overwrite: Optional[bool] = False,
 ) -> None:
     """Save a MicroHH ``case_input.nc`` file via microhhpy."""
     microhhpy.io.save_case_input(
@@ -150,7 +149,6 @@ def save_case_input(
         source=source,
         trajectories=trajectories,
         output_dir=output_dir,
-        overwrite=overwrite,
     )
 
 
