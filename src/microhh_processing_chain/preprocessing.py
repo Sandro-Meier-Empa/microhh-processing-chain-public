@@ -492,18 +492,21 @@ class PreProcessing:
 
     def _check_nodes_match(self) -> None:
         """Check if the number of nodes matches the expected value."""
-        expected_cores = (
-            self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
-        )
-        if self.alps_setup.ntasks_per_node is None:
-            raise ValueError("Alps setup requires 'ntasks_per_node' to validate nodes.")
-
-        requested_cores = self.alps_setup.ntasks_per_node * self.alps_setup.nodes
-        if expected_cores != requested_cores:
-            raise ValueError(
-                f"Requested cores ({requested_cores}) does not match the "
-                f"expected cores ({expected_cores})."
+        if self.alps_setup.cluster == "eiger":
+            expected_cores = (
+                self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
             )
+            if self.alps_setup.ntasks_per_node is None:
+                raise ValueError(
+                    "Alps setup requires 'ntasks_per_node' to validate nodes."
+                )
+
+            requested_cores = self.alps_setup.ntasks_per_node * self.alps_setup.nodes
+            if expected_cores != requested_cores:
+                raise ValueError(
+                    f"Requested cores ({requested_cores}) does not match the "
+                    f"expected cores ({expected_cores})."
+                )
 
     def _check_grid_order(self) -> None:
         """Check that the grid order matches the orders of the advection schemes."""
@@ -1202,9 +1205,9 @@ def _get_multi_run_commands(
 
         srun_prefix = (
             f"    srun --exclusive"
-            f" --ntasks-per-node=1"
+            f" --ntasks=1"
             f" --cpus-per-task={cpus_per_task_per_case}"
-            f" --gpus-per-task={gpus_per_task_per_case}"
+            f" --gres=gpu:{gpus_per_task_per_case}"
             f" --chdir=${{DIRS[$i]}}"
             f" --output=${{DIRS[$i]}}/{phase}_microhh_%j.out"
         )
@@ -1221,7 +1224,7 @@ def _get_multi_run_commands(
         commands.append("done")
         commands.append("")
         commands.append(f"# Wait for all '{phase}' phases to complete")
-        commands.append("wait")
+        commands.append("wait || exit 1")
         commands.append("")
 
     return commands
