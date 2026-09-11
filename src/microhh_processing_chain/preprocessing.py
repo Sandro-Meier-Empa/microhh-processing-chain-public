@@ -1225,7 +1225,7 @@ def _get_multi_run_commands(
         commands.append("done")
         commands.append("")
         commands.append(f"# Wait for all '{phase}' phases to complete")
-        commands.append("wait")
+        commands.append("wait || exit 1")
         commands.append("")
 
     return commands
