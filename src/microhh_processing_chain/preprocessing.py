@@ -1208,6 +1208,7 @@ def _get_multi_run_commands(
             f" --ntasks=1"
             f" --cpus-per-task={cpus_per_task_per_case}"
             f" --gres=gpu:{gpus_per_task_per_case}"
+            f" --cpu-bind=none"
             f" --chdir=${{DIRS[$i]}}"
             f" --output=${{DIRS[$i]}}/{phase}_microhh_%j.out"
         )
@@ -1224,7 +1225,7 @@ def _get_multi_run_commands(
         commands.append("done")
         commands.append("")
         commands.append(f"# Wait for all '{phase}' phases to complete")
-        commands.append("wait || exit 1")
+        commands.append("wait")
         commands.append("")
 
     return commands
