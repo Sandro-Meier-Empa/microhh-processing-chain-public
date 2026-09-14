@@ -137,7 +137,7 @@ def main() -> None:
     gui_detection_method = "Threshold"
     gui_thr = 0.0003
     gui_filter_size = 1
-    gui_center_line = True
+    gui_center_line = "from detections"
     gui_node_nr = 2
     gui_plume_area = True
     gui_fix_plume_width = True
@@ -287,14 +287,14 @@ def main() -> None:
                 csf_plot_params=csf_plot_params,
             )
 
+            ui.detection_dropdown.value = gui_detection_method  # pyright: ignore
             ui.thr_value_slider.value = gui_thr  # pyright: ignore
             ui.filter_size_slider.value = gui_filter_size  # pyright: ignore
-            ui.detection_dropdown.value = gui_detection_method  # pyright: ignore
             ui.node_dropdown.value = gui_node_nr  # pyright: ignore
             ui.plume_area_button.value = gui_plume_area  # pyright: ignore
             ui.fix_plume_width_checkbox.value = gui_fix_plume_width  # pyright: ignore
             ui.plume_width_slider.value = gui_plume_width  # pyright: ignore
-            ui.center_line_button.value = gui_center_line  # pyright: ignore
+            ui.center_line_dropdown.value = gui_center_line  # pyright: ignore
             ui.emissions_method_dropdown.value = gui_emissions_method  # pyright: ignore
             ui.background_dropdown.value = gui_background  # pyright: ignore
             ui.plume_length_slider.value = (0, gui_lmax)  # pyright: ignore
