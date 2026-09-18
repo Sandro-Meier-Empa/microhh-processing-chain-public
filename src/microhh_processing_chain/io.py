@@ -133,8 +133,18 @@ def save_case_input(
     soil: Optional[dict[str, Any]] = None,
     source: Optional[dict[str, Any]] = None,
     trajectories: Optional[dict[str, Any]] = None,
+    overwrite: bool = False,
 ) -> None:
     """Save a MicroHH ``case_input.nc`` file via microhhpy."""
+    nc_name = Path(output_dir) / f"{case_name}_input.nc"
+
+    if nc_name.exists() and not overwrite:
+        raise FileExistsError(
+            f"File {nc_name} already exists. Use overwrite=True to overwrite."
+        )
+    elif nc_name.exists() and overwrite:
+        nc_name.unlink()
+
     microhhpy.io.save_case_input(
         case_name=case_name,
         init_profiles=init_profiles,
