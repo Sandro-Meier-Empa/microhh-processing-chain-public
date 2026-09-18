@@ -21,6 +21,43 @@ from microhh_processing_chain import spatial
 logger = logging.getLogger(__name__)
 
 FloatType = Union[type[np.float32], type[np.float64]]
+NUDGEFAC_MIN = 1e-6
+
+
+def nudge_factor(
+    z: Union[float, np.ndarray, list[float], tuple[float, ...]],
+    zi: float,
+    tau_bl: float,
+    tau_ft: float,
+    z_ramp: Optional[float] = None,
+    ramp_width: Optional[float] = None,
+) -> np.ndarray:
+    """Calculate a height-dependent MicroHH nudging factor in s-1.
+
+    Args:
+        z: Heights at which to evaluate the nudging factor.
+        zi: Boundary-layer height.
+        tau_bl: Relaxation timescale inside the boundary layer.
+        tau_ft: Relaxation timescale in the free troposphere.
+        z_ramp: Center of the transition. Defaults to ``1.2 * zi``.
+        ramp_width: Half-width of the tanh ramp. Defaults to ``0.2 * zi``.
+
+    Returns:
+        Nudging factor at each supplied height.
+
+    Notes:
+        Pass ``tau_bl=np.inf`` to leave the boundary layer essentially free.
+    """
+    z = np.asarray(z, dtype=np.float64)
+    z_ramp = 1.2 * zi if z_ramp is None else z_ramp
+    ramp_width = 0.2 * zi if ramp_width is None else ramp_width
+
+    # The transition fraction is zero in the boundary layer and one aloft.
+    transition = 0.5 * (1.0 + np.tanh((z - z_ramp) / ramp_width))
+    factor = (1.0 - transition) / tau_bl + transition / tau_ft
+
+    assert factor.max() >= NUDGEFAC_MIN, "max(nudgefac) below MicroHH's 1e-6 floor"
+    return factor
 
 
 class InitialBoundaryConditions:
