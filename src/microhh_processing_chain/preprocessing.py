@@ -180,37 +180,58 @@ class PreProcessing:
                 "GPU jobreport is only supported when using GPU partition."
             )
 
-    def prepare_simulation(
-        self,
-        overwrite: bool = False,
-        start_jobs: bool = False,
-        wait: bool = False,
-    ) -> None:
-        """Prepare the case for running the MicroHH simulation.
+    def validate(self, restart_time: Optional[int] = None) -> None:
+        """Validate the case configuration before preparing run files.
 
-        - checking if the .ini setup is valid,
-        - copying the MicroHH executable to the scratch directory,
-        - checking if all required files are present,
-        - creating a bash script to run the simulation
+        Args:
+            restart_time: Time in seconds from which a restart simulation begins.
+                When provided, it must match the start time in the INI file.
+
+        Notes:
+            Validation preserves the existing GPU setup behavior and may normalize
+            ``npx`` and ``npy`` in the INI file when MPI is disabled.
         """
-        # check if the .ini setup is valid
+        if restart_time is not None:
+            self._check_restart_ini_updated(restart_time)
+
         self._check_ini_setup_valid()
 
-        # copy microHH to directory
+    def copy_required_files(
+        self,
+        restart_case: Optional[init.Case] = None,
+        restart_time: Optional[int] = None,
+    ) -> None:
+        """Copy and verify the files required to run the simulation.
+
+        Args:
+            restart_case: Case from which restart files are copied.
+            restart_time: Time in seconds identifying the restart files to copy.
+
+        Raises:
+            ValueError: If only one restart argument is provided.
+            FileNotFoundError: If a required core case file is missing after copying.
+        """
+        has_restart_case = restart_case is not None
+        has_restart_time = restart_time is not None
+        if has_restart_case != has_restart_time:
+            raise ValueError(
+                "'restart_case' and 'restart_time' must either both be provided "
+                "or both be omitted."
+            )
+
         self._copy_executable()
 
-        # Check if required files are present
+        if restart_case is not None and restart_time is not None:
+            restart_str = self.get_restart_str(restart_time)
+            self.copy_restart_files(
+                origin=restart_case.directory,
+                timestr=restart_str,
+            )
+
         self._check_required_files()
 
         if self.binary_precision is not None:
             self._ensure_input_file_precision()
-
-        # Create bash script if it does not exist
-        self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RUN)
-
-        if start_jobs:
-            # Launch the job on alps
-            self.start_simulation(wait)
 
     def _check_required_files(self) -> None:
         """Check if all required files are present in the scratch directory."""
@@ -291,47 +312,6 @@ class PreProcessing:
                 continue
 
             ensure_binary_precision(file, shape, dtype.type)
-
-    def prepare_restart_simulation(
-        self,
-        restart_case: init.Case,
-        restart_time: int,
-        overwrite: bool = False,
-        start_jobs: bool = False,
-        wait: bool = False,
-    ) -> None:
-        """Prepare the case for running a restart MicroHH simulation.
-
-        Args:
-            restart_case: The case from which to restart.
-                Must have the same name as the current case.
-            restart_time: Time in seconds from which the simulation is restarted.
-                Must match the start time in the .ini file.
-            overwrite: Whether to overwrite existing files.
-            start_jobs: Whether to start the simulation after
-                preparation.
-            wait: Whether to wait for the job to finish before
-                returning.
-        """
-        # Check if .ini file has been updated for restart
-        self._check_restart_ini_updated(restart_time)
-
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
-
-        # copy microHH to directory
-        self._copy_executable()
-
-        # copy microHH restart files
-        restart_str = self.get_restart_str(restart_time)
-        self.copy_restart_files(origin=restart_case.directory, timestr=restart_str)
-
-        # Create bash script if it does not exist
-        self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RERUN)
-
-        if start_jobs:
-            # Launch the job on alps
-            self.start_simulation(wait)
 
     def _check_restart_ini_updated(self, restart_time: int) -> None:
         """Check if the .ini file has been updated for a restart simulation.
@@ -416,7 +396,7 @@ class PreProcessing:
         )
 
         if not job_file.exists() or overwrite:
-            slurm_job = self.alps_setup.create_sbatch_script(
+            self.slurm_job = self.alps_setup.create_sbatch_script(
                 commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
@@ -424,9 +404,12 @@ class PreProcessing:
             )
         else:
             logger.info("Reading existing sbatch script %s", job_file)
-            slurm_job = cscs.SlurmJob(job_file, ssh_connect=self.alps_setup.ssh_connect)
+            self.slurm_job = cscs.SlurmJob(
+                job_file,
+                ssh_connect=self.alps_setup.ssh_connect,
+            )
 
-        return slurm_job
+        return self.slurm_job
 
     def _check_ini_setup_valid(self) -> None:
         """Check if the .ini file setup is valid.
