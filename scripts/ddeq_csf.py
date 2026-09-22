@@ -118,7 +118,7 @@ def main() -> None:
     logging.info("Processing case: %s", args.directory)
 
     case = init.read_case(args.directory)
-    stats = io.open_statistics(case)
+    stats = io.open_statistics(case)["/default"].dataset
     case_df = pd.read_csv(case.directory / f"{case.name}_case_info.csv")
     sources = xr.open_dataset(case.directory / f"{case.name}_sources.nc")
 

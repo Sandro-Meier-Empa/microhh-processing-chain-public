@@ -2,7 +2,8 @@
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from functools import cached_property
 from typing import Any, Literal, Optional, Union, cast
 
 import ipywidgets as widgets
@@ -28,8 +29,66 @@ from microhh_processing_chain import io, utils
 logger = logging.getLogger(__name__)
 
 
+#: Dimension names of the staggered wind components. Wind components live on
+#: staggered grid faces, so they are averaged rather than summed when reduced.
+WIND_DIMS: dict[str, list[str]] = {
+    "u": ["xh", "y", "z"],
+    "v": ["x", "yh", "z"],
+    "w": ["x", "y", "zh"],
+}
+
+
+def _get_data_array(data_tree: xr.DataTree, variable_path: str) -> xr.DataArray:
+    """Return a DataArray selected by an absolute DataTree variable path."""
+    if not variable_path.startswith("/"):
+        raise ValueError(
+            f"Variable path '{variable_path}' must be absolute, for example "
+            "'/default/u'."
+        )
+
+    variable = data_tree[variable_path]
+    if not isinstance(variable, xr.DataArray):
+        raise TypeError(f"Path '{variable_path}' does not identify a variable.")
+
+    return variable
+
+
+def _get_vertical_coordinate(profile: xr.DataArray, path: str) -> xr.DataArray:
+    """Return the vertical coordinate of a time-height profile."""
+    vertical_dims = [str(dim) for dim in profile.dims if str(dim) != "time"]
+    if len(vertical_dims) != 1:
+        raise ValueError(
+            f"Profile '{path}' must have exactly one vertical dimension besides "
+            f"'time', but has dimensions {tuple(str(d) for d in profile.dims)}."
+        )
+
+    vertical_dim = vertical_dims[0]
+    if vertical_dim not in profile.coords:
+        raise ValueError(
+            f"Profile '{path}' has no coordinate for its vertical dimension "
+            f"'{vertical_dim}'."
+        )
+
+    return profile[vertical_dim]
+
+
+def _tree_variable_paths(data_tree: xr.DataTree) -> set[str]:
+    """Return absolute paths for every data variable in a DataTree."""
+    paths: set[str] = set()
+    for node in data_tree.subtree:
+        prefix = node.path.rstrip("/")
+        paths.update(f"{prefix}/{name}" for name in node.data_vars)
+    return paths
+
+
 class CaseViewer:
-    """Visualise the model output.
+    """Visualise the model output of a single case.
+
+    Thin wrapper that resolves the datasets belonging to ``case`` and delegates
+    the plotting to the module-level functions of this module. The
+    initial-condition and statistics datasets are cached on first access, so a
+    viewer does not see output written after that by a still-running
+    simulation. Call :meth:`refresh` to drop the cache.
 
     Args:
         case:
@@ -39,11 +98,21 @@ class CaseViewer:
 
     def __init__(self, case: init.Case) -> None:
         self.case = case
-        self.wind_dims: dict[str, list[str]] = {
-            "u": ["xh", "y", "z"],
-            "v": ["x", "yh", "z"],
-            "w": ["x", "y", "zh"],
-        }
+
+    @cached_property
+    def initial_conditions(self) -> xr.DataTree:
+        """Initial conditions of the case, preserving NetCDF groups."""
+        return io.open_initial_cond(self.case)
+
+    @cached_property
+    def statistics(self) -> xr.DataTree:
+        """Statistics of the model run, preserving NetCDF groups."""
+        return io.open_statistics(self.case)
+
+    def refresh(self) -> None:
+        """Drop the cached datasets so the next plot re-reads them from disk."""
+        for name in ("initial_conditions", "statistics"):
+            self.__dict__.pop(name, None)
 
     def plot_initial_conditions(
         self,
@@ -61,97 +130,9 @@ class CaseViewer:
         Returns:
             Figures created for each group of variables.
         """
-        file_path = self.case.initial_conditions_file_path
-
-        if not file_path.exists():
-            raise FileNotFoundError(f"NetCDF file not found: {file_path}")
-
-        # Use netCDF4 just to get group names, then switch to xarray
-        data_tree = xr.open_datatree(file_path)
-
-        if not data_tree.groups:
-            raise ValueError(f"No data groups found in {file_path}")
-
-        figures: list[Figure] = []
-        for node in data_tree.subtree:
-            group = node.path.strip("/")
-            group_ds = node.dataset
-            sharey = group != "timedep"
-            figures.extend(
-                self._plot_group_variables(
-                    group_ds, ncols, figsize=figsize, cmap=cmap, sharey=sharey
-                )
-            )
-
-        return figures
-
-    def _plot_group_variables(
-        self,
-        ds: xr.Dataset,
-        ncols: int,
-        figsize: tuple[float, float] = (10, 6),
-        cmap: str = "viridis",
-        sharey: bool = True,
-    ) -> list[Figure]:
-        """Plot all variables from one initial-condition group by dimension set."""
-        # Group variables by their dimension signature
-        dim_groups = {}
-        for var in ds.data_vars:
-            dim_groups.setdefault(ds[var].dims, []).append(var)
-
-        figures: list[Figure] = []
-        for _, vars_list in dim_groups.items():
-            n_vars = len(vars_list)
-            nrows = int(np.ceil(n_vars / ncols))
-
-            # squeeze=False ensures axs is always a 2D array
-            fig, axs = plt.subplots(
-                nrows,
-                ncols,
-                figsize=figsize,
-                sharey=sharey,
-                layout="constrained",
-                squeeze=False,
-            )
-
-            for i, var_name in enumerate(vars_list):
-                ax = axs.flat[i]
-                self._plot_variable(ds[var_name], ax, cmap)
-                ax.set_title(var_name)
-
-            # Hide empty subplots
-            for ax in axs.flat[n_vars:]:
-                ax.axis("off")
-
-            figures.append(fig)
-
-        return figures
-
-    def _plot_variable(
-        self, data: xr.DataArray, ax: Axes, cmap: str = "viridis"
-    ) -> None:
-        """Plot one scalar, profile, time series, or two-dimensional variable."""
-        dims = data.dims
-        # Check if it is a height profile
-        aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
-        # Check if it is a time series
-        time_dim = next((str(d) for d in dims if "time_" in str(d)), None)
-
-        if len(dims) == 0:
-            ax.axhline(float(data.values), linestyle="--")
-
-        elif len(dims) == 1:
-            if aux_dim:
-                data.plot(ax=ax, y=aux_dim, marker="x")  # pyright: ignore
-            elif time_dim:
-                data.plot(ax=ax, marker="x")  # pyright: ignore
-            else:
-                data.plot(ax=ax)  # pyright: ignore
-
-        elif len(dims) == 2:
-            data.T.plot(  # pyright: ignore
-                ax=ax, cmap=cmap, cbar_kwargs={"orientation": "horizontal", "pad": 0.1}
-            )
+        return plot_initial_conditions(
+            self.initial_conditions, ncols=ncols, figsize=figsize, cmap=cmap
+        )
 
     def plot_prognostic_variables(
         self,
@@ -164,164 +145,37 @@ class CaseViewer:
         plot_format: Literal["line", "shaded"] = "line",
         color_init: str = "k",
     ) -> Figure:
-        """Plot vertical profiles of prognostic variables over time."""
-        variables = [str(variable) for variable in utils.object_to_list(variables)]
-        time_factor = self._get_time_factor(time_format)
+        """Plot vertical profiles of prognostic variables over time.
 
-        # read in initial conditions
-        data_initial = io.open_initial_cond(self.case)
+        Args:
+            variables: Prognostic variables to plot, one subplot each.
+            data: Dataset containing all requested variables. If omitted, each
+                variable is read from its own MicroHH output file.
+            figsize: Size of the figure.
+            n_lines: Number of profiles to sample per dimension.
+            colorful: Whether to colour the profiles by time.
+            time_format: Time unit of the colorbar, one of ``s``, ``min``, ``h``.
+            plot_format: Whether to draw individual lines or a shaded envelope.
+            color_init: Colour of the prescribed initial profile.
 
-        fig, ax = plt.subplots(ncols=len(variables), figsize=figsize, sharey=True)
-        axes = np.atleast_1d(ax)
-        sm: Optional[ScalarMappable] = None
-        color: Union[str, tuple[float, float, float, float]] = color_init
+        Returns:
+            Figure with one subplot per variable.
+        """
+        names = [str(variable) for variable in utils.object_to_list(variables)]
+        datasets = {
+            name: data if data is not None else io.open_microhh_nc(self.case, name)
+            for name in names
+        }
 
-        for c, component in enumerate(variables):
-            current_data = (
-                data
-                if data is not None
-                else io.open_microhh_nc(self.case, variable=component)
-            )
-
-            # get dim names from variable
-            time_dim, z_dim, y_dim, x_dim = [
-                str(dim) for dim in current_data[component].dims
-            ]
-            t_step = max(1, int(current_data[time_dim].size / n_lines))
-
-            # Normalize the time values to range [0, 1] for colormap
-            norm = Normalize(
-                vmin=0,
-                vmax=float(np.asarray(current_data[time_dim].max().values).item())
-                / time_factor,
-            )
-
-            # Create a ScalarMappable and set the colormap
-            cmap = colormaps["viridis"]
-            sm = ScalarMappable(cmap=cmap, norm=norm)
-            sm.set_array([])  # Only needed for the colorbar to work
-
-            for t in np.arange(current_data[time_dim].size, step=t_step):
-                subset_t = current_data.isel({time_dim: int(t)})
-                if colorful:
-                    norm_value = (
-                        float(np.asarray(subset_t[time_dim].values).item())
-                        / time_factor
-                    )
-                    rgba = tuple(float(value) for value in cmap(norm(norm_value)))
-                    color = cast(tuple[float, float, float, float], rgba)
-                else:
-                    color = "gray"
-                if plot_format == "line":
-                    self._plot_lines(
-                        ax=axes[c],
-                        data=subset_t,
-                        variable=component,
-                        n_lines=n_lines,
-                        x_dim=x_dim,
-                        y_dim=y_dim,
-                        z_dim=z_dim,
-                        color=color,
-                    )
-
-                elif plot_format == "shaded":
-                    self._plot_shaded(
-                        ax=axes[c],
-                        data=subset_t,
-                        variable=component,
-                        x_dim=x_dim,
-                        y_dim=y_dim,
-                        z_dim=z_dim,
-                        color=color,
-                    )
-
-            # plot initial conditions
-            axes[c].plot(
-                data_initial[component],
-                data_initial.z,
-                label="prescribed",
-                color=color_init,
-            )
-            axes[c].set_xlabel(
-                f"{component} [{current_data[component].attrs.get('units', '-')}]"
-            )
-
-        axes[0].set_ylabel("Height [m]")
-
-        if colorful and sm is not None:
-            # create colorbar
-            cbar = fig.colorbar(sm, ax=axes)
-            cbar.set_label(f"Time [{time_format}]")
-            axes[-1].legend(loc="upper right")
-        else:
-            # create legend manually
-            lines = [Line2D([0], [0], color=c) for c in [color_init, color]]
-            labels = ["initial", "simulated"]
-            axes[-1].legend(lines, labels, loc="upper right")
-
-        return fig
-
-    def _get_time_factor(self, time_format: str) -> int:
-        """Return the divisor that converts seconds to the requested time unit."""
-        # define factor for time format
-        if time_format == "s":
-            time_factor = 1
-        elif time_format == "min":
-            time_factor = 60
-        elif time_format == "h":
-            time_factor = 60**2
-        else:
-            raise ValueError(
-                f"Time format {time_format} is not supported. "
-                "Use 's', 'min' or 'h' instead."
-            )
-
-        return time_factor
-
-    def _plot_lines(
-        self,
-        ax: Axes,
-        data: xr.Dataset,
-        variable: str,
-        n_lines: int,
-        x_dim: str,
-        y_dim: str,
-        z_dim: str,
-        color: Union[str, tuple[float, float, float, float]],
-    ) -> None:
-        """Plot sampled vertical profiles as individual lines."""
-        # define step size for plot
-        x_step = max(1, int(data[x_dim].size / n_lines))
-        y_step = max(1, int(data[y_dim].size / n_lines))
-
-        # loop over x dimension
-        for x in np.arange(data[x_dim].size, step=x_step):
-            # loop over y dimension
-            for y in np.arange(data[y_dim].size, step=y_step):
-                subset = data.isel({x_dim: x, y_dim: y})
-                ax.plot(subset[variable], subset[z_dim], color=color)
-
-    def _plot_shaded(
-        self,
-        ax: Axes,
-        data: xr.Dataset,
-        variable: str,
-        x_dim: str,
-        y_dim: str,
-        z_dim: str,
-        color: Union[str, tuple[float, float, float, float]],
-        alpha: float = 0.3,
-    ) -> None:
-        """Plot horizontal mean profiles with one standard-deviation shading."""
-        # integrate over x and y dimensions: Mean and std
-        integrated = data[variable].mean(dim=[x_dim, y_dim])
-        integrated_std = data[variable].std(dim=[x_dim, y_dim])
-        ax.fill_betweenx(
-            data[z_dim],
-            integrated - integrated_std,
-            integrated + integrated_std,
-            color=color,
-            alpha=alpha,
+        return plot_prognostic_variables(
+            datasets,
+            self.initial_conditions["/init"].dataset,
+            figsize=figsize,
+            n_lines=n_lines,
+            colorful=colorful,
+            time_format=time_format,
+            plot_format=plot_format,
+            color_init=color_init,
         )
 
     def plot_side_views(
@@ -333,12 +187,7 @@ class CaseViewer:
         cbar_width: float = 0.01,
         cmap: str = "viridis",
     ) -> Figure:
-        """Plot 3D Model output in a figure with 3 subplots.
-
-            1. YZ-View (integrated along x axis)
-            2. XY-View (integrated along z axis)
-            3. XZ-View (integrated along y axis)
-            Added text information of the model resolution and wind properties.
+        """Plot 3D model output as three side views, annotated with case information.
 
         Args:
             data:
@@ -357,94 +206,29 @@ class CaseViewer:
         Returns:
             Figure with subplots and text.
         """
-        time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
-        data = data.isel({time_dim: timestep})
+        time_dim, zdim, ydim, xdim = (str(dim) for dim in data[variable].dims)
+        info_text = self.add_text(
+            data.isel({time_dim: timestep}), timestep, xdim, ydim, zdim
+        )
 
-        x_max = data[xdim].max().values
-        y_max = data[ydim].max().values
-        z_max = data[zdim].max().values
-
-        if variable in self.wind_dims:
-            dd_yz = data.mean(dim=str(xdim))
-            dd_xy = data.mean(dim=str(zdim))
-            dd_xz = data.mean(dim=str(ydim))
-        else:
-            dd_yz = data.sum(dim=str(xdim))
-            dd_xy = data.sum(dim=str(zdim))
-            dd_xz = data.sum(dim=str(ydim))
-
-        fig, axs = plt.subplots(
-            2,
-            2,
+        return plot_side_views(
+            data,
+            variable,
+            timestep,
             figsize=figsize,
-            gridspec_kw={
-                "width_ratios": [1, x_max / z_max],
-                "height_ratios": [y_max / z_max, 1],
-            },
+            cbar_width=cbar_width,
+            cmap=cmap,
+            info_text=info_text,
         )
-
-        axs[1, 0].remove()
-
-        # Side view along X
-
-        im = axs[0, 0].pcolormesh(
-            dd_yz[zdim], dd_yz[ydim], dd_yz[variable].T, cmap=cmap
-        )
-        axs[0, 0].set_xlabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
-        axs[0, 0].set_ylabel(f"{ydim} [{data[ydim].attrs.get('units', '-')}]")
-
-        # Top-down view
-        im = axs[0, 1].pcolormesh(dd_xy[xdim], dd_xy[ydim], dd_xy[variable], cmap=cmap)
-        axs[0, 1].set_xticklabels([])
-        axs[0, 1].set_yticklabels([])
-
-        # Side view along Y
-        im = axs[1, 1].pcolormesh(dd_xz[xdim], dd_xz[zdim], dd_xz[variable], cmap=cmap)
-        axs[1, 1].set_xlabel(f"{xdim} [{data[xdim].attrs.get('units', '-')}]")
-        axs[1, 1].set_ylabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
-
-        # Get the position of the rightmost subplot
-        right_bottom = axs[1, 1].get_position()
-        left_top = axs[0, 0].get_position()
-
-        # Set the position and size of the colorbar
-        cbar_ax = fig.add_axes(
-            (
-                float(left_top.xmax - cbar_width),
-                float(right_bottom.ymin),
-                float(cbar_width),
-                float(right_bottom.ymax - right_bottom.ymin),
-            )
-        )
-        fig.colorbar(
-            im,
-            cax=cbar_ax,
-            label=f"{variable} [{data[{variable}].attrs.get('units', '-')}]",
-            ticklocation="left",
-        )
-
-        text = self.add_text(data, timestep, xdim, ydim, zdim)
-
-        fig.text(
-            left_top.xmin,
-            right_bottom.ymax,
-            text,
-            horizontalalignment="left",
-            verticalalignment="top",
-        )
-
-        return fig
 
     def add_text(
         self, data: xr.Dataset, timestep: int, xdim: str, ydim: str, zdim: str
     ) -> str:
         """Format text information of the model for plotting.
 
-        Format text on resolution and wind properties for 'plot_side_views'
-
         Args:
             data:
-                Dataset from which one time step should be plotted.
+                Dataset reduced to the time step which should be plotted.
             timestep:
                 Time step which should be plotted.
             xdim:
@@ -457,54 +241,7 @@ class CaseViewer:
         Returns:
             str: Formatted text.
         """
-        text = []
-
-        # Information about time
-        if pd.api.types.is_numeric_dtype(data["time"]):
-            text.append(f"Timestep: {timestep}, Time: {int(data['time'].values)} s")
-        elif pd.api.types.is_datetime64_any_dtype(data["time"]):
-            formatted_time = data["time"].dt.strftime("%H:%M:%S %d.%m.%Y").values[0]
-            text.append(f"Timestep: {timestep}, Time: {formatted_time}")
-        else:
-            text.append("Time: Unsupported data type")
-
-        # Information about resolution
-
-        text.append("\nGrid resolution")
-        text.append(f"x: {data[xdim].diff(xdim).mean().values:.1f} m")
-        text.append(f"y: {data[ydim].diff(ydim).mean().values:.1f} m")
-        text.append(f"z: {data[zdim].diff(zdim).mean().values:.1f} m")
-
-        # Information about wind
-        try:
-            text.append("\nMean wind")
-            for wind_component in ["u", "v"]:
-                text.append(f"{wind_component}: {data[wind_component].mean():.1f} m/s")
-        except Exception:
-            text.append("Wind data not found.")
-
-        # Information about sources
-        try:
-            source_strength = src.get_source_strength(self.case, to_unit="kg/h")
-            source_height = np.atleast_1d(self.case.config["source"]["source_z0"])
-            if len(source_strength) > 1:
-                # Multiple sources
-                text.append("\nSources")
-                formatted_strength = ", ".join(f"{x:.2f}" for x in source_strength)
-                formatted_height = ", ".join(f"{x:.2f}" for x in source_height)
-            else:
-                # Single source
-                text.append("\nSource")
-                formatted_strength = f"{source_strength[0]:.2f}"
-                formatted_height = f"{source_height[0]:.0f}"
-
-            text.append(f"source strength: {formatted_strength} kg/h")
-            text.append(f"source height: {formatted_height} m")
-
-        except RuntimeError:
-            pass
-
-        return "\n".join(text)
+        return format_case_info(self.case, data, timestep, xdim, ydim, zdim)
 
     def plot_stats(
         self,
@@ -525,30 +262,11 @@ class CaseViewer:
         Returns:
             Figures created for each requested variable.
         """
-        stats = io.open_statistics(self.case)
-
-        variables = utils.object_to_list(variables)
-
-        figures: list[Figure] = []
-        for var in variables:
-            fig, axs = plt.subplots(1, 1, figsize=figsize)
-
-            dims = stats[var].dims
-            ydim = next((d for d in dims if re.fullmatch(r"zh|z", d)), None)
-            kwargs = {"cmap": cmap} if stats[var].ndim == 2 else {}
-
-            if ydim is not None:
-                stats[var].plot(ax=axs, y=ydim, **kwargs)
-            else:
-                stats[var].plot(ax=axs, **kwargs)
-
-            plt.tight_layout()
-            figures.append(fig)
-
-        return figures
+        return plot_stats(self.statistics, variables, figsize=figsize, cmap=cmap)
 
     def compare_nudge(
         self,
+        variables: Union[str, list[str]],
         figsize: tuple[float, float] = (10, 6),
         cmap: str = "RdBu_r",
         percent: bool = False,
@@ -556,6 +274,8 @@ class CaseViewer:
         """Compare the simulated variables with the nudged initial conditions.
 
         Args:
+            variables: Absolute paths of statistics variables to compare with
+                their corresponding ``/timedep/*_nudge`` variables.
             figsize: tuple[int, int]:
                 Figure size for the plot.
             cmap: str:
@@ -567,70 +287,23 @@ class CaseViewer:
         Returns:
             Figure containing the comparison plots.
         """
-        stats = io.open_statistics(self.case)
-        initial_cond = io.open_initial_cond(self.case)
-
-        # get all variables that contain "_nudge" in their name
-        nudge_vars = [
-            str(var) for var in initial_cond.data_vars if "_nudge" in str(var)
-        ]
-        if len(nudge_vars) == 0:
-            raise ValueError("No nudge variables found in initial condition file.")
-
-        # get all time coordinates in initial condition file
-        time_vars = [
-            str(coord) for coord in initial_cond.coords if "time" in str(coord)
-        ]
-        if len(time_vars) == 0:
-            raise ValueError("No time coordinate found in initial condition file.")
-
-        ic_time_values = [initial_cond[time_var].max() for time_var in time_vars]
-        min_time = int(np.nanmin([stats.time.max(), *ic_time_values]))
-
-        # subset to min time (apply to every time coord)
-        stats_sub = stats.sel(time=slice(0, min_time))
-        initial_cond_sub = initial_cond.sel({c: slice(0, min_time) for c in time_vars})
-
-        # interpolate initial conditions to stats times
-        interp_dict = dict.fromkeys(time_vars, stats.time)
-        initial_cond_sub_interp = initial_cond_sub.interp(
-            interp_dict,
-            kwargs={
-                "fill_value": "extrapolate"
-            },  # allow extrapolation because time values may have numerical differences
+        return compare_nudge(
+            self.statistics,
+            self.initial_conditions,
+            variables,
+            figsize=figsize,
+            cmap=cmap,
+            percent=percent,
         )
 
-        fig, axs = plt.subplots(ncols=len(nudge_vars), figsize=figsize, sharey=True)
-        axes = np.atleast_1d(axs)
-        for c, nudge_var in enumerate(nudge_vars):
-            stat_var = nudge_var.replace("_nudge", "")
-            values = stats_sub[stat_var] - initial_cond_sub_interp[nudge_var]
-
-            if percent:
-                values = 100 * values / initial_cond_sub_interp[nudge_var]
-                units = "%"
-            else:
-                units = stats[stat_var].attrs.get("units", "-")
-
-            vmax = np.nanquantile(np.abs(values), 0.99)
-            norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-
-            values.T.plot(  # pyright: ignore
-                ax=axes[c],
-                cmap=cmap,
-                norm=norm,
-                cbar_kwargs={
-                    "label": f"Simulated - Nudged [{units}]",
-                    "orientation": "horizontal",
-                },
-            )
-            axes[c].set_title(stat_var)
-
-        plt.tight_layout()
-        return fig
-
     def compare_wind_profiles(
-        self, timestep: int, figsize: tuple[float, float] = (10, 6)
+        self,
+        timestep: int,
+        figsize: tuple[float, float] = (10, 6),
+        u_path: str = "/default/u",
+        theta_path: str = "/thermo/th",
+        ustar_path: str = "/default/ustar",
+        obuk_path: str = "/default/obuk",
     ) -> Figure:
         """Compare the simulated wind profile with theory.
 
@@ -640,34 +313,25 @@ class CaseViewer:
         Args:
             timestep: Time step to compare.
             figsize: Size of the figure.
+            u_path: Absolute path of the simulated wind profile.
+            theta_path: Absolute path of the potential-temperature profile.
+            ustar_path: Absolute path of the friction-velocity time series.
+            obuk_path: Absolute path of the Obukhov-length time series.
 
         Returns:
             Figure containing the wind profile comparison.
         """
-        initial_cond = io.open_initial_cond(self.case)
-        stats = io.open_statistics(self.case)
-
-        ustar = float(stats.ustar.isel(time=timestep).values)
-        obuk = float(stats.obuk.isel(time=timestep).values)
-        mean_temp = float(stats.th.isel(time=timestep).mean().values)
-
-        u_prof = wind_proc.get_wind_profile(
-            z=initial_cond.z.values,
-            z0=self.case.config["boundary"]["z0m"],
-            u_star=ustar,
-            t=mean_temp,
-            l_mo=obuk,
+        return compare_wind_profiles(
+            self.statistics,
+            self.initial_conditions,
+            timestep,
+            z0m=self.case.config["boundary"]["z0m"],
+            figsize=figsize,
+            u_path=u_path,
+            theta_path=theta_path,
+            ustar_path=ustar_path,
+            obuk_path=obuk_path,
         )
-
-        fig, ax = plt.subplots(ncols=1, nrows=1, figsize=figsize)
-
-        ax.plot(u_prof, initial_cond.z.values, label="theory")
-        ax.plot(stats.isel(time=timestep).u.values, stats.z.values, label="simulation")
-        ax.set_xlabel("Wind speed [m/s]")
-        ax.set_ylabel("Height [m]")
-        ax.legend()
-
-        return fig
 
 
 class VariableViewer:
@@ -700,6 +364,9 @@ class VariableViewer:
         self.fig: Any = None
         self.ax: Any = None
         self.mesh: Any = None
+        # Spatial dimension names, inferred from the data in _init_plot.
+        self.xdim: str = ""
+        self.ydim: str = ""
         self.figsize = figsize
         self.fixed_cbar = fixed_cbar
         self.cmap = cmap
@@ -744,8 +411,9 @@ class VariableViewer:
         self.fig, self.ax = plt.subplots(nrows=1, ncols=1, figsize=self.figsize)
         self.fig.canvas.header_visible = False
 
-        data_init = self.data[self.variable].isel(time=0)
-        ydim, xdim = data_init.dims
+        data_init = self.data[self.variable].isel({self.time_dim: 0})
+        ydim, xdim = (str(dim) for dim in data_init.dims)
+        self.ydim, self.xdim = ydim, xdim
 
         with self.fig_output:
             self.ax.set_aspect("equal")
@@ -782,8 +450,10 @@ class VariableViewer:
     def _format_coord(self, x: float, y: float) -> str:
         """Custom formatter to show x, y, and the data value."""
         try:
-            data = self.data[self.variable].isel(time=self.time_slider.value)
-            val = data.sel(x=x, y=y, method="nearest").values
+            data = self.data[self.variable].isel(
+                {self.time_dim: self.time_slider.value}
+            )
+            val = data.sel({self.xdim: x, self.ydim: y}, method="nearest").values
         except Exception:
             return f"x={x:.1f}, y={y:.1f}"
         else:
@@ -906,6 +576,686 @@ class VariableViewer:
         display(self.ui)
 
 
+def plot_initial_conditions(
+    data_tree: xr.DataTree,
+    ncols: int = 4,
+    figsize: tuple[float, float] = (10, 6),
+    cmap: str = "viridis",
+) -> list[Figure]:
+    """Plot all variables of an initial-condition tree, grouped by their dimensions.
+
+    Args:
+        data_tree: Initial conditions with one node per NetCDF group.
+        ncols: Number of columns in the subplot grid.
+        figsize: Size of the figure.
+        cmap: Colormap to use for 2D variables.
+
+    Returns:
+        Figures created for each group of variables.
+
+    Raises:
+        ValueError: If the tree holds no data variables to plot.
+    """
+    if not _tree_variable_paths(data_tree):
+        raise ValueError(
+            "The initial-condition tree contains no data variables to plot. "
+            f"Groups found: {sorted(data_tree.groups)}."
+        )
+
+    figures: list[Figure] = []
+    for node in data_tree.subtree:
+        group = node.path.strip("/")
+        group_ds = node.dataset
+        sharey = group != "timedep"
+        figures.extend(
+            _plot_group_variables(
+                group_ds, ncols, figsize=figsize, cmap=cmap, sharey=sharey
+            )
+        )
+
+    return figures
+
+
+def _plot_group_variables(
+    ds: xr.Dataset,
+    ncols: int,
+    figsize: tuple[float, float] = (10, 6),
+    cmap: str = "viridis",
+    sharey: bool = True,
+) -> list[Figure]:
+    """Plot all variables from one initial-condition group by dimension set."""
+    # Group variables by their dimension signature
+    dim_groups = {}
+    for var in ds.data_vars:
+        dim_groups.setdefault(ds[var].dims, []).append(var)
+
+    figures: list[Figure] = []
+    for _, vars_list in dim_groups.items():
+        n_vars = len(vars_list)
+        nrows = int(np.ceil(n_vars / ncols))
+
+        # squeeze=False ensures axs is always a 2D array
+        fig, axs = plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize,
+            sharey=sharey,
+            layout="constrained",
+            squeeze=False,
+        )
+
+        for i, var_name in enumerate(vars_list):
+            ax = axs.flat[i]
+            _plot_variable(ds[var_name], ax, cmap)
+            ax.set_title(var_name)
+
+        # Hide empty subplots
+        for ax in axs.flat[n_vars:]:
+            ax.axis("off")
+
+        figures.append(fig)
+
+    return figures
+
+
+def _plot_variable(data: xr.DataArray, ax: Axes, cmap: str = "viridis") -> None:
+    """Plot one scalar, profile, time series, or two-dimensional variable."""
+    dims = data.dims
+    # Check if it is a height profile
+    aux_dim = next((d for d in ["z", "lay"] if d in dims), None)
+    # Check if it is a time series
+    time_dim = next((str(d) for d in dims if "time_" in str(d)), None)
+
+    if len(dims) == 0:
+        ax.axhline(float(data.values), linestyle="--")
+
+    elif len(dims) == 1:
+        if aux_dim:
+            data.plot(ax=ax, y=aux_dim, marker="x")  # pyright: ignore
+        elif time_dim:
+            data.plot(ax=ax, marker="x")  # pyright: ignore
+        else:
+            data.plot(ax=ax)  # pyright: ignore
+
+    elif len(dims) == 2:
+        data.T.plot(  # pyright: ignore
+            ax=ax, cmap=cmap, cbar_kwargs={"orientation": "horizontal", "pad": 0.1}
+        )
+
+
+def plot_prognostic_variables(
+    data: Mapping[str, xr.Dataset],
+    data_initial: xr.Dataset,
+    figsize: tuple[float, float] = (10, 6),
+    n_lines: int = 5,
+    colorful: bool = True,
+    time_format: str = "h",
+    plot_format: Literal["line", "shaded"] = "line",
+    color_init: str = "k",
+) -> Figure:
+    """Plot vertical profiles of prognostic variables over time.
+
+    Args:
+        data: Mapping of variable name to the dataset containing it. One subplot
+            is created per entry, in insertion order.
+        data_initial: Initial conditions, plotted as the prescribed profile.
+        figsize: Size of the figure.
+        n_lines: Number of profiles to sample per dimension.
+        colorful: Whether to colour the profiles by time.
+        time_format: Time unit of the colorbar, one of ``s``, ``min``, ``h``.
+        plot_format: Whether to draw individual lines or a shaded envelope.
+        color_init: Colour of the prescribed initial profile.
+
+    Returns:
+        Figure with one subplot per variable.
+    """
+    variables = list(data)
+    time_factor = _get_time_factor(time_format)
+
+    fig, ax = plt.subplots(ncols=len(variables), figsize=figsize, sharey=True)
+    axes = np.atleast_1d(ax)
+    sm: Optional[ScalarMappable] = None
+    color: Union[str, tuple[float, float, float, float]] = color_init
+
+    for c, component in enumerate(variables):
+        current_data = data[component]
+
+        # get dim names from variable
+        time_dim, z_dim, y_dim, x_dim = [
+            str(dim) for dim in current_data[component].dims
+        ]
+        t_step = max(1, int(current_data[time_dim].size / n_lines))
+
+        # Normalize the time values to range [0, 1] for colormap
+        norm = Normalize(
+            vmin=0,
+            vmax=float(np.asarray(current_data[time_dim].max().values).item())
+            / time_factor,
+        )
+
+        # Create a ScalarMappable and set the colormap
+        cmap = colormaps["viridis"]
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])  # Only needed for the colorbar to work
+
+        for t in np.arange(current_data[time_dim].size, step=t_step):
+            subset_t = current_data.isel({time_dim: int(t)})
+            if colorful:
+                norm_value = (
+                    float(np.asarray(subset_t[time_dim].values).item()) / time_factor
+                )
+                rgba = tuple(float(value) for value in cmap(norm(norm_value)))
+                color = cast(tuple[float, float, float, float], rgba)
+            else:
+                color = "gray"
+            if plot_format == "line":
+                _plot_lines(
+                    ax=axes[c],
+                    data=subset_t,
+                    variable=component,
+                    n_lines=n_lines,
+                    x_dim=x_dim,
+                    y_dim=y_dim,
+                    z_dim=z_dim,
+                    color=color,
+                )
+
+            elif plot_format == "shaded":
+                _plot_shaded(
+                    ax=axes[c],
+                    data=subset_t,
+                    variable=component,
+                    x_dim=x_dim,
+                    y_dim=y_dim,
+                    z_dim=z_dim,
+                    color=color,
+                )
+
+        # plot initial conditions
+        axes[c].plot(
+            data_initial[component],
+            data_initial.z,
+            label="prescribed",
+            color=color_init,
+        )
+        axes[c].set_xlabel(
+            f"{component} [{current_data[component].attrs.get('units', '-')}]"
+        )
+
+    axes[0].set_ylabel("Height [m]")
+
+    if colorful and sm is not None:
+        # create colorbar
+        cbar = fig.colorbar(sm, ax=axes)
+        cbar.set_label(f"Time [{time_format}]")
+        axes[-1].legend(loc="upper right")
+    else:
+        # create legend manually
+        lines = [Line2D([0], [0], color=c) for c in [color_init, color]]
+        labels = ["initial", "simulated"]
+        axes[-1].legend(lines, labels, loc="upper right")
+
+    return fig
+
+
+def _get_time_factor(time_format: str) -> int:
+    """Return the divisor that converts seconds to the requested time unit."""
+    # define factor for time format
+    if time_format == "s":
+        time_factor = 1
+    elif time_format == "min":
+        time_factor = 60
+    elif time_format == "h":
+        time_factor = 60**2
+    else:
+        raise ValueError(
+            f"Time format {time_format} is not supported. "
+            "Use 's', 'min' or 'h' instead."
+        )
+
+    return time_factor
+
+
+def _plot_lines(
+    ax: Axes,
+    data: xr.Dataset,
+    variable: str,
+    n_lines: int,
+    x_dim: str,
+    y_dim: str,
+    z_dim: str,
+    color: Union[str, tuple[float, float, float, float]],
+) -> None:
+    """Plot sampled vertical profiles as individual lines."""
+    # define step size for plot
+    x_step = max(1, int(data[x_dim].size / n_lines))
+    y_step = max(1, int(data[y_dim].size / n_lines))
+
+    # loop over x dimension
+    for x in np.arange(data[x_dim].size, step=x_step):
+        # loop over y dimension
+        for y in np.arange(data[y_dim].size, step=y_step):
+            subset = data.isel({x_dim: x, y_dim: y})
+            ax.plot(subset[variable], subset[z_dim], color=color)
+
+
+def _plot_shaded(
+    ax: Axes,
+    data: xr.Dataset,
+    variable: str,
+    x_dim: str,
+    y_dim: str,
+    z_dim: str,
+    color: Union[str, tuple[float, float, float, float]],
+    alpha: float = 0.3,
+) -> None:
+    """Plot horizontal mean profiles with one standard-deviation shading."""
+    # integrate over x and y dimensions: Mean and std
+    integrated = data[variable].mean(dim=[x_dim, y_dim])
+    integrated_std = data[variable].std(dim=[x_dim, y_dim])
+    ax.fill_betweenx(
+        data[z_dim],
+        integrated - integrated_std,
+        integrated + integrated_std,
+        color=color,
+        alpha=alpha,
+    )
+
+
+def plot_side_views(
+    data: xr.Dataset,
+    variable: str,
+    timestep: int,
+    figsize: tuple[float, float] = (10, 6),
+    cbar_width: float = 0.01,
+    cmap: str = "viridis",
+    info_text: Optional[str] = None,
+) -> Figure:
+    """Plot 3D Model output in a figure with 3 subplots.
+
+        1. YZ-View (integrated along x axis)
+        2. XY-View (integrated along z axis)
+        3. XZ-View (integrated along y axis)
+
+    Args:
+        data:
+            Dataset containing the variable
+        variable:
+            Name of the variable to be plotted.
+        timestep:
+            Time step to be plotted.
+        figsize:
+            Size of the figure.
+        cbar_width:
+            Width of colorbar.
+        cmap:
+            Colormap to use for plotting.
+        info_text:
+            Text to annotate the figure with, e.g. from
+            :func:`format_case_info`. No annotation is added if omitted.
+
+    Returns:
+        Figure with subplots and text.
+    """
+    time_dim, zdim, ydim, xdim = [str(dim) for dim in data[variable].dims]
+    data = data.isel({time_dim: timestep})
+
+    x_max = data[xdim].max().values
+    y_max = data[ydim].max().values
+    z_max = data[zdim].max().values
+
+    if variable in WIND_DIMS:
+        dd_yz = data.mean(dim=str(xdim))
+        dd_xy = data.mean(dim=str(zdim))
+        dd_xz = data.mean(dim=str(ydim))
+    else:
+        dd_yz = data.sum(dim=str(xdim))
+        dd_xy = data.sum(dim=str(zdim))
+        dd_xz = data.sum(dim=str(ydim))
+
+    fig, axs = plt.subplots(
+        2,
+        2,
+        figsize=figsize,
+        gridspec_kw={
+            "width_ratios": [1, x_max / z_max],
+            "height_ratios": [y_max / z_max, 1],
+        },
+    )
+
+    axs[1, 0].remove()
+
+    # Side view along X
+
+    im = axs[0, 0].pcolormesh(dd_yz[zdim], dd_yz[ydim], dd_yz[variable].T, cmap=cmap)
+    axs[0, 0].set_xlabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
+    axs[0, 0].set_ylabel(f"{ydim} [{data[ydim].attrs.get('units', '-')}]")
+
+    # Top-down view
+    im = axs[0, 1].pcolormesh(dd_xy[xdim], dd_xy[ydim], dd_xy[variable], cmap=cmap)
+    axs[0, 1].set_xticklabels([])
+    axs[0, 1].set_yticklabels([])
+
+    # Side view along Y
+    im = axs[1, 1].pcolormesh(dd_xz[xdim], dd_xz[zdim], dd_xz[variable], cmap=cmap)
+    axs[1, 1].set_xlabel(f"{xdim} [{data[xdim].attrs.get('units', '-')}]")
+    axs[1, 1].set_ylabel(f"{zdim} [{data[zdim].attrs.get('units', '-')}]")
+
+    # Get the position of the rightmost subplot
+    right_bottom = axs[1, 1].get_position()
+    left_top = axs[0, 0].get_position()
+
+    # Set the position and size of the colorbar
+    cbar_ax = fig.add_axes(
+        (
+            float(left_top.xmax - cbar_width),
+            float(right_bottom.ymin),
+            float(cbar_width),
+            float(right_bottom.ymax - right_bottom.ymin),
+        )
+    )
+    fig.colorbar(
+        im,
+        cax=cbar_ax,
+        label=f"{variable} [{data[variable].attrs.get('units', '-')}]",
+        ticklocation="left",
+    )
+
+    if info_text is not None:
+        fig.text(
+            left_top.xmin,
+            right_bottom.ymax,
+            info_text,
+            horizontalalignment="left",
+            verticalalignment="top",
+        )
+
+    return fig
+
+
+def format_case_info(
+    case: init.Case,
+    data: xr.Dataset,
+    timestep: int,
+    xdim: str,
+    ydim: str,
+    zdim: str,
+) -> str:
+    """Format text information of the model for plotting.
+
+    Format text on resolution and wind properties for 'plot_side_views'
+
+    Args:
+        case:
+            Case the data belongs to, used for the source information.
+        data:
+            Dataset reduced to the time step which should be plotted.
+        timestep:
+            Time step which should be plotted.
+        xdim:
+            Name of x dimension in dataset.
+        ydim:
+            Name of y dimension in dataset.
+        zdim:
+            Name of z dimension in dataset.
+
+    Returns:
+        str: Formatted text.
+    """
+    text = []
+
+    # Information about time
+    if pd.api.types.is_numeric_dtype(data["time"]):
+        text.append(f"Timestep: {timestep}, Time: {int(data['time'].values)} s")
+    elif pd.api.types.is_datetime64_any_dtype(data["time"]):
+        formatted_time = data["time"].dt.strftime("%H:%M:%S %d.%m.%Y").values[0]
+        text.append(f"Timestep: {timestep}, Time: {formatted_time}")
+    else:
+        text.append("Time: Unsupported data type")
+
+    # Information about resolution
+
+    text.append("\nGrid resolution")
+    text.append(f"x: {data[xdim].diff(xdim).mean().values:.1f} m")
+    text.append(f"y: {data[ydim].diff(ydim).mean().values:.1f} m")
+    text.append(f"z: {data[zdim].diff(zdim).mean().values:.1f} m")
+
+    # Information about wind
+    try:
+        text.append("\nMean wind")
+        for wind_component in ["u", "v"]:
+            text.append(f"{wind_component}: {data[wind_component].mean():.1f} m/s")
+    except Exception:
+        text.append("Wind data not found.")
+
+    # Information about sources
+    try:
+        source_strength = src.get_source_strength(case, to_unit="kg/h")
+        source_height = np.atleast_1d(case.config["source"]["source_z0"])
+        if len(source_strength) > 1:
+            # Multiple sources
+            text.append("\nSources")
+            formatted_strength = ", ".join(f"{x:.2f}" for x in source_strength)
+            formatted_height = ", ".join(f"{x:.2f}" for x in source_height)
+        else:
+            # Single source
+            text.append("\nSource")
+            formatted_strength = f"{source_strength[0]:.2f}"
+            formatted_height = f"{source_height[0]:.0f}"
+
+        text.append(f"source strength: {formatted_strength} kg/h")
+        text.append(f"source height: {formatted_height} m")
+
+    except (RuntimeError, ValueError, KeyError) as error:
+        logger.info("Skipping source information: %s", error)
+
+    return "\n".join(text)
+
+
+def plot_stats(
+    stats: xr.DataTree,
+    variables: Union[str, list],
+    figsize: tuple[float, float] = (10, 6),
+    cmap: str = "viridis",
+) -> list[Figure]:
+    """Plot variables from the statistics netcdf file.
+
+    Args:
+        stats:
+            Statistics tree of the model run.
+        variables:
+            Absolute variable paths within the statistics tree to plot.
+        figsize: tuple[int, int]:
+            Figure size for the plot.
+        cmap: str:
+            Colormap to use for plotting.
+
+    Returns:
+        Figures created for each requested variable.
+    """
+    variables = utils.object_to_list(variables)
+
+    figures: list[Figure] = []
+    for variable_path in variables:
+        variable = _get_data_array(stats, str(variable_path))
+        fig, axs = plt.subplots(1, 1, figsize=figsize)
+
+        dims = [str(dim) for dim in variable.dims]
+        ydim = next((dim for dim in dims if re.fullmatch(r"zh|z", dim)), None)
+        kwargs = {"cmap": cmap} if variable.ndim == 2 else {}
+
+        if ydim is not None:
+            variable.plot(ax=axs, y=ydim, **kwargs)  # pyright: ignore
+        else:
+            variable.plot(ax=axs, **kwargs)  # pyright: ignore
+
+        plt.tight_layout()
+        figures.append(fig)
+
+    return figures
+
+
+def compare_nudge(
+    stats: xr.DataTree,
+    initial_cond: xr.DataTree,
+    variables: Union[str, list[str]],
+    figsize: tuple[float, float] = (10, 6),
+    cmap: str = "RdBu_r",
+    percent: bool = False,
+) -> Figure:
+    """Compare the simulated variables with the nudged initial conditions.
+
+    Args:
+        stats:
+            Statistics tree of the model run.
+        initial_cond:
+            Initial-condition tree containing the ``/timedep/*_nudge`` variables.
+        variables:
+            Absolute paths of statistics variables to compare. Each basename is
+            paired with ``/timedep/<basename>_nudge``.
+        figsize: tuple[int, int]:
+            Figure size for the plot.
+        cmap: str:
+            Colormap to use for plotting.
+        percent: bool:
+            Whether to plot the difference as a percentage of the
+            initial conditions.
+
+    Returns:
+        Figure containing the comparison plots.
+    """
+    variable_paths = [str(path) for path in utils.object_to_list(variables)]
+    if not variable_paths:
+        raise ValueError("At least one statistics variable path is required.")
+
+    fig, axs = plt.subplots(ncols=len(variable_paths), figsize=figsize, sharey=True)
+    axes = np.atleast_1d(axs)
+    for c, variable_path in enumerate(variable_paths):
+        stat_var = _get_data_array(stats, variable_path)
+        if stat_var.name is None:
+            raise ValueError(f"Statistics path '{variable_path}' has no variable name.")
+
+        nudge_path = f"/timedep/{stat_var.name}_nudge"
+        nudge_var = _get_data_array(initial_cond, nudge_path)
+        time_dims = [str(dim) for dim in nudge_var.dims if "time" in str(dim)]
+        if len(time_dims) != 1:
+            raise ValueError(
+                f"Nudge variable '{nudge_path}' must have exactly one time dimension."
+            )
+
+        time_dim = time_dims[0]
+        stat_time = stat_var["time"]
+        nudge_time = nudge_var[time_dim]
+        if stat_time.dtype != nudge_time.dtype:
+            raise ValueError(
+                f"Time coordinate of '{variable_path}' ({stat_time.dtype}) and of "
+                f"'{nudge_path}' ({nudge_time.dtype}) must have the same dtype."
+            )
+
+        min_time = min(stat_time.max().values, nudge_time.max().values)
+        stat_var = stat_var.sel(time=slice(None, min_time))
+        nudge_var = nudge_var.sel({time_dim: slice(None, min_time)}).interp(
+            {time_dim: stat_var["time"]},
+            kwargs={"fill_value": "extrapolate"},
+        )
+        values = stat_var - nudge_var
+
+        if percent:
+            values = 100 * values / nudge_var
+            units = "%"
+        else:
+            units = stat_var.attrs.get("units", "-")
+
+        vmax = np.nanquantile(np.abs(values), 0.99)
+        norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+
+        values.T.plot(  # pyright: ignore
+            ax=axes[c],
+            cmap=cmap,
+            norm=norm,
+            cbar_kwargs={
+                "label": f"Simulated - Nudged [{units}]",
+                "orientation": "horizontal",
+            },
+        )
+        axes[c].set_title(stat_var.name)
+
+    plt.tight_layout()
+    return fig
+
+
+def compare_wind_profiles(
+    stats: xr.DataTree,
+    initial_cond: xr.DataTree,
+    timestep: int,
+    z0m: float,
+    figsize: tuple[float, float] = (10, 6),
+    u_path: str = "/default/u",
+    theta_path: str = "/thermo/th",
+    ustar_path: str = "/default/ustar",
+    obuk_path: str = "/default/obuk",
+) -> Figure:
+    """Compare the simulated wind profile with theory.
+
+    Compare if the simulated wind profile matches the theoretical logarithmic
+    wind profile from Monin-Obukhov similarity theory.
+
+    Args:
+        stats: Statistics tree of the model run.
+        initial_cond: Initial-condition tree, used for the height levels.
+        timestep: Time step to compare.
+        z0m: Roughness length for momentum, from the ``boundary`` config block.
+        figsize: Size of the figure.
+        u_path: Absolute path of the simulated wind profile.
+        theta_path: Absolute path of the potential-temperature profile.
+        ustar_path: Absolute path of the friction-velocity time series.
+        obuk_path: Absolute path of the Obukhov-length time series.
+
+    Returns:
+        Figure containing the wind profile comparison.
+
+    Raises:
+        ValueError: If the wind profile has no single vertical dimension, or no
+            coordinate for it.
+    """
+    u = _get_data_array(stats, u_path)
+    theta = _get_data_array(stats, theta_path)
+    ustar = float(_get_data_array(stats, ustar_path).isel(time=timestep).values)
+    obuk = float(_get_data_array(stats, obuk_path).isel(time=timestep).values)
+    mean_temp = float(theta.isel(time=timestep).mean().values)
+
+    # Wind components can live on either the full ("z") or the staggered ("zh") levels
+    z_sim = _get_vertical_coordinate(u, u_path)
+
+    z_theory = z_sim
+    try:
+        z_theory = _get_data_array(initial_cond, f"/{z_sim.name}")
+    except KeyError:
+        logger.debug(
+            "Initial conditions have no '/%s' coordinate; evaluating the "
+            "theoretical profile on the simulated levels.",
+            z_sim.name,
+        )
+
+    u_prof = wind_proc.get_wind_profile(
+        z=z_theory.values,
+        z0=z0m,
+        u_star=ustar,
+        t=mean_temp,
+        l_mo=obuk,
+    )
+
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=figsize)
+
+    ax.plot(u_prof, z_theory.values, label="theory")
+    ax.plot(u.isel(time=timestep).values, z_sim.values, label="simulation")
+    ax.set_xlabel("Wind speed [m/s]")
+    ax.set_ylabel("Height [m]")
+    ax.legend()
+
+    return fig
+
+
 def plot_initial_conditions_comparison(
     case1: init.Case,
     case2: init.Case,
@@ -922,8 +1272,8 @@ def plot_initial_conditions_comparison(
     Args:
         case1: First case to compare.
         case2: Second case to compare.
-        variables: Variables to compare. When omitted, all common variables
-            will be compared.
+        variables: Absolute variable paths to compare. When omitted, all common
+            data-variable paths are compared.
         show_differences: Whether to show the difference between the two cases
             in a third subplot.
         figsize: Size of the figure for each variable.
@@ -934,38 +1284,54 @@ def plot_initial_conditions_comparison(
     Returns:
         Figures created for each compared variable.
     """
-    # compare initial conditions of the two cases
-    ic_case1 = io.open_initial_cond(case1).sel(subset_kwargs)
-    ic_case2 = io.open_initial_cond(case2).sel(subset_kwargs)
+    ic_tree1 = io.open_initial_cond(case1)
+    ic_tree2 = io.open_initial_cond(case2)
 
     variables = (
         utils.object_to_list(variables)
         if variables is not None
-        else list(set(ic_case1.data_vars).intersection(ic_case2.data_vars))
+        else sorted(_tree_variable_paths(ic_tree1) & _tree_variable_paths(ic_tree2))
     )
 
     ncols = 2 if not show_differences else 3
 
     figures: list[Figure] = []
-    for var in variables:
+    for variable_path in variables:
+        variable_path = str(variable_path)
+        ic_case1 = _get_data_array(ic_tree1, variable_path)
+        ic_case2 = _get_data_array(ic_tree2, variable_path)
+        if subset_kwargs is not None:
+            selectors1 = {
+                key: value
+                for key, value in subset_kwargs.items()
+                if key in ic_case1.dims or key in ic_case1.coords
+            }
+            selectors2 = {
+                key: value
+                for key, value in subset_kwargs.items()
+                if key in ic_case2.dims or key in ic_case2.coords
+            }
+            ic_case1 = ic_case1.sel(selectors1)
+            ic_case2 = ic_case2.sel(selectors2)
+
         fig, ax = plt.subplots(ncols=ncols, figsize=figsize, sharey=True)
-        time_dims = [dim for dim in ic_case1[var].dims if "time" in str(dim)]
+        time_dims = [dim for dim in ic_case1.dims if "time" in str(dim)]
 
         x_dim = time_dims[0] if time_dims else None
-        y_dim = "z" if "z" in ic_case1[var].dims else None
+        y_dim = "z" if "z" in ic_case1.dims else None
 
         plot_kwargs = {"y": y_dim, "x": x_dim}
 
-        if ic_case1[var].ndim > 1:
+        if ic_case1.ndim > 1:
             plot_kwargs["cbar_kwargs"] = {"orientation": "horizontal", "pad": 0.15}
 
-        ic_case1[var].plot(ax=ax[0], **plot_kwargs)  # pyright: ignore
+        ic_case1.plot(ax=ax[0], **plot_kwargs)  # pyright: ignore
         ax[0].set_title(case1.suffix)
-        ic_case2[var].plot(ax=ax[1], **plot_kwargs)  # pyright: ignore
+        ic_case2.plot(ax=ax[1], **plot_kwargs)  # pyright: ignore
         ax[1].set_title(case2.suffix)
 
         if show_differences:
-            diff = _compute_difference(ic_case1, ic_case2, var)
+            diff = _compute_difference(ic_case1, ic_case2)
             diff.plot(ax=ax[2], **plot_kwargs)  # pyright: ignore
             ax[2].set_title("Difference")
 
@@ -975,36 +1341,32 @@ def plot_initial_conditions_comparison(
     return figures
 
 
-def _compute_difference(ic1: xr.Dataset, ic2: xr.Dataset, var: str) -> xr.DataArray:
-    """Compute difference between two initial condition datasets.
+def _compute_difference(ic1: xr.DataArray, ic2: xr.DataArray) -> xr.DataArray:
+    """Compute the difference between two initial-condition variables.
 
     Compute the difference between two initial condition datasets for a given
     variable, handling interpolation if needed.
 
     Args:
-        ic1: First initial condition dataset.
-        ic2: Second initial condition dataset.
-        var: Variable name to compare.
+        ic1: First initial-condition variable.
+        ic2: Second initial-condition variable.
 
     Returns:
-        DataArray containing the difference (ic1 - ic2) for the specified variable.
+        Difference ``ic1 - ic2``.
     """
-    da1 = ic1[var]
-    da2 = ic2[var]
-
     # Interpolate case2 onto case1's time grid if needed
     if (
-        "time" in da1.dims
-        and "time" in da2.dims
-        and not da1["time"].equals(da2["time"])
+        "time" in ic1.dims
+        and "time" in ic2.dims
+        and not ic1["time"].equals(ic2["time"])
     ):
-        da2 = da2.interp(time=da1["time"])
+        ic2 = ic2.interp(time=ic1["time"])
 
     # Interpolate case2 onto case1's z grid if needed
-    if "z" in da1.dims and "z" in da2.dims and not da1["z"].equals(da2["z"]):
-        da2 = da2.interp(z=da1["z"])
+    if "z" in ic1.dims and "z" in ic2.dims and not ic1["z"].equals(ic2["z"]):
+        ic2 = ic2.interp(z=ic1["z"])
 
-    return da1 - da2
+    return ic1 - ic2
 
 
 def plot_gas_weight(
@@ -1089,7 +1451,7 @@ def plot_case_comparison(
 
     Args:
         cases: One or more case objects.
-        variables: One or more variable names to plot.
+        variables: One or more absolute statistics-variable paths to plot.
         difference: If True, plot differences to the default case.
             If False, plot absolute values.
         default_case_index: Index of the default case used when
@@ -1103,60 +1465,55 @@ def plot_case_comparison(
     cases = utils.object_to_list(cases)
     variables = utils.object_to_list(variables)
 
-    # Load statistics
-    case_stats = [io.open_statistics(case) for case in cases]
-
-    # Determine the reference time axis with the most steps
-    max_idx = int(np.argmax([s.sizes["time"] for s in case_stats]))
-    ref_time = case_stats[max_idx].time
-
-    processed_stats = []
-    for stats in case_stats:
-        # Check if the current time axis matches the reference
-        if np.allclose(stats.time, ref_time, atol=1e-5):
-            processed_stats.append(stats)
-        else:
-            logger.info("Interpolating case to match reference time axis.")
-            interpolated = stats.interp(time=ref_time)
-            processed_stats.append(interpolated)
-
-    case_stats = processed_stats
-
-    # Prepare cases for comparison
-    default_stats: Optional[xr.Dataset] = None
-    if difference:
-        default_stats = case_stats[default_case_index]
-        comp_cases_stats = [
-            (case, stats)
-            for i, (case, stats) in enumerate(zip(cases, case_stats))
-            if i != default_case_index
-        ]
-    else:
-        comp_cases_stats = list(zip(cases, case_stats))
-
-    if not comp_cases_stats:
-        raise ValueError("No cases to compare after excluding default case.")
+    statistics = [io.open_statistics(case) for case in cases]
 
     figures: list[Figure] = []
-    for var in variables:
-        # Extract values and metadata
+    for variable_path in variables:
+        variable_path = str(variable_path)
+        case_stats = [_get_data_array(stats, variable_path) for stats in statistics]
+
+        max_idx = int(np.argmax([stats.sizes["time"] for stats in case_stats]))
+        ref_time = case_stats[max_idx].time
+        processed_stats: list[xr.DataArray] = []
+        for stats in case_stats:
+            if np.allclose(stats.time, ref_time, atol=1e-5):
+                processed_stats.append(stats)
+            else:
+                logger.info("Interpolating case to match reference time axis.")
+                processed_stats.append(stats.interp(time=ref_time))
+
+        default_stats: Optional[xr.DataArray] = None
+        if difference:
+            default_stats = processed_stats[default_case_index]
+            comp_cases_stats = [
+                (case, stats)
+                for i, (case, stats) in enumerate(zip(cases, processed_stats))
+                if i != default_case_index
+            ]
+        else:
+            comp_cases_stats = list(zip(cases, processed_stats))
+
+        if not comp_cases_stats:
+            raise ValueError("No cases to compare after excluding default case.")
+
         ref_stats = comp_cases_stats[0][1]
-        units = ref_stats[var].attrs.get("units", "-")
-        dims = [str(dim) for dim in ref_stats[var].dims]
+        units = ref_stats.attrs.get("units", "-")
+        dims = [str(dim) for dim in ref_stats.dims]
 
         if len(dims) != 2:
             raise ValueError(
-                f"Variable '{var}' does not have 2 dimensions. Found dimensions: {dims}"
+                f"Variable '{variable_path}' does not have 2 dimensions. "
+                f"Found dimensions: {dims}"
             )
 
         # Prepare data values
         if difference and default_stats is not None:
-            default_values = default_stats[var].values
-            vals = [stats[var].values - default_values for _, stats in comp_cases_stats]
-            clabel = f"{var} difference [{units}]"
+            default_values = default_stats.values
+            vals = [stats.values - default_values for _, stats in comp_cases_stats]
+            clabel = f"{variable_path} difference [{units}]"
         else:
-            vals = [stats[var].values for _, stats in comp_cases_stats]
-            clabel = f"{var} [{units}]"
+            vals = [stats.values for _, stats in comp_cases_stats]
+            clabel = f"{variable_path} [{units}]"
 
         # Determine color normalization
         concatenated = np.concatenate([v.ravel() for v in vals])
@@ -1169,8 +1526,8 @@ def plot_case_comparison(
 
         # Plot data
         for ax, val, (case, stats) in zip(axs, vals, comp_cases_stats):
-            x_coord: xr.DataArray = stats[dims[0]]
-            y_coord: xr.DataArray = stats[dims[1]]
+            x_coord = stats[dims[0]]
+            y_coord = stats[dims[1]]
 
             ax.pcolormesh(
                 x_coord.values,
@@ -1187,7 +1544,7 @@ def plot_case_comparison(
             ax.set_xlabel(xlabel)
             ax.set_title(case.suffix)
 
-        y_coord = comp_cases_stats[0][1][dims[1]]
+        y_coord = ref_stats[dims[1]]
         ylabel = (
             f"{y_coord.attrs.get('long_name', '')} [{y_coord.attrs.get('units', '-')}]"
         )
@@ -1507,10 +1864,18 @@ def _format_time_label(value: object) -> str:
 
 
 __all__ = [
+    "WIND_DIMS",
     "CaseViewer",
     "VariableViewer",
+    "compare_nudge",
+    "compare_wind_profiles",
+    "format_case_info",
     "plot_case_comparison",
     "plot_gas_weight",
+    "plot_initial_conditions",
     "plot_initial_conditions_comparison",
     "plot_optical_flow_wind_snapshots",
+    "plot_prognostic_variables",
+    "plot_side_views",
+    "plot_stats",
 ]

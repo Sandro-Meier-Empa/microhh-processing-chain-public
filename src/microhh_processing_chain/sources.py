@@ -69,9 +69,21 @@ def _get_dynamic_source_strength(
 
     Returns:
         Source strengths from the initial-condition file.
+
+    Raises:
+        ValueError: If the initial-condition file has no ``/timedep`` group or no
+            ``source_strength_*`` variables in it.
     """
-    # Load time-dependent strength data
-    initial_cond = io.open_initial_cond(case)
+    tree = io.open_initial_cond(case)
+    if "/timedep" not in tree.groups:
+        raise ValueError(
+            f"'{case.initial_conditions_file_path}' has no '/timedep' group, which "
+            "is required for time-dependent source strengths. Either rebuild the "
+            "initial conditions with the source strengths or set "
+            "'[source] swtimedep_strength = False'."
+        )
+
+    initial_cond = tree["/timedep"].dataset
 
     # get all data variables with "source_strength_*"
     strength_vars = [

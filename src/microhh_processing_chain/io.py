@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 import microhhpy  # pyright: ignore[reportMissingImports]
-import netCDF4
 import pandas as pd
 import xarray as xr
 
@@ -54,36 +53,45 @@ def open_microhh_nc(
     return data
 
 
-def open_initial_cond(case: "Case") -> xr.Dataset:
-    """Read the netCDF file containing the initial conditions.
+def open_initial_cond(case: "Case") -> xr.DataTree:
+    """Open the NetCDF file containing the initial conditions.
+
+    Access variables by their absolute group path. Extract a group's dataset
+    from its node's ``dataset`` property; the tree's own ``dataset`` property
+    contains the root dataset.
 
     Args:
         case: Case for which the initial conditions should be read.
 
     Returns:
-        Initial-condition dataset with all NetCDF groups merged.
+        Initial conditions with the NetCDF group structure preserved.
+
+    Examples:
+        >>> tree = open_initial_cond(case)
+        >>> u = tree["/init/u"]
+        >>> initial_profiles = tree["/init"].dataset
+        >>> root = tree.dataset
     """
-    return _combine_nc_groups(case.initial_conditions_file_path)
+    return xr.open_datatree(case.initial_conditions_file_path, decode_times=False)
 
 
-def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
-    """Combine all groups in a NetCDF file into one dataset."""
-    groups = ["", *list(netCDF4.Dataset(file_path).groups.keys())]
-    merged_dataset = xr.Dataset()
-    for group in groups:
-        ds = xr.open_dataset(file_path, group=group, decode_times=False)
-        merged_dataset = xr.merge([merged_dataset, ds], compat="override", join="outer")
+def open_statistics(case: "Case") -> xr.DataTree:
+    """Open the NetCDF file containing model-run statistics.
 
-    return merged_dataset
-
-
-def open_statistics(case: "Case") -> xr.Dataset:
-    """Read the NetCDF file containing model-run statistics.
+    Access variables by their absolute group path. Extract a group's dataset
+    from its node's ``dataset`` property; the tree's own ``dataset`` property
+    contains the root dataset.
 
     Returns:
-        Statistics dataset with all NetCDF groups merged.
+        Statistics with the NetCDF group structure preserved.
+
+    Examples:
+        >>> tree = open_statistics(case)
+        >>> u = tree["/default/u"]
+        >>> default_statistics = tree["/default"].dataset
+        >>> root = tree.dataset
     """
-    return _combine_nc_groups(case.statistics_file_path)
+    return xr.open_datatree(case.statistics_file_path, decode_times=False)
 
 
 def open_microhh_out(case: "Case") -> pd.DataFrame:

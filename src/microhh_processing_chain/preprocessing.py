@@ -6,7 +6,7 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import cscs
 import ls2d
@@ -100,6 +100,9 @@ class PreProcessing:
         self._check_microhh_build_architecture()
         self._check_jobpreport_gpu()
 
+        self._validated = False
+        self._restart_time: Optional[int] = None
+
     def _get_microhh_executable_path(self) -> Path:
         """Resolve the MicroHH executable path from a file or containing directory."""
         microhh_executable_path = Path(self._microhh_executable_path)
@@ -189,12 +192,15 @@ class PreProcessing:
 
         Notes:
             Validation preserves the existing GPU setup behavior and may normalize
-            ``npx`` and ``npy`` in the INI file when MPI is disabled.
+            ``npx`` and ``npy`` in the INI file when MPI is disabled. It must run
+            before :meth:`copy_required_files` and :meth:`create_run_script`,
+            because both rely on the normalized INI file.
         """
         if restart_time is not None:
             self._check_restart_ini_updated(restart_time)
 
         self._check_ini_setup_valid()
+        self._validated = True
 
     def copy_required_files(
         self,
@@ -208,9 +214,12 @@ class PreProcessing:
             restart_time: Time in seconds identifying the restart files to copy.
 
         Raises:
+            RuntimeError: If :meth:`validate` has not been called yet.
             ValueError: If only one restart argument is provided.
             FileNotFoundError: If a required core case file is missing after copying.
         """
+        self._require_validation("copy_required_files")
+
         has_restart_case = restart_case is not None
         has_restart_time = restart_time is not None
         if has_restart_case != has_restart_time:
@@ -227,6 +236,9 @@ class PreProcessing:
                 origin=restart_case.directory,
                 timestr=restart_str,
             )
+            # Remember the restart so that `create_run_script` skips the "init"
+            # phase, which would overwrite the restart fields just copied.
+            self._restart_time = restart_time
 
         self._check_required_files()
 
@@ -382,9 +394,26 @@ class PreProcessing:
             logger.info("Cancelling simulation %s", self.case.job_id)
 
     def create_run_script(
-        self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
+        self, overwrite: bool = False, mode: Optional[Union[RunMode, str]] = None
     ) -> cscs.SlurmJob:
-        """Create a bash script to run the MicroHH simulation."""
+        """Create a bash script to run the MicroHH simulation.
+
+        Args:
+            overwrite: Whether to overwrite an existing sbatch script.
+            mode: Run mode passed to MicroHH. When omitted, the mode follows the
+                preparation: :data:`RunMode.RERUN` if :meth:`copy_required_files`
+                copied restart files, :data:`RunMode.RUN` otherwise. ``RunMode.RUN``
+                runs the ``init`` phase, which rewrites the restart fields, so a
+                restart simulation must not use it.
+
+        Raises:
+            RuntimeError: If :meth:`validate` has not been called yet.
+        """
+        self._require_validation("create_run_script")
+
+        if mode is None:
+            mode = RunMode.RUN if self._restart_time is None else RunMode.RERUN
+
         job_file = Path(self.case.scratch_path, "run_microhh.sbatch")
 
         commands = _get_microhh_run_commands(
@@ -410,6 +439,18 @@ class PreProcessing:
             )
 
         return self.slurm_job
+
+    def _require_validation(self, method_name: str) -> None:
+        """Raise if `validate` has not run before `method_name`.
+
+        Validation normalizes ``npx``/``npy`` in the INI file for GPU runs, so
+        copying files or writing an sbatch script beforehand would use stale
+        MPI settings.
+        """
+        if not self._validated:
+            raise RuntimeError(
+                f"'{method_name}' requires a validated case. Call 'validate()' first."
+            )
 
     def _check_ini_setup_valid(self) -> None:
         """Check if the .ini file setup is valid.
@@ -974,12 +1015,16 @@ class PreProcessing:
         specified in the .ini file.
         """
         ic = io.open_initial_cond(self.case)
+        if "/timedep" not in ic.groups:
+            return
 
-        time_coords = [name for name in ic.coords if "time" in str(name)]
+        timedep = ic["/timedep"].dataset
+
+        time_coords = [name for name in timedep.coords if "time" in str(name)]
 
         for time_coord in time_coords:
-            ic_start_time = int(ic[time_coord].values[0])
-            ic_end_time = int(ic[time_coord].values[-1])
+            ic_start_time = int(timedep[time_coord].values[0])
+            ic_end_time = int(timedep[time_coord].values[-1])
 
             ini_start_time = int(self.case.config["time"]["starttime"])
             ini_end_time = int(self.case.config["time"]["endtime"])
@@ -1014,7 +1059,7 @@ class PreProcessing:
     def _get_lowest_grid_level(self) -> float:
         """Get the lowest atmospheric grid level from the {case}_input.nc file."""
         initial_cond = io.open_initial_cond(self.case)
-        grid_values = initial_cond.z.values
+        grid_values = cast(xr.DataArray, initial_cond["/z"]).values
         non_neg_grid_values = [value for value in grid_values if value >= 0]
         lowest_grid_level = min(non_neg_grid_values)
         return lowest_grid_level
@@ -1191,6 +1236,7 @@ def _get_multi_run_commands(
             f" --ntasks=1"
             f" --cpus-per-task={cpus_per_task_per_case}"
             f" --gres=gpu:{gpus_per_task_per_case}"
+            f" --mem=200G"
             f" --chdir=${{DIRS[$i]}}"
             f" --output=${{DIRS[$i]}}/{phase}_microhh_%j.out"
         )
@@ -1224,11 +1270,19 @@ def create_run_4x_script(
     """Create a SLURM script that runs prepared simulations on a GPU node.
 
     Raises:
-        ValueError: If the number of allocated GPUs does not match the number
-            of cases.
+        ValueError: If `alps_setup` allocates no GPUs, or if the number of
+            allocated GPUs does not match the number of cases.
     """
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
+
+    # `gpus_per_node` is only set for GPU partitions
+    if alps_setup.gpus_per_node is None:
+        raise ValueError(
+            "alps_setup allocates no GPUs ('gpus_per_node' is not set), but "
+            f"create_run_4x_script runs {ncases} cases on a GPU node. Use a GPU "
+            "setup with 'gpus_per_node' set to the number of cases."
+        )
 
     if alps_setup.gpus_per_node != ncases:
         raise ValueError(

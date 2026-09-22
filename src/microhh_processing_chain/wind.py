@@ -505,8 +505,8 @@ class WindProcessing:
         # convert gas mixing ratios to concentrations to make it pressure dependent
         if quantity not in ["cm", "cM", "cn"]:
             # add pressure to convert mass mixing ratios to concentraions
-            data = self.post.add_statistics_variable(data, "phydro")
-            data = self.post.add_statistics_variable(data, "phydroh")
+            data = self.post.add_statistics_variable(data, "/thermo/phydro")
+            data = self.post.add_statistics_variable(data, "/thermo/phydroh")
             data = self.post.convert_to_concentration(data, gas, to_unit="kg m-3")
 
         data_integrated = data[gas].integrate(coord="z")

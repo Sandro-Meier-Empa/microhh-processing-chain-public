@@ -7,7 +7,7 @@ import shutil
 import zipfile
 from collections.abc import Hashable
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import cscs
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
@@ -881,7 +881,7 @@ class PostProcessing:
 
         if dim == "zh":
             # Use initial conditions since vertical grid can be stretched
-            midpoints = io.open_initial_cond(self.case).z
+            midpoints = io.open_initial_cond(self.case)["/z"]
         else:
             spacing = data[new_dim_name].diff(new_dim_name)
             half = spacing.median(skipna=True) / 2
@@ -1066,7 +1066,7 @@ class PostProcessing:
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
             logger.info("Adding 'phydro' to the dataset.")
-            data = self.add_statistics_variable(data, "phydro")
+            data = self.add_statistics_variable(data, "/thermo/phydro")
 
         # convert potential temperature to absolute temperature
         if "ta" not in data.data_vars:
@@ -1096,51 +1096,56 @@ class PostProcessing:
 
         return data
 
-    def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
+    def add_statistics_variable(
+        self, data: xr.Dataset, variable_path: str
+    ) -> xr.Dataset:
         """Add a variable from the statistics file to the given dataset.
 
         Args:
             data:
                 Dataset to which the variable should be added.
-            variable:
-                Name of the variable in the statistics file which should be added
-                to the dataset.
+            variable_path:
+                Absolute path of the variable in the statistics tree which should
+                be added to the dataset.
 
         Returns:
-            Dataset with the added variable.
+            Dataset with the added variable, broadcast over the horizontal
+            dimensions of `data`.
+
+        Raises:
+            ValueError: If `variable_path` is not absolute, does not identify a
+                variable, or the variable is not a time-height profile.
         """
         # read in statistics file
         stats = io.open_statistics(case=self.case)
+        if not variable_path.startswith("/"):
+            raise ValueError(
+                f"Variable path '{variable_path}' must be absolute, for example "
+                "'/default/u'."
+            )
+        variable = stats[variable_path]
+        if not isinstance(variable, xr.DataArray) or variable.name is None:
+            raise ValueError(f"Path '{variable_path}' does not identify a variable.")
+        variable_name = variable.name
 
-        # check if variable is in statistics file
-        if variable not in stats.data_vars:
-            raise KeyError(f"No variable named '{variable}'.")
+        vertical_dim = next((dim for dim in ("z", "zh") if dim in variable.dims), None)
+        if "time" not in variable.dims or vertical_dim is None:
+            raise ValueError(
+                f"Statistics variable '{variable_path}' must be a time-height "
+                "profile with a 'time' and a 'z' or 'zh' dimension, but has "
+                f"dimensions {tuple(str(dim) for dim in variable.dims)}."
+            )
 
         # check if target file has the necessary dimensions:
-        for dim in stats.sizes:
+        for dim in variable.sizes:
             if dim not in data.dims or dim not in data.coords:
-                data = data.assign_coords({dim: stats[dim]})
+                data = data.assign_coords({dim: variable[dim]})
 
-        if "time" in stats[variable].dims and "z" in stats[variable].dims:
-            variable_values = np.tile(
-                stats[variable].values[:, :, np.newaxis, np.newaxis],
-                (1, 1, data.y.size, data.x.size),
-            )
-            data[variable] = (
-                ("time", "z", "y", "x"),
-                variable_values,
-                stats[variable].attrs,
-            )
-        if "time" in stats[variable].dims and "zh" in stats[variable].dims:
-            variable_values = np.tile(
-                stats[variable].values[:, :, np.newaxis, np.newaxis],
-                (1, 1, data.y.size, data.x.size),
-            )
-            data[variable] = (
-                ("time", "zh", "y", "x"),
-                variable_values,
-                stats[variable].attrs,
-            )
+        expanded = variable.expand_dims({"y": data["y"], "x": data["x"]}).transpose(
+            "time", vertical_dim, "y", "x"
+        )
+        expanded.attrs = dict(variable.attrs)
+        data[variable_name] = expanded
 
         return data
 
@@ -1159,7 +1164,9 @@ class PostProcessing:
         for var in required_vars:
             if var not in data.data_vars:
                 logger.info("Adding '%s' to the dataset.", var)
-                data = self.add_statistics_variable(data, variable=var)
+                data = self.add_statistics_variable(
+                    data, variable_path=f"/thermo/{var}"
+                )
 
         # Calculate absolute temperature
         data["ta"] = thermodynamics.absolute_temperature(
@@ -1229,8 +1236,8 @@ class PostProcessing:
                 the binary output files or 'netcdf' to read the netCDF output files.
         """
         stats = io.open_statistics(case=self.case)
-        rhoref = stats.rhoref.values
-        zh = stats.zh.values
+        rhoref = cast(xr.DataArray, stats["/default/rhoref"]).values
+        zh = cast(xr.DataArray, stats["/zh"]).values
         dz = zh[1:] - zh[:-1]
 
         itot = self.case.config["grid"]["itot"]

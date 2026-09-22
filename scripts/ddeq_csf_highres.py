@@ -118,7 +118,7 @@ def main() -> None:
     logging.info("Processing case: %s", args.directory)
 
     case = init.read_case(args.directory)
-    stats = io.open_statistics(case)
+    stats = io.open_statistics(case)["/default"].dataset
     case_df = pd.read_csv(case.directory / f"{case.name}_case_info.csv")
     sources = xr.open_dataset(case.directory / f"{case.name}_sources.nc")
 
@@ -166,7 +166,8 @@ def main() -> None:
     # -------------------------------------------------------------------------
     wind_files = sorted(case.directory.glob("pau_controlled_release.default.*.nc"))
 
-    wind_ds = [io._combine_nc_groups(file) for file in wind_files]
+    wind_trees = [xr.open_datatree(file, decode_times=False) for file in wind_files]
+    wind_ds = [tree["/default"].dataset for tree in wind_trees]
 
     # Concatenate all files
     wind_ds_all = xr.concat(wind_ds, dim="time", data_vars="all")
