@@ -94,6 +94,14 @@ class Case:
         return Path(self.directory, f"{self.name}.out")
 
     @property
+    def slurm_job(self) -> cscs.SlurmJob:
+        """Get the Slurm job associated with the case."""
+        return cscs.SlurmJob(
+            self.directory / "run_microhh.sbatch",
+            job_id=self.job_id,
+        )
+
+    @property
     def initial_conditions_file_path(self) -> Path:
         """Get the path to the initial conditions file of the case."""
         return Path(self.directory, f"{self.name}_input.nc")
@@ -310,7 +318,7 @@ class Case:
         job_id: Optional[int] = None
         for file in out_files:
             file_name = file.name
-            match = re.search(r"\d+", file_name)
+            match = re.search(r"\d{6}", file_name)
             if match is not None:
                 job_id = int(match.group())
 
