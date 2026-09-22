@@ -96,8 +96,21 @@ class Case:
     @property
     def slurm_job(self) -> cscs.SlurmJob:
         """Get the Slurm job associated with the case."""
+        job_files = list(Path(self.directory).glob("run_microhh*.sbatch"))
+        if not job_files:
+            raise FileNotFoundError(
+                f"No sbatch files found in {self.directory}. "
+                "Please ensure the case has been initialised and submitted."
+            )
+
+        if len(job_files) > 1:
+            logger.warning(
+                "Multiple sbatch files found in %s. Using the last one: %s",
+                self.directory,
+                job_files[-1],
+            )
         return cscs.SlurmJob(
-            self.directory / "run_microhh.sbatch",
+            path=job_files[-1],  # Use the last sbatch file if multiple exist
             job_id=self.job_id,
         )
 
