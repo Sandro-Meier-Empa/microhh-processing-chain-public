@@ -943,6 +943,14 @@ class Case:
         """Summarise output files in the case directory."""
         files = [f.name for f in self.directory.iterdir() if f.is_file()]
 
+        # Files written exclusively by `microhh init`. Other restart files written
+        # during init can gain later timestamps and remain complete file series.
+        initialisation_names = {
+            "fftwplan.0000000",
+            "grid.0000000",
+            "rhoref.0000000",
+        }
+
         # Regex patterns for timestamped files
         # Pattern 1: name.XXXXXXX  (e.g. ch4.0000000, u.0000020)
         # Pattern 2: name.XXX.XXXXXXX (e.g. ch4_path.xy.000.0000000)
@@ -953,11 +961,16 @@ class Case:
         )  # for ch4_path.xy.NNN.TTTTTTT
         nc_pattern = re.compile(r"^(.+?)\.nc$")
 
+        initialisation_files = []
         timestamped = defaultdict(list)  # base_name -> [timestamps]
         nc_files = []
         other_files = []
 
         for fname in sorted(files):
+            if fname in initialisation_names:
+                initialisation_files.append(fname)
+                continue
+
             # Try the two-level timestamp pattern first (more specific)
             m2 = ts2_pattern.match(fname)
             m1 = ts_pattern.match(fname)
@@ -974,6 +987,14 @@ class Case:
 
         # --- Print summary ---
         print(f"Case directory: {self.directory}\n")
+
+        if initialisation_files:
+            print("=" * 60)
+            print("INITIALISATION FILES")
+            print("=" * 60)
+            for f in initialisation_files:
+                print(f"  {f}")
+            print()
 
         print("=" * 60)
         print("TIMESTAMPED FILE SERIES")
