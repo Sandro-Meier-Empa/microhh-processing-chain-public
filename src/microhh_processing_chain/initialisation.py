@@ -946,7 +946,7 @@ class Case:
                 timestamped[m2.group(1)].append(int(m2.group(2)))
             elif m1:
                 timestamped[m1.group(1)].append(int(m1.group(2)))
-            elif mn and not fname.endswith("_input.nc") and fname != "fftwplan.0000000":
+            elif mn:
                 nc_files.append(fname)
             else:
                 other_files.append(fname)
