@@ -1221,9 +1221,20 @@ def create_run_4x_script(
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
 ) -> cscs.SlurmJob:
-    """Create a SLURM script that runs prepared simulations on a GPU node."""
+    """Create a SLURM script that runs prepared simulations on a GPU node.
+
+    Raises:
+        ValueError: If the number of allocated GPUs does not match the number
+            of cases.
+    """
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
+
+    if alps_setup.gpus_per_node != ncases:
+        raise ValueError(
+            "The number of GPUs allocated in alps_setup "
+            f"({alps_setup.gpus_per_node}) must match the number of cases ({ncases})."
+        )
 
     if ncases != 4:
         logger.warning("Expected 4 cases, but got %d.", len(cases))
