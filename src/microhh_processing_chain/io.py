@@ -1,5 +1,6 @@
 """Input and output helpers for MicroHH case files."""
 
+import re
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
@@ -118,6 +119,44 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     return df_clean
 
 
+def parse_gpu_memory(path: str | Path) -> pd.DataFrame:
+    """Parse GPU memory information from a MicroHH ``.out`` file.
+
+    Args:
+        path: Path to the MicroHH output file.
+
+    Returns:
+        One-row DataFrame with the following columns:
+
+        - ``total_memory_gib``: Total GPU memory.
+        - ``available_pre_fft_gib``: GPU memory available before FFT setup.
+        - ``memory_margin_gib``: GPU memory reserved as a safety margin.
+        - ``available_post_fft_gib``: GPU memory available after FFT setup.
+        - ``cufft_strategy``: cuFFT memory-management strategy selected by
+          MicroHH.
+    """
+    text = Path(path).read_text()
+
+    patterns = {
+        "total_memory": r"Total memory\s*=\s*(\d+)",
+        "available_pre_fft": r"Available memory pre-FFT\s*=\s*(\d+)",
+        "memory_margin": r"Memory margin\s*=\s*(\d+)",
+        "available_post_fft": r"Available memory post-FFT\s*=\s*(\d+)",
+    }
+
+    data = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text)
+        data[f"{key}_gib"] = (
+            round(int(match.group(1)) / 1024**3, 2) if match else float("nan")
+        )
+
+    strategy = re.search(r"cuFFT strategy:\s*(.+)", text)
+    data["cufft_strategy"] = strategy.group(1).strip() if strategy else None
+
+    return pd.DataFrame([data])
+
+
 @wraps(microhhpy.io.save_case_input)
 def save_case_input(
     case_name: str,
@@ -205,5 +244,6 @@ __all__ = [
     "open_microhh_nc",
     "open_microhh_out",
     "open_statistics",
+    "parse_gpu_memory",
     "save_case_input",
 ]
