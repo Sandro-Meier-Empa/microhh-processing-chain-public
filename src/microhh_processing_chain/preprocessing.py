@@ -1236,7 +1236,6 @@ def _get_multi_run_commands(
             f" --ntasks=1"
             f" --cpus-per-task={cpus_per_task_per_case}"
             f" --gres=gpu:{gpus_per_task_per_case}"
-            f" --mem=200G"
             f" --chdir=${{DIRS[$i]}}"
             f" --output=${{DIRS[$i]}}/{phase}_microhh_%j.out"
         )
