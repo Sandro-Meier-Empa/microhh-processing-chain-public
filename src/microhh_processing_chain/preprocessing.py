@@ -292,6 +292,30 @@ class PreProcessing:
 
             ensure_binary_precision(file, shape, dtype.type)
 
+    def get_restart_time(self, target: Optional[float] = None) -> float:
+        """Return the latest restart time [s] available in the case directory.
+
+        If target is provided, only restart times less than or equal to the
+        target will be considered.
+
+        Args:
+            target: Optional target time in seconds. If provided, only restart
+            times less than or equal to this value will be considered.
+        """
+        iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
+        times = sorted(
+            int(p.suffix[1:]) * 10**iotimeprec
+            for p in Path(self.case.directory).glob("time.*")
+            if p.suffix[1:].isdigit()
+        )
+        if target is not None:
+            times = [t for t in times if t <= target]
+        if not times:
+            raise FileNotFoundError(
+                f"No usable time.* restart files in {self.case.directory}"
+            )
+        return times[-1]
+
     def prepare_restart_simulation(
         self,
         restart_case: init.Case,
@@ -1194,7 +1218,7 @@ def _get_multi_run_commands(
     commands.append("# Define the cases to run")
     commands.append("DIRS=(")
     for case in case_list:
-        commands.append(f'    "{case.scratch_path}"')
+        commands.append(f'    "{case.directory}"')
     commands.append(")")
     commands.append("")
 
