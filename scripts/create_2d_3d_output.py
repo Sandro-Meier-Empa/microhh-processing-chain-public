@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         help="Variables to include in 2D output (default: ch4_path).",
     )
 
+    parser.add_argument(
+        "--end_time",
+        type=int,
+        help="End time for processing",
+    )
+
     return parser.parse_args()
 
 
@@ -55,10 +61,18 @@ if __name__ == "__main__":
     case = init.read_case(args.directory)
     post_processing = post.PostProcessing(case)
     post_processing.create_3d_output(
-        variables=args.vars_3d, start_time=args.start_time, sample_time=args.sample_time
+        variables=args.vars_3d,
+        start_time=args.start_time,
+        end_time=args.end_time,
+        sample_time=args.sample_time,
+        overwrite=True,
     )
     post_processing.create_2d_output(
-        variables=args.vars_2d, start_time=args.start_time, sample_time=args.sample_time
+        variables=args.vars_2d,
+        start_time=args.start_time,
+        end_time=args.end_time,
+        sample_time=args.sample_time,
+        overwrite=True,
     )
 
     logging.info("Finished case in %s", args.directory)
