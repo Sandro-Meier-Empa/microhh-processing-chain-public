@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-08
+
+### Breaking changes
+
+- Moved the optical-flow plume velocimetry to the stand-alone
+  [`plumeflow`](https://gitlab.empa.ch/abt503/users/mesa/plumeflow) package.
+  `wind.compute_optical_flow_displacement()`, `wind.compute_grid_resolution()`,
+  `wind.calculate_optical_flow_effective_wind_speed()` and
+  `visualisation.plot_optical_flow_wind_snapshots()` are now
+  `plumeflow.compute_displacement()`, `plumeflow.compute_grid_resolution()`,
+  `plumeflow.compute_effective_wind_speed()` and
+  `plumeflow.plot_displacement()`. The `optical-flow` extra was removed.
+- The example notebook `effective_wind_speed_from_2d_ch4.ipynb` moved from
+  `microhh-notebooks` to `plumeflow/notebooks/`.
+
+### Changed
+
+- Corrected the license classifier in `pyproject.toml` to LGPL-3, matching the
+  `LICENSE` file.
+
 ## 2026-09-22
 
 ### Breaking changes

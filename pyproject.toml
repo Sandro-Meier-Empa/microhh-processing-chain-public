@@ -17,7 +17,7 @@ keywords = ["microhh", "large-eddy simulation", "atmospheric modelling", "post-p
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Atmospheric Science",
     "Operating System :: OS Independent"
@@ -51,9 +51,6 @@ dev = [
   "pytest",
   "pytest-cov",
   "mypy",
-]
-optical-flow = [
-  "opencv-python-headless",
 ]
 
 [project.urls]
