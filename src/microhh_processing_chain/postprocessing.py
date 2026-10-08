@@ -7,7 +7,7 @@ import shutil
 import zipfile
 from collections.abc import Hashable
 from pathlib import Path
-from typing import Literal, Optional, Union, cast
+from typing import Literal, Optional, TypeVar, Union, cast
 
 import cscs
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
@@ -30,6 +30,8 @@ from microhh_processing_chain.constants import GAS_MOLAR_MASS
 from microhh_processing_chain.enums import Precision
 
 logger = logging.getLogger(__name__)
+
+XarrayData = TypeVar("XarrayData", xr.Dataset, xr.DataTree)
 
 
 def convert_microhh_grid_to_coords(
@@ -159,116 +161,50 @@ def _coordinate_crs_attrs(crs: pyproj.CRS) -> dict[str, Union[int, str]]:
 
 
 def convert_microhh_timestep_to_date(
-    data_or_case: Union[xr.Dataset, init.Case],
-    data: Optional[Union[xr.Dataset, str, pd.Timestamp]] = None,
-    start_date: Optional[Union[str, pd.Timestamp]] = None,
-    date_format: str = "%Y-%m-%d %H:%M:%S",
-    case: Optional[init.Case] = None,
-) -> xr.Dataset:
+    data: XarrayData, start_date: Union[str, pd.Timestamp]
+) -> XarrayData:
     """Convert MicroHH model time into UTC timestamps.
 
-    The function accepts both ``convert_microhh_timestep_to_date(case, data)``
-    and ``convert_microhh_timestep_to_date(data, case=case)``. When ``case``
-    contains ``time.datetime_utc``, that value is used as the authoritative
-    model start date. Numeric time coordinates are interpreted as MicroHH model
-    seconds, so missing output timesteps remain missing after conversion.
+    Numeric time coordinates are interpreted as MicroHH model seconds, so
+    missing output timesteps remain missing after conversion. For a DataTree,
+    such as the statistics file, every node with a ``time`` coordinate is
+    converted.
 
     Args:
-        data_or_case:
-            Dataset to convert, or a MicroHH case when using case-first calls.
-        data:
-            Dataset for case-first calls. For backwards-compatible dataset-first
-            calls, this may also be a positional ``start_date``.
-        start_date:
-            Model start date as a string or pandas timestamp. Ignored when
-            ``case.config["time"]["datetime_utc"]`` is available.
-        date_format:
-            Format used to parse string start dates.
-        case:
-            MicroHH case containing the time configuration.
+        data: Dataset or DataTree with a MicroHH ``time`` coordinate.
+        start_date: Model start date in UTC, e.g. ``time.datetime_utc`` from
+            the .ini file.
 
     Returns:
-        Dataset with ``time`` converted to UTC timestamps.
+        Data of the input type with ``time`` converted to UTC timestamps.
     """
-    dataset, case, start_date = _normalise_timestep_conversion_args(
-        data_or_case=data_or_case,
-        data=data,
-        start_date=start_date,
-        case=case,
-    )
+    start_timestamp = _as_naive_utc_timestamp(start_date)
 
-    start_timestamp = _get_microhh_start_timestamp(
-        case=case,
-        start_date=start_date,
-        date_format=date_format,
-    )
-    new_time = _convert_microhh_time_coord(dataset["time"], start_timestamp)
+    if isinstance(data, xr.DataTree):
+        return cast(
+            XarrayData,
+            data.map_over_datasets(lambda ds: _assign_utc_time(ds, start_timestamp)),
+        )
 
-    dataset = dataset.assign_coords(time=new_time)
+    return _assign_utc_time(data, start_timestamp)
+
+
+def _assign_utc_time(dataset: xr.Dataset, start_timestamp: pd.Timestamp) -> xr.Dataset:
+    """Convert ``time`` of a dataset to UTC, leaving datasets without it unchanged."""
+    if "time" not in dataset.coords:
+        return dataset
+
+    dataset = dataset.assign_coords(
+        time=_convert_microhh_time_coord(dataset["time"], start_timestamp)
+    )
     dataset["time"].attrs.update({"timezone": "UTC"})
-
     return dataset
 
 
-def _normalise_timestep_conversion_args(
-    data_or_case: Union[xr.Dataset, init.Case],
-    data: Optional[Union[xr.Dataset, str, pd.Timestamp]],
-    start_date: Optional[Union[str, pd.Timestamp]],
-    case: Optional[init.Case],
-) -> tuple[xr.Dataset, Optional[init.Case], Optional[Union[str, pd.Timestamp]]]:
-    """Normalise supported timestep conversion call styles."""
-    if isinstance(data_or_case, xr.Dataset):
-        dataset = data_or_case
-        if isinstance(data, xr.Dataset):
-            raise TypeError("Received two datasets. Provide only one dataset argument.")
-
-        if data is not None:
-            if start_date is not None:
-                raise TypeError("Received start_date both positionally and by keyword.")
-            start_date = data
-
-        return dataset, case, start_date
-
-    if case is not None:
-        raise TypeError("Received case both positionally and by keyword.")
-
-    case = data_or_case
-    if not isinstance(data, xr.Dataset):
-        raise TypeError("Expected an xarray Dataset after the case argument.")
-
-    return data, case, start_date
-
-
-def _get_microhh_start_timestamp(
-    case: Optional[init.Case],
-    start_date: Optional[Union[str, pd.Timestamp]],
-    date_format: str,
-) -> pd.Timestamp:
-    """Return the authoritative MicroHH start timestamp as timezone-naive UTC."""
-    if case is not None and "datetime_utc" in case.config["time"]:
-        case_start_date = case.config["time"]["datetime_utc"]
-        if start_date is not None:
-            logger.info(
-                "Using datetime_utc=%s from the .ini file and ignoring start_date=%s.",
-                case_start_date,
-                start_date,
-            )
-        start_date = case_start_date
-
-    if start_date is None:
-        raise ValueError(
-            "Please provide 'start_date' or set 'datetime_utc' in the ini file."
-        )
-
-    return _as_naive_utc_timestamp(start_date, date_format=date_format)
-
-
-def _as_naive_utc_timestamp(
-    value: Union[str, pd.Timestamp], date_format: Optional[str] = None
-) -> pd.Timestamp:
+def _as_naive_utc_timestamp(value: Union[str, pd.Timestamp]) -> pd.Timestamp:
     """Parse a timestamp and return it as timezone-naive UTC with ns precision."""
     if isinstance(value, str):
-        converted = pd.to_datetime(value, format=date_format)
+        converted = pd.to_datetime(value)
         if pd.isna(converted):
             raise ValueError(f"Could not parse timestamp: {value}")
         timestamp = pd.Timestamp(converted)
