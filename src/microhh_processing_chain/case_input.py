@@ -77,6 +77,7 @@ class InitialBoundaryConditions:
         self._cams_eac4: Optional[ls2d.Read_cams] = None
         self._cams_eac4_les_input: Optional[xr.Dataset] = None
         self._species_cams: Optional[dict[str, np.ndarray]] = None
+        self._dedicated_co2_tracers: Optional[list[str]] = None
 
         self._lcc_path: Union[Path, str]
         self._tuv_path: Union[Path, str]
@@ -127,6 +128,7 @@ class InitialBoundaryConditions:
             "rooh": ["rooh", "ch3ooh"],
             "ro2": ["ch3o2", "c2o3", "aco2"],
         }
+        self._dedicated_co2_tracers = None
         return None
 
     @property
@@ -336,6 +338,20 @@ class InitialBoundaryConditions:
         """
         self._cams_eac4_les_input = value
 
+    @property
+    def dedicated_co2_tracers(self) -> Optional[list[str]]:
+        """Return the list of dedicated CO2 tracers."""
+        return self._dedicated_co2_tracers
+
+    @dedicated_co2_tracers.setter
+    def dedicated_co2_tracers(self, value: Optional[list[str]]) -> None:
+        """Set the list of dedicated CO2 tracers.
+
+        Args:
+            value: The list of dedicated CO2 tracers.
+        """
+        self._dedicated_co2_tracers = value
+
     def calc_photolysis_rates(self) -> pd.DataFrame:
         """Calculate photolysis rates using TUV wrapper."""
         name = "microh"  # Must be exactly 6 characters!
@@ -456,6 +472,10 @@ class InitialBoundaryConditions:
                 name = "co2_bg"
                 timedep_ls["co2_t_nudge"] = np.zeros_like(conc)
                 timedep_ls["co2_t_inflow"] = np.zeros_like(conc)
+                if self.dedicated_co2_tracers is not None:
+                    for tracer in self.dedicated_co2_tracers:
+                        timedep_ls[f"{tracer}_nudge"] = np.zeros_like(conc)
+                        timedep_ls[f"{tracer}_inflow"] = np.zeros_like(conc)
             timedep_ls[f"{name}_nudge"] = conc
             timedep_ls[f"{name}_inflow"] = conc
 
