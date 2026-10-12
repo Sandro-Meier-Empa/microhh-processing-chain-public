@@ -796,7 +796,7 @@ def _determine_stability_mo(l_mo: float, threshold: float = 500) -> str:
 
 
 def _determine_stability_ri(
-    ri: float, upper_threshold: float = -0.1, lower_threshold: float = 0.05
+    ri: float, unstable_threshold: float = -0.1, stable_threshold: float = 0.05
 ) -> str:
     """Determine the stability regime based on the Richardson number (ri).
 
@@ -804,15 +804,15 @@ def _determine_stability_ri(
 
     Args:
         ri: Richardson number.
-        upper_threshold: Upper threshold for stability classification.
-        lower_threshold: Lower threshold for stability classification.
+        unstable_threshold: Values below this threshold are unstable.
+        stable_threshold: Values above this threshold are stable.
 
     Returns:
         str: Stability regime ("stable", "neutral", or "unstable").
     """
-    stable = np.sum(ri < lower_threshold)
-    unstable = np.sum(ri > upper_threshold)
-    neutral = np.sum((ri >= lower_threshold) & (ri <= upper_threshold))
+    stable = np.sum(ri > stable_threshold)
+    unstable = np.sum(ri < unstable_threshold)
+    neutral = np.sum((ri >= unstable_threshold) & (ri <= stable_threshold))
 
     if stable > unstable and stable > neutral:
         return "stable"
@@ -841,33 +841,22 @@ def _correction_stable(
 
 
 def _correction_unstable(
-    z: Union[float, np.ndarray], l_mo: float, alpha: float = 1 / 4, gamma: float = 15
+    z: Union[float, np.ndarray], l_mo: float, gamma: float = 3.6
 ) -> Union[float, np.ndarray]:
     """Stability correction for unstable conditions.
 
     Args:
         z: Height above the ground level (m).
         l_mo: Monin-Obukhov length (m).
-        alpha: Stability correction parameter.
         gamma: Stability correction parameter.
 
     Returns:
         Stability correction term.
     """
-    # according to Wyngaard (2010) Turbulence in the Atmosphere:
-    gamma = 3.6
-    a = 2 / 3
-    b = -1 / 2
-    x = (1 + gamma * np.abs(z / l_mo) ** a) ** b
-
-    return x
-    x = (1 - gamma * z / l_mo) ** alpha
-    return (
-        2 * np.log((1 + x) / 2)
-        + np.log((1 + x**2) / 2)
-        - (2 * np.arctan(x))
-        + (np.pi / 2)
-    )
+    # Wilson (2001) functions, as used by MicroHH (include/monin_obukhov.h):
+    # integrate the gradient function phi_m into the correction psi_m.
+    phi_m = (1 + gamma * np.abs(z / l_mo) ** (2 / 3)) ** (-1 / 2)
+    return 3 * np.log((1 + 1 / phi_m) / 2)
 
 
 def solve_wind_profile(
