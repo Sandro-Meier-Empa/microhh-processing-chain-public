@@ -52,6 +52,7 @@ class InitialBoundaryConditions:
         self.vgrid = vgrid
         self._start_date: Optional[datetime] = None
         self._end_date: Optional[datetime] = None
+        self._utc_offset: float = 0.0
         self._chemical_species: list[str] = [
             "co",
             "no",
@@ -242,6 +243,20 @@ class InitialBoundaryConditions:
             value: Enddate for the input data
         """
         self._end_date = value
+
+    @property
+    def utc_offset(self) -> float:
+        """Return the UTC offset for the simulation."""
+        return self._utc_offset
+
+    @utc_offset.setter
+    def utc_offset(self, value: float) -> None:
+        """Set the UTC offset for the simulation.
+
+        Args:
+            value: UTC offset for the simulation.
+        """
+        self._utc_offset = value
 
     @property
     def float_type(self) -> FloatType:
@@ -730,6 +745,7 @@ def init_icbc(
     tuv_path: Union[Path, str],
     microhh_src_path: Union[Path, str],
     gpt_path: Union[Path, str],
+    utc_offset: float = 0.0,
     era5: Optional[ls2d.Read_era5] = None,
     cams_eac4: Optional[ls2d.Read_cams] = None,
     float_type: FloatType = np.float32,
@@ -740,8 +756,9 @@ def init_icbc(
         case: Case to simulate.
         domain: Domain of the case.
         vgrid: Vertical grid from LS2D.
-        start_date: Start date of the simulation.
-        end_date: End date of the simulation.
+        utc_offset: UTC offset for the simulation.
+        start_date: Local start date of the simulation.
+        end_date: Local end date of the simulation.
         lcc_path: Path to the land-cover classification data.
         tuv_path: Path to the TUV photolysis lookup data.
         microhh_src_path: Path to the MicroHH source directory.
@@ -761,6 +778,7 @@ def init_icbc(
     )
     icbc.start_date = start_date
     icbc.end_date = end_date
+    icbc.utc_offset = utc_offset
 
     icbc.lcc_path = lcc_path
     icbc.tuv_path = tuv_path
