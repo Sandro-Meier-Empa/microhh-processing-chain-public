@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-14
+
+### Breaking changes
+
+- Removed the unused `ml` module (`flip_data()`, `flip_variable()`,
+  `scale_emissions()`); `flip_variable()` dropped the mirrored coordinates.
+  Plume augmentation now lives in `spectra.plume.augment`.
+
+### Added
+
+- Added `export.export_plume_column()`, which writes the vertical columns of
+  one tracer and one source as a `spectra.PlumeColumn` NetCDF file
+  (`{case_id}__{tracer}.plumecolumn.nc`): UTC `time`, `simulation_time`,
+  `column` in kg m-2 from `{tracer}_path.xy.nc` or the integrated 3-D field,
+  `emission_rate` in kg s-1, the horizontal-mean wind at a height, and the
+  source, grid and provenance attributes.
+
+### Changed
+
+- Declared `astropy`, which `misc` imports, as a dependency.
+- `sources.get_source_strength()` accepts a float `time_s`.
+
 ## 2026-10-08
 
 ### Breaking changes

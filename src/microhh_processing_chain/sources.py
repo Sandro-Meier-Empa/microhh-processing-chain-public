@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_source_strength(
-    case: init.Case, to_unit: str, time_s: Optional[int] = None
+    case: init.Case, to_unit: str, time_s: Optional[float] = None
 ) -> np.ndarray:
     """Get source strengths converted to desired units.
 
@@ -58,7 +58,7 @@ def get_source_strength(
 
 
 def _get_dynamic_source_strength(
-    case: init.Case, time_s: Optional[int] = None
+    case: init.Case, time_s: Optional[float] = None
 ) -> np.ndarray:
     """Get time-dependent source strengths from initial conditions.
 

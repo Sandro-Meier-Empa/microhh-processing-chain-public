@@ -24,6 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "astropy",
     "numpy",
     "pandas",
     "xarray",
