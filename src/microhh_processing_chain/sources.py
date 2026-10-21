@@ -271,10 +271,10 @@ def briggs_momentum_rise(
     with the condition vs/u >= 4.
 
     Args:
-        x: Downwind distance (m).
-        u: Wind speed at stack height (m/s).
-        d: Stack diameter (m).
-        vs: Stack exit velocity (m/s).
+        x: Downwind distance [m].
+        u: Wind speed at stack height [m/s].
+        d: Stack diameter [m].
+        vs: Stack exit velocity [m/s].
         stability: Atmospheric stability regime.
             Only "neutral" is supported in this implementation.
 
@@ -334,10 +334,10 @@ def asme_momentum_rise(
         - ΔT < 50 K
 
     Args:
-        x: Downwind distance (m).
-        u: Wind speed at stack height (m/s).
-        d: Stack diameter (m).
-        vs: Stack exit velocity (m/s).
+        x: Downwind distance [m].
+        u: Wind speed at stack height [m/s].
+        d: Stack diameter [m].
+        vs: Stack exit velocity [m/s].
 
     Returns:
         Plume rise above the source in meters.
@@ -376,9 +376,9 @@ def _generic_plume_rise_form(
 
     Args:
         e: Empirical constant.
-        x: Downwind distance (m).
+        x: Downwind distance [m].
         b: Exponent for downwind distance.
-        u: Wind speed at stack height (m/s).
+        u: Wind speed at stack height [m/s].
         a: Exponent for wind speed.
 
     Returns:
@@ -395,13 +395,13 @@ def _validate_input(
 ) -> None:
     """Validate plume-rise inputs for positive physical values."""
     if np.array(x).any() < 0:
-        raise ValueError("x must be >= 0 (m).")
+        raise ValueError("x must be >= 0 [m].")
     if np.array(u).any() <= 0:
-        raise ValueError("u must be > 0 (m/s).")
+        raise ValueError("u must be > 0 [m/s].")
     if np.array(d).any() <= 0:
-        raise ValueError("d must be > 0 (m).")
+        raise ValueError("d must be > 0 [m].")
     if np.array(vs).any() <= 0:
-        raise ValueError("vs must be > 0 (m/s).")
+        raise ValueError("vs must be > 0 [m/s].")
 
 
 __all__ = [

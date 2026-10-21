@@ -573,12 +573,12 @@ def wind_profile_from_given_wind(
 
     Args:
         grid: Array of heights above the ground level or LS2D grid object.
-        wind_speed: Target wind speed at 'height' (m/s).
-        height: Target height at which the wind speed should be 'wind_speed' (m).
-        surface_roughness: Surface roughness length (m).
-        thl: (Potential) temperature profile (K).
-        e: Water vapor flux (kg/s).
-        sensible_heat_flux: Sensible heat flux (W/m2).
+        wind_speed: Target wind speed at 'height' [m/s].
+        height: Target height at which the wind speed should be 'wind_speed' [m].
+        surface_roughness: Surface roughness length [m].
+        thl: (Potential) temperature profile [K].
+        e: Water vapor flux [kg/s].
+        sensible_heat_flux: Sensible heat flux [W/m2].
         threshold: Maximum difference between target 'wind_speed' and
             calculated wind speed.
 
@@ -660,8 +660,8 @@ def get_wind_profile(
 ) -> np.ndarray:
     """Calculate the wind profile based on the logarithmic wind profile equation.
 
-    Give either the sensible heat flux H (in W/m2) or the turbulent sensible
-    heat flux (in K m/s).
+    Give either the sensible heat flux H [W/m2] or the turbulent sensible
+    heat flux [K m/s].
 
     Source: Bonan turbulent flux notes. Entries marked with ``*`` are from
     Wyngaard, Turbulence in the Atmosphere.
@@ -670,7 +670,7 @@ def get_wind_profile(
         z: Array of heights above the ground level.
         z0: Roughness length.
         u_star: Friction velocity.
-        t: (Potential) temperature (in K).
+        t: (Potential) temperature [K].
         l_mo: Monin-Obukhov length.
         h: Sensible heat flux.
         h_turb: Turbulent sensible heat flux.
@@ -739,14 +739,14 @@ def calculate_virtual_turbulent_heat_flux(
     According to: https://doi.org/10.1175/1520-0469(2003)060%3C2372:OTMAVO%3E2.0.CO;2
 
     Args:
-        h: Sensible heat flux (W/m^2).
-        e: Water vapor flux (kg/s).
-        t: Absolute temperature (K).
+        h: Sensible heat flux [W/m^2].
+        e: Water vapor flux [kg/s].
+        t: Absolute temperature [K].
         rho: Density of air.
-        cp: Specific heat capacity of air at constant pressure (J/(kg*K)).
+        cp: Specific heat capacity of air at constant pressure [J/(kg*K)].
 
     Returns:
-        float: Virtual turbulent heat flux (K m/s).
+        float: Virtual turbulent heat flux [K m/s].
     """
     return (1 / t) * (1 / rho) * ((h / cp) + 0.61 * e)
 
@@ -761,14 +761,14 @@ def calculate_monin_obukhov_length(
     """Calculate the Monin-Obukhov length (L).
 
     Args:
-        u_star: Friction velocity (m/s).
-        t0: Mean temperature (K).
-        h_turb: Virtual turbulent heat flux (K m/s).
+        u_star: Friction velocity [m/s].
+        t0: Mean temperature [K].
+        h_turb: Virtual turbulent heat flux [K m/s].
         kappa: von Kármán constant.
         g: Acceleration due to gravity.
 
     Returns:
-        float: Monin-Obukhov length (m).
+        float: Monin-Obukhov length [m].
     """
     l_mo = -(u_star**3 * t0) / (kappa * g * h_turb)
     return l_mo
@@ -781,7 +781,7 @@ def _determine_stability_mo(l_mo: float, threshold: float = 500) -> str:
     Or from: https://onlinelibrary.wiley.com/doi/full/10.1002/we.1528
 
     Args:
-        l_mo: Monin-Obukhov length (m).
+        l_mo: Monin-Obukhov length [m].
         threshold: Threshold for neutral stability.
 
     Returns:
@@ -830,8 +830,8 @@ def _correction_stable(
     * 4.8 in Wyngaard (2010) Turbulence in the Atmosphere.
 
     Args:
-        z: Height above the ground level (m).
-        l_mo: Monin-Obukhov length (m).
+        z: Height above the ground level [m].
+        l_mo: Monin-Obukhov length [m].
         beta: Stability correction parameter.
 
     Returns:
@@ -846,8 +846,8 @@ def _correction_unstable(
     """Stability correction for unstable conditions.
 
     Args:
-        z: Height above the ground level (m).
-        l_mo: Monin-Obukhov length (m).
+        z: Height above the ground level [m].
+        l_mo: Monin-Obukhov length [m].
         gamma: Stability correction parameter.
 
     Returns:
@@ -872,12 +872,12 @@ def solve_wind_profile(
     """Equation to solve for finding friction velocity (u_star).
 
     Args:
-        u_star: Initial guess for friction velocity (m/s).
-        wind_speed: Measured wind speed (m/s).
-        z: Array of heights above the ground level (m).
-        z0: Roughness length (m).
-        t: (Potential) temperature profile (in K).
-        e: Water vapor flux (kg/s).
+        u_star: Initial guess for friction velocity [m/s].
+        wind_speed: Measured wind speed [m/s].
+        z: Array of heights above the ground level [m].
+        z0: Roughness length [m].
+        t: (Potential) temperature profile [K].
+        e: Water vapor flux [kg/s].
         h: Sensible heat flux.
         h_turb: Turbulent sensible heat flux.
 
@@ -902,15 +902,15 @@ def calculate_u_star(
 ) -> float:
     """Compute the friction velocity u* with correction term for stability numerically.
 
-    Give either the sensible heat flux H (in W/m2) or the turbulent sensible
-    heat flux (in K m/s).
+    Give either the sensible heat flux H [W/m2] or the turbulent sensible
+    heat flux [K m/s].
 
     Args:
-        wind_speed: Measured wind speed (m/s).
-        z: Height above ground at which the wind speed was measured (m).
-        z0: Roughness length (m).
-        t: (Potential) temperature (in K).
-        e: Water vapor flux (kg/s).
+        wind_speed: Measured wind speed [m/s].
+        z: Height above ground at which the wind speed was measured [m].
+        z0: Roughness length [m].
+        t: (Potential) temperature [K].
+        e: Water vapor flux [kg/s].
         h: Sensible heat flux.
         h_turb: Turbulent sensible heat flux.
         u_star_initial: Initial guess of u*. If not provided, it is
@@ -938,9 +938,9 @@ def calculate_u_star_stable(
     Compute u* without a correction term for stability analytically.
 
     Args:
-        wind_speed: Measured wind speed (m/s).
-        z: Height above ground at which the wind speed was measured (m).
-        z0: Roughness length (m).
+        wind_speed: Measured wind speed [m/s].
+        z: Height above ground at which the wind speed was measured [m].
+        z0: Roughness length [m].
         kappa: von Kármán constant.
 
     Returns:
@@ -1045,7 +1045,7 @@ def calculate_smagorinsky_constant(
         delta: Characteristic scale (Δ). For simulations: resolution of the
             model, in m.
         l_mo: Obukhov length (l).
-        z: Height above ground (in m).
+        z: Height above ground [m].
         kappa: von Kármán constant.
         c0: Base concentration.
         alpha: Model parameter.
@@ -1071,7 +1071,7 @@ def calculate_coriolis_force(lat: float) -> float:
         lat: Latitude in degrees.
 
     Returns:
-        Coriolis parameter f_c (s^-1).
+        Coriolis parameter f_c [s^-1].
     """
     return 2 * EARTH_ROTATION_RATE * np.sin(np.radians(lat))
 

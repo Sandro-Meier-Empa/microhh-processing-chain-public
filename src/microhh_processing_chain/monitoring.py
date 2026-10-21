@@ -38,7 +38,7 @@ def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             progress_percentages.append("NA")
 
-    df["PROGRESS (%)"] = progress_percentages
+    df["PROGRESS [%]"] = progress_percentages
 
     return df
 
