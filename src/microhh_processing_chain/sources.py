@@ -23,7 +23,8 @@ def get_source_strength(
     Works both for constant and time-dependent source strengths.
 
     Args:
-        case: Case object used to read source settings and initial conditions.
+        case: :class:`init.Case` object used to read source settings and initial
+            conditions.
         to_unit: Desired unit for source strength.
         time_s: Time in seconds to select source strength data.
             When omitted, the maximum over all times is used.
@@ -63,7 +64,7 @@ def _get_dynamic_source_strength(
     """Get time-dependent source strengths from initial conditions.
 
     Args:
-        case: Case object used to read initial conditions.
+        case: :class:`init.Case` object used to read initial conditions.
         time_s: Time in seconds to select source strength data.
             When omitted, the maximum over all times is used.
 

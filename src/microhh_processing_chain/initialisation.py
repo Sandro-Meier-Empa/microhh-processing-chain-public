@@ -1,4 +1,4 @@
-"""Case lifecycle helpers for MicroHH simulations."""
+""":class:`Case` lifecycle helpers for MicroHH simulations."""
 
 import json
 import logging
@@ -1056,10 +1056,10 @@ class Case:
                 logger.warning("File %s does not exist.", src)
 
     def domain(self) -> Domain:
-        """Creates a Domain from the Case ini file.
+        """Creates a :class:`Domain` from the :class:`Case` ini file.
 
         Returns:
-            instance of spacial.Domain
+            instance of :class:`Domain`
         """
         domain = Domain(
             xsize=self.config.grid.xsize,

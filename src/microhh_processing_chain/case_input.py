@@ -64,12 +64,13 @@ class InitialBoundaryConditions:
     """Prepare MicroHH inputs from ERA5 and CAMS EAC4 data.
 
     Calculates the fields necessary for generating the input netCDF which is generated
-    from the io module. The binary fields for the soil can also be generated and copy
-    the lookup tables for the radiation and chemical reactions.
+    from the :mod:`~microhh_processing_chain.io` module. The binary fields for the soil
+    can also be generated and copy the lookup tables for the radiation and chemical
+    reactions.
 
     Args:
-        case: Case to Simulate
-        domain: Domain of the Case
+        case: :class:`init.Case` to Simulate
+        domain: :class:`spatial.Domain` of the :class:`init.Case`
         vgrid: vertical Grid from LS2D
         float_type: Precision type from numpy: np.float64 or np.float32
     """
@@ -754,8 +755,8 @@ def init_icbc(
     """Initialize the initial and boundary condition generator.
 
     Args:
-        case: Case to simulate.
-        domain: Domain of the case.
+        case: :class:`init.Case` to simulate.
+        domain: :class:`spatial.Domain` of the case.
         vgrid: Vertical grid from LS2D.
         start_date: Start date of the simulation.
         end_date: End date of the simulation.
@@ -765,7 +766,8 @@ def init_icbc(
         gpt_path: Path to the RRTMGP coefficient data.
         era5: Optional preloaded ERA5 data.
         cams_eac4: Optional preloaded CAMS EAC4 data.
-        float_type: NumPy precision type, either ``np.float32`` or ``np.float64``.
+        float_type: NumPy precision type, either :class:`numpy.float32` or
+            :class:`numpy.float64`.
 
     Returns:
         Configured initial and boundary condition generator.

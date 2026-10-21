@@ -28,7 +28,7 @@ class WindProcessing:
 
     Args:
         case:
-            Case to post-process.
+            :class:`init.Case` to post-process.
     """
 
     def __init__(self, case: init.Case) -> None:
@@ -1262,7 +1262,7 @@ def _tke_spatial_spectrum_core(
 def _tke_spatial_spectrum_core_array(
     u_2d: np.ndarray, v_2d: np.ndarray, *args: np.ndarray, dx: float, dy: float
 ) -> np.ndarray:
-    """Return only radial TKE values for ``xr.apply_ufunc``."""
+    """Return only radial TKE values for :func:`xarray.apply_ufunc`."""
     w_2d: Optional[np.ndarray] = args[0] if args else None
     _, radial_tke = _tke_spatial_spectrum_core(u_2d, v_2d, dx, dy, w_2d=w_2d)
     return radial_tke
@@ -1487,7 +1487,7 @@ def calculate_tke_temporal_profile(
     The calculation uses velocity time series for a single (x, y) point in
     the domain.
 
-    This is the temporal analogue of calculate_tke_profile:
+    This is the temporal analogue of :func:`calculate_tke_spatial_profile_dask`:
     instead of a 2D spatial FFT over (x, y) at fixed time,
     it applies Welch's method over the time axis at fixed (x, y).
 
@@ -1541,7 +1541,7 @@ def _tke_temporal_spectrum_core_array(
     noverlap: Optional[int],
     detrend: str,
 ) -> np.ndarray:
-    """Wrapper around _tke_temporal_spectrum_core for use with xr.apply_ufunc.
+    """Wrapper around :func:`_tke_temporal_spectrum_core` for use with xr.apply_ufunc.
 
     Accepts raw NumPy arrays; w_t is optional via *args.
     """

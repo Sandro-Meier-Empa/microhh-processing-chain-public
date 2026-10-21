@@ -92,7 +92,7 @@ class CaseViewer:
 
     Args:
         case:
-            Case to visualise.
+            :class:`init.Case` to visualise.
 
     """
 
@@ -337,7 +337,7 @@ class CaseViewer:
 class VariableViewer:
     """Class to visualise variables from a microHH dataset.
 
-    Initialise the VariableViewer with a microHH dataset.
+    Initialise the :class:`VariableViewer` with a microHH dataset.
 
     Args:
         data:
@@ -983,11 +983,11 @@ def format_case_info(
 ) -> str:
     """Format text information of the model for plotting.
 
-    Format text on resolution and wind properties for 'plot_side_views'
+    Format text on resolution and wind properties for :func:`plot_side_views`
 
     Args:
         case:
-            Case the data belongs to, used for the source information.
+            :class:`init.Case` the data belongs to, used for the source information.
         data:
             Dataset reduced to the time step which should be plotted.
         timestep:
@@ -1456,8 +1456,8 @@ def plot_case_comparison(
             If False, plot absolute values.
         default_case_index: Index of the default case used when
             ``difference=True``.
-        figsize: Figure size passed to ``plt.subplots``.
-        cmap: Colormap name passed to ``pcolormesh``.
+        figsize: Figure size passed to :func:`matplotlib.pyplot.subplots`.
+        cmap: Colormap name passed to :meth:`~matplotlib.axes.Axes.pcolormesh`.
 
     Returns:
         Figures created for each requested variable.

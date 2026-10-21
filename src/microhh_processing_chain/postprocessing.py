@@ -287,7 +287,7 @@ class PostProcessing:
 
     Args:
         case:
-            Case to post-process.
+            :class:`init.Case` to post-process.
     """
 
     def __init__(self, case: init.Case) -> None:
@@ -391,7 +391,7 @@ class PostProcessing:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
             precision:
-                Precision used for the created .nc file.
+                :class:`Precision` used for the created .nc file.
             start_time:
                 Start time in s of the data to process.
             end_time:
@@ -452,7 +452,7 @@ class PostProcessing:
             sample_time:
                 Sample time in s of the cross-section output.
             precision:
-                Precision used for the created .nc file.
+                :class:`Precision` used for the created .nc file.
             nprocs:
                 Number of worker processes for parallel processing.
             compression:

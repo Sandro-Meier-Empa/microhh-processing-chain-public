@@ -78,10 +78,10 @@ def export_plume_column(
     itself is not stored.
 
     Args:
-        case: Case whose output directory holds the MicroHH files.
+        case: :class:`init.Case` whose output directory holds the MicroHH files.
         tracer: Name of the MicroHH scalar, e.g. ``"ch4"`` or ``"ch4_valve_1m"``.
         gas: Gas name recorded in the output, e.g. ``"CH4"``. Inferred from
-            the tracer root when it is a key of ``GAS_MOLAR_MASS``.
+            the tracer root when it is a key of :data:`GAS_MOLAR_MASS`.
         source: ``"path_xy"`` for the online column cross-section or ``"3d"``
             for the vertically integrated 3-D tracer field.
         source_index: Index of the source in the ``[source]`` arrays of the

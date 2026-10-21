@@ -21,7 +21,7 @@ def open_microhh_nc(
     """Open a .nc file related to MicroHH output.
 
     Args:
-        case: Case containing the output directory.
+        case: :class:`Case` containing the output directory.
         variable: Variable name to open.
         chunks: Chunking strategy passed to xarray.
 
@@ -57,11 +57,11 @@ def open_initial_cond(case: "Case") -> xr.DataTree:
     """Open the NetCDF file containing the initial conditions.
 
     Access variables by their absolute group path. Extract a group's dataset
-    from its node's ``dataset`` property; the tree's own ``dataset`` property
-    contains the root dataset.
+    from its node's :attr:`~xarray.DataTree.dataset` property; the tree's own
+    :attr:`~xarray.DataTree.dataset` property contains the root dataset.
 
     Args:
-        case: Case for which the initial conditions should be read.
+        case: :class:`Case` for which the initial conditions should be read.
 
     Returns:
         Initial conditions with the NetCDF group structure preserved.
@@ -79,8 +79,8 @@ def open_statistics(case: "Case") -> xr.DataTree:
     """Open the NetCDF file containing model-run statistics.
 
     Access variables by their absolute group path. Extract a group's dataset
-    from its node's ``dataset`` property; the tree's own ``dataset`` property
-    contains the root dataset.
+    from its node's :attr:`~xarray.DataTree.dataset` property; the tree's own
+    :attr:`~xarray.DataTree.dataset` property contains the root dataset.
 
     Returns:
         Statistics with the NetCDF group structure preserved.
@@ -102,7 +102,7 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     - SDPD: simulated days per day
 
     Args:
-        case: Case containing the output file.
+        case: :class:`Case` containing the output file.
 
     Returns:
         Parsed output table with derived runtime columns.

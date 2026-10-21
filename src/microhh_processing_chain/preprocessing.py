@@ -53,7 +53,7 @@ class PreProcessing:
 
     Args:
         case:
-            Case to pre-process and run.
+            :class:`init.Case` to pre-process and run.
         alps_setup:
             Object containing the setup variables used for creating a bash
             script to run the MicroHH simulations.
@@ -210,7 +210,7 @@ class PreProcessing:
         """Copy and verify the files required to run the simulation.
 
         Args:
-            restart_case: Case from which restart files are copied.
+            restart_case: :class:`init.Case` from which restart files are copied.
             restart_time: Time in seconds identifying the restart files to copy.
 
         Raises:
@@ -402,7 +402,7 @@ class PreProcessing:
             overwrite: Whether to overwrite an existing sbatch script.
             mode: Run mode passed to MicroHH. When omitted, the mode follows the
                 preparation: :data:`RunMode.RERUN` if :meth:`copy_required_files`
-                copied restart files, :data:`RunMode.RUN` otherwise. ``RunMode.RUN``
+                copied restart files, :data:`RunMode.RUN` otherwise. :data:`RunMode.RUN`
                 runs the ``init`` phase, which rewrites the restart fields, so a
                 restart simulation must not use it.
 
@@ -441,7 +441,7 @@ class PreProcessing:
         return self.slurm_job
 
     def _require_validation(self, method_name: str) -> None:
-        """Raise if `validate` has not run before `method_name`.
+        """Raise if :meth:`validate` has not run before `method_name`.
 
         Validation normalizes ``npx``/``npy`` in the INI file for GPU runs, so
         copying files or writing an sbatch script beforehand would use stale
@@ -1072,7 +1072,7 @@ class PreProcessing:
         """Copy MicroHH restart files to scratch.
 
         The .ini and input.nc files are already copied when creating the case using
-        self.case.initialise_case().
+        :func:`init.initialise_case`.
         """
         origin = Path(origin)
 
