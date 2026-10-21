@@ -189,6 +189,15 @@ def calculate_sun_position(
     return sun_altaz
 
 
+def _as_weights(
+    species: Union[list[str], dict[str, float]],
+) -> dict[str, float]:
+    """Return `species` as a species-to-weight mapping (default weight 1.0)."""
+    if isinstance(species, dict):
+        return species
+    return dict.fromkeys(species, 1.0)
+
+
 class CamsGlobInventoryPaths:
     """Class to manage paths to CAMS global inventory NetCDF files for a specific year.
 
@@ -198,18 +207,18 @@ class CamsGlobInventoryPaths:
         The base path where the CAMS global inventory data is stored.
     year : int
         The year for which to retrieve the inventory files.
-    lumping_co2 : list of str, optional
-        List of CO2 species to lump together. Default is None, which uses a
-        predefined list.
-    lumping_co : list of str, optional
-        List of CO species to lump together. Default is None, which uses a
-        predefined list.
-    lumping_nox : list of str, optional
-        List of NOx species to lump together. Default is None, which uses a
-        predefined list.
-    lumping_vocs : list of str, optional
-        List of VOC species to lump together. Default is None, which uses a
-        predefined list.
+    lumping_co2 : list of str or dict[str, float], optional
+        List of CO2 species to lump together (weight 1.0 each) or dictionary
+        mapping species to weights. Default is None, which uses a predefined dictionary.
+    lumping_co : list of str or dict[str, float], optional
+        List of CO species to lump together (weight 1.0 each) or dictionary
+        mapping species to weights. Default is None, which uses a predefined dictionary.
+    lumping_nox : list of str or dict[str, float], optional
+        List of NOx species to lump together (weight 1.0 each) or dictionary
+        mapping species to weights. Default is None, which uses a predefined dictionary.
+    lumping_vocs : list of str or dict[str, float], optional
+        List of VOC species to lump together (weight 1.0 each) or dictionary
+        mapping species to weights. Default is None, which uses a predefined dictionary.
     source_cams_glob : list of str, optional
         List of source categories to include. Default is None, which uses a
         predefined list.
@@ -220,11 +229,11 @@ class CamsGlobInventoryPaths:
         self,
         data_path: Union[str, Path],
         year: int,
-        lumping_co2: Optional[list[str]] = None,
-        lumping_co: Optional[list[str]] = None,
-        lumping_nox: Optional[list[str]] = None,
-        lumping_vocs: Optional[list[str]] = None,
-        source_cams_glob: Optional[list[str]] = None,
+        lumping_co2: Optional[Union[list[str], dict[str, float]]] = None,
+        lumping_co: Optional[Union[list[str], dict[str, float]]] = None,
+        lumping_nox: Optional[Union[list[str], dict[str, float]]] = None,
+        lumping_vocs: Optional[Union[list[str], dict[str, float]]] = None,
+        source_cams_glob: Optional[Union[list[str], dict[str, float]]] = None,
     ) -> None:
         self.path = Path(data_path) / str(year)
         self.year = year
@@ -248,66 +257,72 @@ class CamsGlobInventoryPaths:
                 self.nc_files.extend(list(path_sector.rglob("*.nc")))
 
         self.lumping_co2 = (
-            [
-                "co2-excl-short",
-                "co2-short-cycle",
-                "carbon-dioxide",
-            ]
+            {
+                "co2-excl-short": 1.0,
+                "co2-short-cycle": 1.0,
+                "carbon-dioxide": 1.0,
+            }
             if lumping_co2 is None
-            else lumping_co2
+            else _as_weights(lumping_co2)
         )
 
         self.lumping_co = (
-            [
-                "carbon-monoxide",
-            ]
+            {
+                "carbon-monoxide": 1.0,
+            }
             if lumping_co is None
-            else lumping_co
+            else _as_weights(lumping_co)
         )
 
         self.lumping_nox = (
-            [
-                "nitrogen-oxides",
-            ]
+            {
+                "nitrogen-oxides": 1.0,
+            }
             if lumping_nox is None
-            else lumping_nox
+            else _as_weights(lumping_nox)
         )
 
-        self.lumping_vocs = (
-            [
-                "acetylene",
-                "alcohols",
-                "benzene",
-                "butanes",
-                "chlorinated-hydrocarbons",
-                "esters",
-                "ethane",
-                "ethene",
-                "ethers",
-                "formaldehyde",
-                "hexanes",
-                "isoprene",
-                "monoterpenes",
-                "non-methane-vocs",
-                "other-aldehydes",
-                "other-alkenes-alkynes",
-                "other-aromatics",
-                "other-vocs",
-                "pentanes",
-                "propane",
-                "propene",
-                "toluene",
-                "total-acids",
-                "total-ketones",
-                "trimethylbenzenes",
-                "xylenes",
-                "dimethyl-sulphide",
-                "tribromomethane",
-                "vocs-all",
-            ]
-            if lumping_vocs is None
-            else lumping_vocs
+        ### Values are from the ACTRIS data portal (https://data.eurochamp.org/data-access/kin/#/data)
+        k_oh = (
+            2.44e-11  # propane OH reaction rate constant at 298 K in cm3 molecule-1 s-1
         )
+        self.lumping_vocs = (
+            {
+                "acetylene": 7.5e-13 / k_oh,
+                "alcohols": 8.78e-13 / k_oh,
+                "benzene": 1.2e-12 / k_oh,
+                "butanes": 2.38e-12 / k_oh,
+                # "chlorinated-hydrocarbons": , # TODO
+                "esters": 8.75e-13 / k_oh,
+                "ethane": 2.49e-13 / k_oh,
+                "ethene": 8.52e-12 / k_oh,
+                "ethers": 2.8e-12 / k_oh,
+                # "formaldehyde": 1.0, there is its own variable
+                "hexanes": 4.97e-12 / k_oh,
+                "isoprene": 1.0e-10 / k_oh,
+                "monoterpenes": 5.3e-11 / k_oh,
+                # "non-methane-vocs": 1.0, # drop this for now
+                "other-aldehydes": 1.5e-11 / k_oh,
+                "other-alkenes-alkynes": 3.1e-11 / k_oh,
+                "other-aromatics": 7e-12 / k_oh,
+                # "other-vocs": 1.0, # TODO
+                "pentanes": 3.76e-12 / k_oh,
+                "propane": 1.1e-12 / k_oh,
+                "propene": 2.44e-11 / k_oh,  # the reference value for k_oh
+                "toluene": 5.6e-12 / k_oh,
+                "total-acids": 1.87e-13 / k_oh,
+                "total-ketones": 1.87e-13 / k_oh,
+                "trimethylbenzenes": 3.3e-11 / k_oh,
+                "xylenes": 1.7e-11 / k_oh,
+                # "dimethyl-sulphide": 1.0, oceanic
+                # "tribromomethane": 1.0, oceanic
+                # "vocs-all": 1.0,
+            }
+            if lumping_vocs is None
+            else _as_weights(lumping_vocs)
+        )
+
+        self.formaldehyde = ["formaldehyde"]
 
     def co2(self) -> list[Path]:
         """Return a list of NetCDF files for CO2 species."""
@@ -316,7 +331,7 @@ class CamsGlobInventoryPaths:
             for file in self.nc_files
             if any(
                 file.name.endswith(f"_{species}_{self.year}.nc")
-                for species in self.lumping_co2
+                for species, weight in self.lumping_co2.items()
             )
         ]
 
@@ -327,7 +342,7 @@ class CamsGlobInventoryPaths:
             for file in self.nc_files
             if any(
                 file.name.endswith(f"_{species}_{self.year}.nc")
-                for species in self.lumping_co
+                for species, weight in self.lumping_co.items()
             )
         ]
 
@@ -338,7 +353,7 @@ class CamsGlobInventoryPaths:
             for file in self.nc_files
             if any(
                 file.name.endswith(f"_{species}_{self.year}.nc")
-                for species in self.lumping_nox
+                for species, weight in self.lumping_nox.items()
             )
         ]
 
@@ -349,8 +364,20 @@ class CamsGlobInventoryPaths:
             for file in self.nc_files
             if any(
                 file.name.endswith(f"_{species}_{self.year}.nc")
-                for species in self.lumping_vocs
+                for species, weight in self.lumping_vocs.items()
             )
+        ]
+
+    def vocs_weights(self) -> dict[str, float]:
+        """Return a dictionary mapping VOC species to their weights."""
+        return self.lumping_vocs
+
+    def hcho(self) -> list[Path]:
+        """Return a list of NetCDF files for formaldehyde (HCHO)."""
+        return [
+            file
+            for file in self.nc_files
+            if file.name.endswith(f"_formaldehyde_{self.year}.nc")
         ]
 
 
