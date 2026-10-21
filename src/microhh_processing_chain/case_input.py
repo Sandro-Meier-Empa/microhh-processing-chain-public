@@ -1,5 +1,6 @@
 """Generate MicroHH initial, boundary, surface, and forcing inputs."""
 
+import copy
 import logging
 import os
 import shutil
@@ -22,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 FloatType = Union[type[np.float32], type[np.float64]]
 
+# ERA5 can come from CDS/MARS (``ls2d.Read_era5``) or from Google ARCO
+# (``ls2d.read_era5_arco()``, a 3D dataset). Both may also be passed as a
+# column dataset that is already on the LES grid (``get_les_input()`` or
+# ``ls2d.create_column_input()`` output).
+Era5Source = Union[ls2d.Read_era5, xr.Dataset]
+CamsSource = Union[ls2d.Read_cams, xr.Dataset]
+
 
 class InitialBoundaryConditions:
     """Prepare MicroHH inputs from ERA5 and CAMS EAC4 data.
@@ -35,6 +43,8 @@ class InitialBoundaryConditions:
         domain: Domain of the Case
         vgrid: vertical Grid from LS2D
         float_type: Precision type from numpy: np.float64 or np.float32
+        n_av: Number of grid points (+/-) over which ERA5 (Google ARCO) and
+            CAMS are horizontally averaged.
     """
 
     def __init__(
@@ -43,6 +53,7 @@ class InitialBoundaryConditions:
         domain: spatial.Domain,
         vgrid: ls2d.grid._Grid,
         float_type: FloatType = np.float32,
+        n_av: int = 0,
     ) -> None:
         """Initialize input generation for a case, domain, and vertical grid."""
         self.case = case
@@ -71,11 +82,12 @@ class InitialBoundaryConditions:
         ]
         self._float_type = float_type
         self.tau_nudge = 10800  # seconds
+        self.n_av = n_av
 
-        self._era5: Optional[ls2d.Read_era5] = None
+        self._era5: Optional[Era5Source] = None
         self._era5_les_input: Optional[xr.Dataset] = None
         self._era5_les_input_mean: Optional[xr.Dataset] = None
-        self._cams_eac4: Optional[ls2d.Read_cams] = None
+        self._cams_eac4: Optional[CamsSource] = None
         self._cams_eac4_les_input: Optional[xr.Dataset] = None
         self._species_cams: Optional[dict[str, np.ndarray]] = None
         self._dedicated_co2_tracers: Optional[list[str]] = None
@@ -264,39 +276,49 @@ class InitialBoundaryConditions:
         return self._float_type
 
     @property
-    def era5(self) -> ls2d.Read_era5:
-        """Return the configured ERA5 input reader, if available."""
+    def era5(self) -> Era5Source:
+        """Return the configured ERA5 input, if available."""
         if self._era5 is None:
             raise RuntimeError("ERA5 input has not been set yet.")
         return self._era5
 
     @era5.setter
-    def era5(self, value: ls2d.Read_era5) -> None:
-        """Set the ERA5 input reader and calculates the LES input.
+    def era5(self, value: Era5Source) -> None:
+        """Set the ERA5 input and calculate the LES input.
 
         Args:
-            value: era5 data from ls2d.Read_era
+            value: ``ls2d.Read_era5`` (CDS/MARS, after ``calculate_forcings()``),
+                the 3D dataset from ``ls2d.read_era5_arco()`` (Google), or a
+                column dataset already on the LES grid.
         """
         self.era5_les_input = self._get_les_input(value)
         self._era5 = value
 
     @property
-    def cams_eac4(self) -> ls2d.Read_cams:
-        """Return the configured CAMS EAC4 input reader, if available."""
+    def cams_eac4(self) -> CamsSource:
+        """Return the configured CAMS EAC4 input, if available."""
         if self._cams_eac4 is None:
             raise RuntimeError("CAMS EAC4 input has not been set yet.")
         return self._cams_eac4
 
     @cams_eac4.setter
-    def cams_eac4(self, value: ls2d.Read_cams) -> None:
-        """Set the CAMS EAC4 input reader.
+    def cams_eac4(self, value: CamsSource) -> None:
+        """Set the CAMS EAC4 input and calculate the LES input.
 
         Args:
-            value: cams data form ls2d.Read_cams
+            value: ``ls2d.Read_cams`` or a column dataset already on the LES grid.
         """
-        if "go3" in value.ds_ml.variables:
-            value.ds_ml = value.ds_ml.rename({"go3": "o3"})
-        self.cams_eac4_les_input = self._get_les_input(value)
+        les_input = self._get_les_input(value)
+        # The new ADS names ozone `go3`; downstream code expects `o3`.
+        if "go3" in les_input.variables and "o3" not in les_input.variables:
+            les_input = les_input.rename(
+                {
+                    name: name.replace("go3", "o3")
+                    for name in ("go3", "go3_lay")
+                    if name in les_input
+                }
+            )
+        self.cams_eac4_les_input = les_input
         self._cams_eac4 = value
 
     @property
@@ -563,13 +585,70 @@ class InitialBoundaryConditions:
         }
         return soil
 
-    def _get_les_input(self, ds: Union[ls2d.Read_era5, ls2d.Read_cams]) -> xr.Dataset:
-        """Interpolate input data to the LES grid.
+    def _get_les_input(self, source: Union[Era5Source, CamsSource]) -> xr.Dataset:
+        """Interpolate ERA5 or CAMS input data to the LES grid.
 
         Args:
-            ds: dataset from eather cams eac4 or era4
+            source: ``ls2d.Read_era5``, ``ls2d.Read_cams``, a 3D dataset from
+                ``ls2d.read_era5_arco()``, or a column dataset on the LES grid.
+
+        Raises:
+            TypeError: If the input type or dataset layout is not recognised.
+            ValueError: If the input is inconsistent with the LES grid.
         """
-        return ds.get_les_input(self.vgrid.z)
+        z = self.vgrid.z
+
+        if isinstance(source, ls2d.Read_era5):
+            if not hasattr(source, "z_mean"):
+                raise ValueError(
+                    "ERA5 forcings have not been calculated; call "
+                    "`era5.calculate_forcings()` before passing it."
+                )
+            return source.get_les_input(z)
+
+        if isinstance(source, ls2d.Read_cams):
+            # `Read_cams.get_les_input()` overwrites `ds_ml` with the averaging
+            # sub-domain, so a second call on the same reader would see a
+            # single column. Work on a shallow copy to keep the reader reusable.
+            return copy.copy(source).get_les_input(z, n_av=self.n_av)
+
+        if not isinstance(source, xr.Dataset):
+            raise TypeError(f"Unsupported input type: {type(source)}")
+
+        if {"latitude", "longitude"} <= set(source.dims):
+            # Generic 3D dataset, e.g. from `ls2d.read_era5_arco()`.
+            return ls2d.create_column_input(source, z, n_av=self.n_av)
+
+        if "z" in source.dims:
+            # Already on the LES grid; make sure it is the same grid.
+            if source.sizes["z"] != z.size or not np.allclose(source["z"], z):
+                raise ValueError(
+                    "Column input is on a different vertical grid than `vgrid`."
+                )
+            return source
+
+        raise TypeError(
+            "Dataset is neither a 3D lat/lon dataset nor column input on the "
+            f"LES grid (dims: {dict(source.sizes)})."
+        )
+
+    def _get_era5_sst(self) -> tuple[np.ma.MaskedArray, np.ndarray, np.ndarray]:
+        """Return the first ERA5 SST field (land masked) with its lon/lat."""
+        era5 = self.era5
+        if isinstance(era5, ls2d.Read_era5):
+            assert era5.sst is not None
+            sst = np.ma.masked_invalid(np.ma.asarray(era5.sst[0]))
+            return sst, np.asarray(era5.lons), np.asarray(era5.lats)
+
+        if {"latitude", "longitude"} <= set(era5.dims) and "sst" in era5:
+            # ARCO SSTs are NaN over land; the SST helper expects a land mask.
+            sst = np.ma.masked_invalid(era5["sst"].isel(time=0).values)
+            return sst, era5["longitude"].values, era5["latitude"].values
+
+        raise ValueError(
+            "Spatial ERA5 SSTs are not available from column input; pass the "
+            "Read_era5 reader or the `ls2d.read_era5_arco()` dataset instead."
+        )
 
     def _check_era5_les_input_mean(self) -> None:
         if self._era5_les_input_mean is None:
@@ -687,13 +766,12 @@ class InitialBoundaryConditions:
         )  # FORTRAN -> C
         soil.to_binaries(path=str(self._working_dir), allow_overwrite=True)
 
-        assert self.era5.sst is not None
-
         # Create SSTs from ERA5.
+        sst_in, sst_lons, sst_lats = self._get_era5_sst()
         sst_les = microhhpy.real.create_sst_from_regular_latlon(
-            self.era5.sst[0],
-            self.era5.lons,
-            self.era5.lats,
+            sst_in,
+            sst_lons,
+            sst_lats,
             self.domain.lon,
             self.domain.lat,
             float_type=self.float_type,
@@ -746,9 +824,10 @@ def init_icbc(
     microhh_src_path: Union[Path, str],
     gpt_path: Union[Path, str],
     utc_offset: float = 0.0,
-    era5: Optional[ls2d.Read_era5] = None,
-    cams_eac4: Optional[ls2d.Read_cams] = None,
+    era5: Optional[Era5Source] = None,
+    cams_eac4: Optional[CamsSource] = None,
     float_type: FloatType = np.float32,
+    n_av: int = 0,
 ) -> InitialBoundaryConditions:
     """Initialize the initial and boundary condition generator.
 
@@ -763,9 +842,11 @@ def init_icbc(
         tuv_path: Path to the TUV photolysis lookup data.
         microhh_src_path: Path to the MicroHH source directory.
         gpt_path: Path to the RRTMGP coefficient data.
-        era5: Optional preloaded ERA5 data.
-        cams_eac4: Optional preloaded CAMS EAC4 data.
+        era5: Optional ERA5 input: ``ls2d.Read_era5`` (CDS/MARS), the 3D
+            dataset from ``ls2d.read_era5_arco()`` (Google), or column input.
+        cams_eac4: Optional CAMS EAC4 input: ``ls2d.Read_cams`` or column input.
         float_type: NumPy precision type, either ``np.float32`` or ``np.float64``.
+        n_av: Number of grid points (+/-) for horizontal averaging.
 
     Returns:
         Configured initial and boundary condition generator.
@@ -775,6 +856,7 @@ def init_icbc(
         domain=domain,
         vgrid=vgrid,
         float_type=float_type,
+        n_av=n_av,
     )
     icbc.start_date = start_date
     icbc.end_date = end_date
