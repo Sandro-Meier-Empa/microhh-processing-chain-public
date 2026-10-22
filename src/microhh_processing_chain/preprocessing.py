@@ -802,6 +802,18 @@ class PreProcessing:
         self._check_source_list()
         self._check_tdep_source_location()
         self._check_tdep_source_strength()
+        self._check_3d_source_list()
+
+    def _check_3d_source_list(self) -> None:
+        """Check whether the list in the ini file only contains valid source names."""
+        source_names = utils.object_to_list(
+            self.case.config.get("source", "sourcelist", [])
+        )
+        if any(name in source_names for name in ["te", "qe"]):
+            raise ValueError(
+                "The source names 'te' and 'qe' are are not accepted in the"
+                "'sourcelist' for 3D sources. Use the 'swheat' switch instead."
+            )
 
     def _check_3d_source_files(self) -> None:
         """Check that all required 3D emission files are present."""
