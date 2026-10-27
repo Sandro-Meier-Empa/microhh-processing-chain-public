@@ -3,11 +3,63 @@
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from numbers import Real
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 import numpy as np
 import xarray as xr
+from scipy.optimize import brentq
+
+
+def calculate_linear_stretched_alpha(zsize: float, ktot: int, dz0: float) -> float:
+    """Calculate the stretching factor for an LS2D linear-stretched grid.
+
+    Args:
+        zsize: Target vertical domain size.
+        ktot: Number of vertical grid cells.
+        dz0: Thickness of the lowest grid cell, in the same units as
+            ``zsize``.
+
+    Returns:
+        Nonnegative ``alpha`` for
+        ``ls2d.grid.Grid_linear_stretched(kmax=ktot, dz0=dz0, alpha=alpha)``.
+
+    Raises:
+        TypeError: If an argument has an invalid type.
+        ValueError: If an argument is not finite and positive, ``ktot`` is less
+            than two, or the target domain is smaller than an equidistant grid.
+    """
+    if isinstance(ktot, bool) or not isinstance(ktot, (int, np.integer)):
+        raise TypeError("ktot must be an integer.")
+    if ktot < 2:
+        raise ValueError("ktot must be at least 2.")
+
+    for name, value in (("zsize", zsize), ("dz0", dz0)):
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(f"{name} must be a real number.")
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive.")
+
+    zsize = float(zsize)
+    dz0 = float(dz0)
+    equidistant_zsize = ktot * dz0
+    if zsize < equidistant_zsize:
+        raise ValueError("zsize must be at least ktot * dz0 for a nonnegative alpha.")
+    if zsize == equidistant_zsize:
+        return 0.0
+
+    target_grid_size = zsize / dz0
+
+    def grid_size_difference(alpha: float) -> float:
+        if alpha == 0.0:
+            return float(ktot - target_grid_size)
+        grid_size = np.expm1(ktot * np.log1p(alpha)) / alpha
+        return float(grid_size - target_grid_size)
+
+    # At this upper bound, the final cell alone spans the target domain.
+    upper_bound = np.expm1(np.log(target_grid_size) / (ktot - 1))
+    return cast(float, brentq(grid_size_difference, 0.0, upper_bound))
 
 
 def open_in_vscode(file_path: Union[str, Path]) -> None:
@@ -120,6 +172,7 @@ def confirm_action(prompt: str) -> Iterator[bool]:
 
 
 __all__ = [
+    "calculate_linear_stretched_alpha",
     "confirm_action",
     "object_to_list",
     "open_in_vscode",

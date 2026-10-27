@@ -43,6 +43,8 @@ analysis.
 - Avoid committing generated Python caches, local environment files, large
   outputs, or bulky simulation artifacts.
 - Don't create tests for new code unless the user explicitly requests test additions.
+- Write units in square brackets, not parentheses, e.g. `XCH4 [ppb]` or
+  `wind speed [m s-1]`, in docstrings, comments, plot labels and docs.
 
 ## Notebooks And Data
 

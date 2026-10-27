@@ -1,11 +1,11 @@
 """Input and output helpers for MicroHH case files."""
 
+import re
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 import microhhpy  # pyright: ignore[reportMissingImports]
-import netCDF4
 import pandas as pd
 import xarray as xr
 
@@ -21,7 +21,7 @@ def open_microhh_nc(
     """Open a .nc file related to MicroHH output.
 
     Args:
-        case: Case containing the output directory.
+        case: :class:`Case` containing the output directory.
         variable: Variable name to open.
         chunks: Chunking strategy passed to xarray.
 
@@ -53,36 +53,45 @@ def open_microhh_nc(
     return data
 
 
-def open_initial_cond(case: "Case") -> xr.Dataset:
-    """Read the netCDF file containing the initial conditions.
+def open_initial_cond(case: "Case") -> xr.DataTree:
+    """Open the NetCDF file containing the initial conditions.
+
+    Access variables by their absolute group path. Extract a group's dataset
+    from its node's :attr:`~xarray.DataTree.dataset` property; the tree's own
+    :attr:`~xarray.DataTree.dataset` property contains the root dataset.
 
     Args:
-        case: Case for which the initial conditions should be read.
+        case: :class:`Case` for which the initial conditions should be read.
 
     Returns:
-        Initial-condition dataset with all NetCDF groups merged.
+        Initial conditions with the NetCDF group structure preserved.
+
+    Examples:
+        >>> tree = open_initial_cond(case)
+        >>> u = tree["/init/u"]
+        >>> initial_profiles = tree["/init"].dataset
+        >>> root = tree.dataset
     """
-    return _combine_nc_groups(case.initial_conditions_file_path)
+    return xr.open_datatree(case.initial_conditions_file_path, decode_times=False)
 
 
-def _combine_nc_groups(file_path: Union[str, Path]) -> xr.Dataset:
-    """Combine all groups in a NetCDF file into one dataset."""
-    groups = ["", *list(netCDF4.Dataset(file_path).groups.keys())]
-    merged_dataset = xr.Dataset()
-    for group in groups:
-        ds = xr.open_dataset(file_path, group=group, decode_times=False)
-        merged_dataset = xr.merge([merged_dataset, ds], compat="override", join="outer")
+def open_statistics(case: "Case") -> xr.DataTree:
+    """Open the NetCDF file containing model-run statistics.
 
-    return merged_dataset
-
-
-def open_statistics(case: "Case") -> xr.Dataset:
-    """Read the NetCDF file containing model-run statistics.
+    Access variables by their absolute group path. Extract a group's dataset
+    from its node's :attr:`~xarray.DataTree.dataset` property; the tree's own
+    :attr:`~xarray.DataTree.dataset` property contains the root dataset.
 
     Returns:
-        Statistics dataset with all NetCDF groups merged.
+        Statistics with the NetCDF group structure preserved.
+
+    Examples:
+        >>> tree = open_statistics(case)
+        >>> u = tree["/default/u"]
+        >>> default_statistics = tree["/default"].dataset
+        >>> root = tree.dataset
     """
-    return _combine_nc_groups(case.statistics_file_path)
+    return xr.open_datatree(case.statistics_file_path, decode_times=False)
 
 
 def open_microhh_out(case: "Case") -> pd.DataFrame:
@@ -93,7 +102,7 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     - SDPD: simulated days per day
 
     Args:
-        case: Case containing the output file.
+        case: :class:`Case` containing the output file.
 
     Returns:
         Parsed output table with derived runtime columns.
@@ -118,6 +127,44 @@ def open_microhh_out(case: "Case") -> pd.DataFrame:
     return df_clean
 
 
+def parse_gpu_memory(path: str | Path) -> pd.DataFrame:
+    """Parse GPU memory information from a MicroHH ``.out`` file.
+
+    Args:
+        path: Path to the MicroHH output file.
+
+    Returns:
+        One-row DataFrame with the following columns:
+
+        - ``total_memory_gib``: Total GPU memory.
+        - ``available_pre_fft_gib``: GPU memory available before FFT setup.
+        - ``memory_margin_gib``: GPU memory reserved as a safety margin.
+        - ``available_post_fft_gib``: GPU memory available after FFT setup.
+        - ``cufft_strategy``: cuFFT memory-management strategy selected by
+          MicroHH.
+    """
+    text = Path(path).read_text()
+
+    patterns = {
+        "total_memory": r"Total memory\s*=\s*(\d+)",
+        "available_pre_fft": r"Available memory pre-FFT\s*=\s*(\d+)",
+        "memory_margin": r"Memory margin\s*=\s*(\d+)",
+        "available_post_fft": r"Available memory post-FFT\s*=\s*(\d+)",
+    }
+
+    data = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text)
+        data[f"{key}_gib"] = (
+            round(int(match.group(1)) / 1024**3, 2) if match else float("nan")
+        )
+
+    strategy = re.search(r"cuFFT strategy:\s*(.+)", text)
+    data["cufft_strategy"] = strategy.group(1).strip() if strategy else None
+
+    return pd.DataFrame([data])
+
+
 @wraps(microhhpy.io.save_case_input)
 def save_case_input(
     case_name: str,
@@ -133,8 +180,18 @@ def save_case_input(
     soil: Optional[dict[str, Any]] = None,
     source: Optional[dict[str, Any]] = None,
     trajectories: Optional[dict[str, Any]] = None,
+    overwrite: bool = False,
 ) -> None:
     """Save a MicroHH ``case_input.nc`` file via microhhpy."""
+    nc_name = Path(output_dir) / f"{case_name}_input.nc"
+
+    if nc_name.exists() and not overwrite:
+        raise FileExistsError(
+            f"File {nc_name} already exists. Use overwrite=True to overwrite."
+        )
+    elif nc_name.exists() and overwrite:
+        nc_name.unlink()
+
     microhhpy.io.save_case_input(
         case_name=case_name,
         init_profiles=init_profiles,
@@ -195,5 +252,6 @@ __all__ = [
     "open_microhh_nc",
     "open_microhh_out",
     "open_statistics",
+    "parse_gpu_memory",
     "save_case_input",
 ]

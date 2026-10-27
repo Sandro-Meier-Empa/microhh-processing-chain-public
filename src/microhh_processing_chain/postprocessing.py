@@ -7,7 +7,7 @@ import shutil
 import zipfile
 from collections.abc import Hashable
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, TypeVar, Union, cast
 
 import cscs
 import microhh_py.convert_3d_to_nc as convert_3d_to_nc
@@ -30,6 +30,8 @@ from microhh_processing_chain.constants import GAS_MOLAR_MASS
 from microhh_processing_chain.enums import Precision
 
 logger = logging.getLogger(__name__)
+
+XarrayData = TypeVar("XarrayData", xr.Dataset, xr.DataTree)
 
 
 def convert_microhh_grid_to_coords(
@@ -159,116 +161,50 @@ def _coordinate_crs_attrs(crs: pyproj.CRS) -> dict[str, Union[int, str]]:
 
 
 def convert_microhh_timestep_to_date(
-    data_or_case: Union[xr.Dataset, init.Case],
-    data: Optional[Union[xr.Dataset, str, pd.Timestamp]] = None,
-    start_date: Optional[Union[str, pd.Timestamp]] = None,
-    date_format: str = "%Y-%m-%d %H:%M:%S",
-    case: Optional[init.Case] = None,
-) -> xr.Dataset:
+    data: XarrayData, start_date: Union[str, pd.Timestamp]
+) -> XarrayData:
     """Convert MicroHH model time into UTC timestamps.
 
-    The function accepts both ``convert_microhh_timestep_to_date(case, data)``
-    and ``convert_microhh_timestep_to_date(data, case=case)``. When ``case``
-    contains ``time.datetime_utc``, that value is used as the authoritative
-    model start date. Numeric time coordinates are interpreted as MicroHH model
-    seconds, so missing output timesteps remain missing after conversion.
+    Numeric time coordinates are interpreted as MicroHH model seconds, so
+    missing output timesteps remain missing after conversion. For a DataTree,
+    such as the statistics file, every node with a ``time`` coordinate is
+    converted.
 
     Args:
-        data_or_case:
-            Dataset to convert, or a MicroHH case when using case-first calls.
-        data:
-            Dataset for case-first calls. For backwards-compatible dataset-first
-            calls, this may also be a positional ``start_date``.
-        start_date:
-            Model start date as a string or pandas timestamp. Ignored when
-            ``case.config["time"]["datetime_utc"]`` is available.
-        date_format:
-            Format used to parse string start dates.
-        case:
-            MicroHH case containing the time configuration.
+        data: Dataset or DataTree with a MicroHH ``time`` coordinate.
+        start_date: Model start date in UTC, e.g. ``time.datetime_utc`` from
+            the .ini file.
 
     Returns:
-        Dataset with ``time`` converted to UTC timestamps.
+        Data of the input type with ``time`` converted to UTC timestamps.
     """
-    dataset, case, start_date = _normalise_timestep_conversion_args(
-        data_or_case=data_or_case,
-        data=data,
-        start_date=start_date,
-        case=case,
-    )
+    start_timestamp = _as_naive_utc_timestamp(start_date)
 
-    start_timestamp = _get_microhh_start_timestamp(
-        case=case,
-        start_date=start_date,
-        date_format=date_format,
-    )
-    new_time = _convert_microhh_time_coord(dataset["time"], start_timestamp)
+    if isinstance(data, xr.DataTree):
+        return cast(
+            XarrayData,
+            data.map_over_datasets(lambda ds: _assign_utc_time(ds, start_timestamp)),
+        )
 
-    dataset = dataset.assign_coords(time=new_time)
+    return _assign_utc_time(data, start_timestamp)
+
+
+def _assign_utc_time(dataset: xr.Dataset, start_timestamp: pd.Timestamp) -> xr.Dataset:
+    """Convert ``time`` of a dataset to UTC, leaving datasets without it unchanged."""
+    if "time" not in dataset.coords:
+        return dataset
+
+    dataset = dataset.assign_coords(
+        time=_convert_microhh_time_coord(dataset["time"], start_timestamp)
+    )
     dataset["time"].attrs.update({"timezone": "UTC"})
-
     return dataset
 
 
-def _normalise_timestep_conversion_args(
-    data_or_case: Union[xr.Dataset, init.Case],
-    data: Optional[Union[xr.Dataset, str, pd.Timestamp]],
-    start_date: Optional[Union[str, pd.Timestamp]],
-    case: Optional[init.Case],
-) -> tuple[xr.Dataset, Optional[init.Case], Optional[Union[str, pd.Timestamp]]]:
-    """Normalise supported timestep conversion call styles."""
-    if isinstance(data_or_case, xr.Dataset):
-        dataset = data_or_case
-        if isinstance(data, xr.Dataset):
-            raise TypeError("Received two datasets. Provide only one dataset argument.")
-
-        if data is not None:
-            if start_date is not None:
-                raise TypeError("Received start_date both positionally and by keyword.")
-            start_date = data
-
-        return dataset, case, start_date
-
-    if case is not None:
-        raise TypeError("Received case both positionally and by keyword.")
-
-    case = data_or_case
-    if not isinstance(data, xr.Dataset):
-        raise TypeError("Expected an xarray Dataset after the case argument.")
-
-    return data, case, start_date
-
-
-def _get_microhh_start_timestamp(
-    case: Optional[init.Case],
-    start_date: Optional[Union[str, pd.Timestamp]],
-    date_format: str,
-) -> pd.Timestamp:
-    """Return the authoritative MicroHH start timestamp as timezone-naive UTC."""
-    if case is not None and "datetime_utc" in case.config["time"]:
-        case_start_date = case.config["time"]["datetime_utc"]
-        if start_date is not None:
-            logger.info(
-                "Using datetime_utc=%s from the .ini file and ignoring start_date=%s.",
-                case_start_date,
-                start_date,
-            )
-        start_date = case_start_date
-
-    if start_date is None:
-        raise ValueError(
-            "Please provide 'start_date' or set 'datetime_utc' in the ini file."
-        )
-
-    return _as_naive_utc_timestamp(start_date, date_format=date_format)
-
-
-def _as_naive_utc_timestamp(
-    value: Union[str, pd.Timestamp], date_format: Optional[str] = None
-) -> pd.Timestamp:
+def _as_naive_utc_timestamp(value: Union[str, pd.Timestamp]) -> pd.Timestamp:
     """Parse a timestamp and return it as timezone-naive UTC with ns precision."""
     if isinstance(value, str):
-        converted = pd.to_datetime(value, format=date_format)
+        converted = pd.to_datetime(value)
         if pd.isna(converted):
             raise ValueError(f"Could not parse timestamp: {value}")
         timestamp = pd.Timestamp(converted)
@@ -351,7 +287,7 @@ class PostProcessing:
 
     Args:
         case:
-            Case to post-process.
+            :class:`init.Case` to post-process.
     """
 
     def __init__(self, case: init.Case) -> None:
@@ -455,7 +391,7 @@ class PostProcessing:
                 Modelled variables which should be processed.
                 E.g. ["u", "v", "w", "ch4", "qt", "th"]
             precision:
-                Precision used for the created .nc file.
+                :class:`Precision` used for the created .nc file.
             start_time:
                 Start time in s of the data to process.
             end_time:
@@ -516,7 +452,7 @@ class PostProcessing:
             sample_time:
                 Sample time in s of the cross-section output.
             precision:
-                Precision used for the created .nc file.
+                :class:`Precision` used for the created .nc file.
             nprocs:
                 Number of worker processes for parallel processing.
             compression:
@@ -881,7 +817,7 @@ class PostProcessing:
 
         if dim == "zh":
             # Use initial conditions since vertical grid can be stretched
-            midpoints = io.open_initial_cond(self.case).z
+            midpoints = io.open_initial_cond(self.case)["/z"]
         else:
             spacing = data[new_dim_name].diff(new_dim_name)
             half = spacing.median(skipna=True) / 2
@@ -1066,7 +1002,7 @@ class PostProcessing:
         # check if pressure is in the dataset
         if "phydro" not in data.data_vars:
             logger.info("Adding 'phydro' to the dataset.")
-            data = self.add_statistics_variable(data, "phydro")
+            data = self.add_statistics_variable(data, "/thermo/phydro")
 
         # convert potential temperature to absolute temperature
         if "ta" not in data.data_vars:
@@ -1096,51 +1032,56 @@ class PostProcessing:
 
         return data
 
-    def add_statistics_variable(self, data: xr.Dataset, variable: str) -> xr.Dataset:
+    def add_statistics_variable(
+        self, data: xr.Dataset, variable_path: str
+    ) -> xr.Dataset:
         """Add a variable from the statistics file to the given dataset.
 
         Args:
             data:
                 Dataset to which the variable should be added.
-            variable:
-                Name of the variable in the statistics file which should be added
-                to the dataset.
+            variable_path:
+                Absolute path of the variable in the statistics tree which should
+                be added to the dataset.
 
         Returns:
-            Dataset with the added variable.
+            Dataset with the added variable, broadcast over the horizontal
+            dimensions of `data`.
+
+        Raises:
+            ValueError: If `variable_path` is not absolute, does not identify a
+                variable, or the variable is not a time-height profile.
         """
         # read in statistics file
         stats = io.open_statistics(case=self.case)
+        if not variable_path.startswith("/"):
+            raise ValueError(
+                f"Variable path '{variable_path}' must be absolute, for example "
+                "'/default/u'."
+            )
+        variable = stats[variable_path]
+        if not isinstance(variable, xr.DataArray) or variable.name is None:
+            raise ValueError(f"Path '{variable_path}' does not identify a variable.")
+        variable_name = variable.name
 
-        # check if variable is in statistics file
-        if variable not in stats.data_vars:
-            raise KeyError(f"No variable named '{variable}'.")
+        vertical_dim = next((dim for dim in ("z", "zh") if dim in variable.dims), None)
+        if "time" not in variable.dims or vertical_dim is None:
+            raise ValueError(
+                f"Statistics variable '{variable_path}' must be a time-height "
+                "profile with a 'time' and a 'z' or 'zh' dimension, but has "
+                f"dimensions {tuple(str(dim) for dim in variable.dims)}."
+            )
 
         # check if target file has the necessary dimensions:
-        for dim in stats.sizes:
+        for dim in variable.sizes:
             if dim not in data.dims or dim not in data.coords:
-                data = data.assign_coords({dim: stats[dim]})
+                data = data.assign_coords({dim: variable[dim]})
 
-        if "time" in stats[variable].dims and "z" in stats[variable].dims:
-            variable_values = np.tile(
-                stats[variable].values[:, :, np.newaxis, np.newaxis],
-                (1, 1, data.y.size, data.x.size),
-            )
-            data[variable] = (
-                ("time", "z", "y", "x"),
-                variable_values,
-                stats[variable].attrs,
-            )
-        if "time" in stats[variable].dims and "zh" in stats[variable].dims:
-            variable_values = np.tile(
-                stats[variable].values[:, :, np.newaxis, np.newaxis],
-                (1, 1, data.y.size, data.x.size),
-            )
-            data[variable] = (
-                ("time", "zh", "y", "x"),
-                variable_values,
-                stats[variable].attrs,
-            )
+        expanded = variable.expand_dims({"y": data["y"], "x": data["x"]}).transpose(
+            "time", vertical_dim, "y", "x"
+        )
+        expanded.attrs = dict(variable.attrs)
+        data[variable_name] = expanded
 
         return data
 
@@ -1159,7 +1100,9 @@ class PostProcessing:
         for var in required_vars:
             if var not in data.data_vars:
                 logger.info("Adding '%s' to the dataset.", var)
-                data = self.add_statistics_variable(data, variable=var)
+                data = self.add_statistics_variable(
+                    data, variable_path=f"/thermo/{var}"
+                )
 
         # Calculate absolute temperature
         data["ta"] = thermodynamics.absolute_temperature(
@@ -1229,8 +1172,8 @@ class PostProcessing:
                 the binary output files or 'netcdf' to read the netCDF output files.
         """
         stats = io.open_statistics(case=self.case)
-        rhoref = stats.rhoref.values
-        zh = stats.zh.values
+        rhoref = cast(xr.DataArray, stats["/default/rhoref"]).values
+        zh = cast(xr.DataArray, stats["/zh"]).values
         dz = zh[1:] - zh[:-1]
 
         itot = self.case.config["grid"]["itot"]

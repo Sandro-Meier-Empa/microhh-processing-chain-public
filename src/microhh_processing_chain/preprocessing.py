@@ -6,7 +6,7 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import cscs
 import ls2d
@@ -53,7 +53,7 @@ class PreProcessing:
 
     Args:
         case:
-            Case to pre-process and run.
+            :class:`init.Case` to pre-process and run.
         alps_setup:
             Object containing the setup variables used for creating a bash
             script to run the MicroHH simulations.
@@ -99,6 +99,9 @@ class PreProcessing:
         self.microhh_executable_path = self._get_microhh_executable_path()
         self._check_microhh_build_architecture()
         self._check_jobpreport_gpu()
+
+        self._validated = False
+        self._restart_time: Optional[int] = None
 
     def _get_microhh_executable_path(self) -> Path:
         """Resolve the MicroHH executable path from a file or containing directory."""
@@ -180,37 +183,67 @@ class PreProcessing:
                 "GPU jobreport is only supported when using GPU partition."
             )
 
-    def prepare_simulation(
-        self,
-        overwrite: bool = False,
-        start_jobs: bool = False,
-        wait: bool = False,
-    ) -> None:
-        """Prepare the case for running the MicroHH simulation.
+    def validate(self, restart_time: Optional[int] = None) -> None:
+        """Validate the case configuration before preparing run files.
 
-        - checking if the .ini setup is valid,
-        - copying the MicroHH executable to the scratch directory,
-        - checking if all required files are present,
-        - creating a bash script to run the simulation
+        Args:
+            restart_time: Time in seconds from which a restart simulation begins.
+                When provided, it must match the start time in the INI file.
+
+        Notes:
+            Validation preserves the existing GPU setup behavior and may normalize
+            ``npx`` and ``npy`` in the INI file when MPI is disabled. It must run
+            before :meth:`copy_required_files` and :meth:`create_run_script`,
+            because both rely on the normalized INI file.
         """
-        # check if the .ini setup is valid
-        self._check_ini_setup_valid()
+        if restart_time is not None:
+            self._check_restart_ini_updated(restart_time)
 
-        # copy microHH to directory
+        self._check_ini_setup_valid()
+        self._validated = True
+
+    def copy_required_files(
+        self,
+        restart_case: Optional[init.Case] = None,
+        restart_time: Optional[int] = None,
+    ) -> None:
+        """Copy and verify the files required to run the simulation.
+
+        Args:
+            restart_case: :class:`init.Case` from which restart files are copied.
+            restart_time: Time in seconds identifying the restart files to copy.
+
+        Raises:
+            RuntimeError: If :meth:`validate` has not been called yet.
+            ValueError: If only one restart argument is provided.
+            FileNotFoundError: If a required core case file is missing after copying.
+        """
+        self._require_validation("copy_required_files")
+
+        has_restart_case = restart_case is not None
+        has_restart_time = restart_time is not None
+        if has_restart_case != has_restart_time:
+            raise ValueError(
+                "'restart_case' and 'restart_time' must either both be provided "
+                "or both be omitted."
+            )
+
         self._copy_executable()
 
-        # Check if required files are present
+        if restart_case is not None and restart_time is not None:
+            restart_str = self.get_restart_str(restart_time)
+            self.copy_restart_files(
+                origin=restart_case.directory,
+                timestr=restart_str,
+            )
+            # Remember the restart so that `create_run_script` skips the "init"
+            # phase, which would overwrite the restart fields just copied.
+            self._restart_time = restart_time
+
         self._check_required_files()
 
         if self.binary_precision is not None:
             self._ensure_input_file_precision()
-
-        # Create bash script if it does not exist
-        self.slurm_job = self.create_run_script(overwrite, mode=RunMode.RUN)
-
-        if start_jobs:
-            # Launch the job on alps
-            self.start_simulation(wait)
 
     def _check_required_files(self) -> None:
         """Check if all required files are present in the scratch directory."""
@@ -426,9 +459,26 @@ class PreProcessing:
             logger.info("Cancelling simulation %s", self.case.job_id)
 
     def create_run_script(
-        self, overwrite: bool = False, mode: Union[RunMode, str] = RunMode.RUN
+        self, overwrite: bool = False, mode: Optional[Union[RunMode, str]] = None
     ) -> cscs.SlurmJob:
-        """Create a bash script to run the MicroHH simulation."""
+        """Create a bash script to run the MicroHH simulation.
+
+        Args:
+            overwrite: Whether to overwrite an existing sbatch script.
+            mode: Run mode passed to MicroHH. When omitted, the mode follows the
+                preparation: :data:`RunMode.RERUN` if :meth:`copy_required_files`
+                copied restart files, :data:`RunMode.RUN` otherwise. :data:`RunMode.RUN`
+                runs the ``init`` phase, which rewrites the restart fields, so a
+                restart simulation must not use it.
+
+        Raises:
+            RuntimeError: If :meth:`validate` has not been called yet.
+        """
+        self._require_validation("create_run_script")
+
+        if mode is None:
+            mode = RunMode.RUN if self._restart_time is None else RunMode.RERUN
+
         job_file = Path(self.case.scratch_path, "run_microhh.sbatch")
 
         commands = _get_microhh_run_commands(
@@ -440,7 +490,7 @@ class PreProcessing:
         )
 
         if not job_file.exists() or overwrite:
-            slurm_job = self.alps_setup.create_sbatch_script(
+            self.slurm_job = self.alps_setup.create_sbatch_script(
                 commands=commands,
                 job_name="run_microhh",
                 file_path=job_file,
@@ -448,9 +498,24 @@ class PreProcessing:
             )
         else:
             logger.info("Reading existing sbatch script %s", job_file)
-            slurm_job = cscs.SlurmJob(job_file, ssh_connect=self.alps_setup.ssh_connect)
+            self.slurm_job = cscs.SlurmJob(
+                job_file,
+                ssh_connect=self.alps_setup.ssh_connect,
+            )
 
-        return slurm_job
+        return self.slurm_job
+
+    def _require_validation(self, method_name: str) -> None:
+        """Raise if :meth:`validate` has not run before `method_name`.
+
+        Validation normalizes ``npx``/``npy`` in the INI file for GPU runs, so
+        copying files or writing an sbatch script beforehand would use stale
+        MPI settings.
+        """
+        if not self._validated:
+            raise RuntimeError(
+                f"'{method_name}' requires a validated case. Call 'validate()' first."
+            )
 
     def _check_ini_setup_valid(self) -> None:
         """Check if the .ini file setup is valid.
@@ -516,6 +581,14 @@ class PreProcessing:
 
     def _check_nodes_match(self) -> None:
         """Check if the number of nodes matches the expected value."""
+        if self.alps_setup.cluster == "eiger":
+            expected_cores = (
+                self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
+            )
+            if self.alps_setup.ntasks_per_node is None:
+                raise ValueError(
+                    "Alps setup requires 'ntasks_per_node' to validate nodes."
+                )
         if self.alps_setup.cluster == "eiger":
             expected_cores = (
                 self.case.config["master"]["npx"] * self.case.config["master"]["npy"]
@@ -1027,12 +1100,16 @@ class PreProcessing:
         specified in the .ini file.
         """
         ic = io.open_initial_cond(self.case)
+        if "/timedep" not in ic.groups:
+            return
 
-        time_coords = [name for name in ic.coords if "time" in str(name)]
+        timedep = ic["/timedep"].dataset
+
+        time_coords = [name for name in timedep.coords if "time" in str(name)]
 
         for time_coord in time_coords:
-            ic_start_time = int(ic[time_coord].values[0])
-            ic_end_time = int(ic[time_coord].values[-1])
+            ic_start_time = int(timedep[time_coord].values[0])
+            ic_end_time = int(timedep[time_coord].values[-1])
 
             ini_start_time = int(self.case.config["time"]["starttime"])
             ini_end_time = int(self.case.config["time"]["endtime"])
@@ -1067,7 +1144,7 @@ class PreProcessing:
     def _get_lowest_grid_level(self) -> float:
         """Get the lowest atmospheric grid level from the {case}_input.nc file."""
         initial_cond = io.open_initial_cond(self.case)
-        grid_values = initial_cond.z.values
+        grid_values = cast(xr.DataArray, initial_cond["/z"]).values
         non_neg_grid_values = [value for value in grid_values if value >= 0]
         lowest_grid_level = min(non_neg_grid_values)
         return lowest_grid_level
@@ -1080,7 +1157,7 @@ class PreProcessing:
         """Copy MicroHH restart files to scratch.
 
         The .ini and input.nc files are already copied when creating the case using
-        self.case.initialise_case().
+        :func:`init.initialise_case`.
         """
         origin = Path(origin)
 
@@ -1261,7 +1338,7 @@ def _get_multi_run_commands(
         commands.append("done")
         commands.append("")
         commands.append(f"# Wait for all '{phase}' phases to complete")
-        commands.append("wait")
+        commands.append("wait || exit 1")
         commands.append("")
 
     return commands
@@ -1275,9 +1352,28 @@ def create_run_4x_script(
     overwrite: bool = False,
     jobreport_path: Optional[str] = None,
 ) -> cscs.SlurmJob:
-    """Create a SLURM script that runs prepared simulations on a GPU node."""
+    """Create a SLURM script that runs prepared simulations on a GPU node.
+
+    Raises:
+        ValueError: If `alps_setup` allocates no GPUs, or if the number of
+            allocated GPUs does not match the number of cases.
+    """
     ncases = len(cases)
     run_mode = mode.value if isinstance(mode, RunMode) else str(mode).lower()
+
+    # `gpus_per_node` is only set for GPU partitions
+    if alps_setup.gpus_per_node is None:
+        raise ValueError(
+            "alps_setup allocates no GPUs ('gpus_per_node' is not set), but "
+            f"create_run_4x_script runs {ncases} cases on a GPU node. Use a GPU "
+            "setup with 'gpus_per_node' set to the number of cases."
+        )
+
+    if alps_setup.gpus_per_node != ncases:
+        raise ValueError(
+            "The number of GPUs allocated in alps_setup "
+            f"({alps_setup.gpus_per_node}) must match the number of cases ({ncases})."
+        )
 
     if ncases != 4:
         logger.warning("Expected 4 cases, but got %d.", len(cases))

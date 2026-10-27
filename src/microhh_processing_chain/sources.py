@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 def get_source_strength(
-    case: init.Case, to_unit: str, time_s: Optional[int] = None
+    case: init.Case, to_unit: str, time_s: Optional[float] = None
 ) -> np.ndarray:
     """Get source strengths converted to desired units.
 
     Works both for constant and time-dependent source strengths.
 
     Args:
-        case: Case object used to read source settings and initial conditions.
+        case: :class:`init.Case` object used to read source settings and initial
+            conditions.
         to_unit: Desired unit for source strength.
         time_s: Time in seconds to select source strength data.
             When omitted, the maximum over all times is used.
@@ -58,20 +59,32 @@ def get_source_strength(
 
 
 def _get_dynamic_source_strength(
-    case: init.Case, time_s: Optional[int] = None
+    case: init.Case, time_s: Optional[float] = None
 ) -> np.ndarray:
     """Get time-dependent source strengths from initial conditions.
 
     Args:
-        case: Case object used to read initial conditions.
+        case: :class:`init.Case` object used to read initial conditions.
         time_s: Time in seconds to select source strength data.
             When omitted, the maximum over all times is used.
 
     Returns:
         Source strengths from the initial-condition file.
+
+    Raises:
+        ValueError: If the initial-condition file has no ``/timedep`` group or no
+            ``source_strength_*`` variables in it.
     """
-    # Load time-dependent strength data
-    initial_cond = io.open_initial_cond(case)
+    tree = io.open_initial_cond(case)
+    if "/timedep" not in tree.groups:
+        raise ValueError(
+            f"'{case.initial_conditions_file_path}' has no '/timedep' group, which "
+            "is required for time-dependent source strengths. Either rebuild the "
+            "initial conditions with the source strengths or set "
+            "'[source] swtimedep_strength = False'."
+        )
+
+    initial_cond = tree["/timedep"].dataset
 
     # get all data variables with "source_strength_*"
     strength_vars = [
@@ -259,10 +272,10 @@ def briggs_momentum_rise(
     with the condition vs/u >= 4.
 
     Args:
-        x: Downwind distance (m).
-        u: Wind speed at stack height (m/s).
-        d: Stack diameter (m).
-        vs: Stack exit velocity (m/s).
+        x: Downwind distance [m].
+        u: Wind speed at stack height [m/s].
+        d: Stack diameter [m].
+        vs: Stack exit velocity [m/s].
         stability: Atmospheric stability regime.
             Only "neutral" is supported in this implementation.
 
@@ -322,10 +335,10 @@ def asme_momentum_rise(
         - ΔT < 50 K
 
     Args:
-        x: Downwind distance (m).
-        u: Wind speed at stack height (m/s).
-        d: Stack diameter (m).
-        vs: Stack exit velocity (m/s).
+        x: Downwind distance [m].
+        u: Wind speed at stack height [m/s].
+        d: Stack diameter [m].
+        vs: Stack exit velocity [m/s].
 
     Returns:
         Plume rise above the source in meters.
@@ -364,9 +377,9 @@ def _generic_plume_rise_form(
 
     Args:
         e: Empirical constant.
-        x: Downwind distance (m).
+        x: Downwind distance [m].
         b: Exponent for downwind distance.
-        u: Wind speed at stack height (m/s).
+        u: Wind speed at stack height [m/s].
         a: Exponent for wind speed.
 
     Returns:
@@ -383,13 +396,13 @@ def _validate_input(
 ) -> None:
     """Validate plume-rise inputs for positive physical values."""
     if np.array(x).any() < 0:
-        raise ValueError("x must be >= 0 (m).")
+        raise ValueError("x must be >= 0 [m].")
     if np.array(u).any() <= 0:
-        raise ValueError("u must be > 0 (m/s).")
+        raise ValueError("u must be > 0 [m/s].")
     if np.array(d).any() <= 0:
-        raise ValueError("d must be > 0 (m).")
+        raise ValueError("d must be > 0 [m].")
     if np.array(vs).any() <= 0:
-        raise ValueError("vs must be > 0 (m/s).")
+        raise ValueError("vs must be > 0 [m/s].")
 
 
 __all__ = [

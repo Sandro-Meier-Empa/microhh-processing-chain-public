@@ -1,4 +1,4 @@
-"""Case lifecycle helpers for MicroHH simulations."""
+""":class:`Case` lifecycle helpers for MicroHH simulations."""
 
 import json
 import logging
@@ -92,6 +92,27 @@ class Case:
     def out_file_path(self) -> Path:
         """Get the path to the output file of the case."""
         return Path(self.directory, f"{self.name}.out")
+
+    @property
+    def slurm_job(self) -> cscs.SlurmJob:
+        """Get the Slurm job associated with the case."""
+        job_files = list(Path(self.directory).glob("run_microhh*.sbatch"))
+        if not job_files:
+            raise FileNotFoundError(
+                f"No sbatch files found in {self.directory}. "
+                "Please ensure the case has been initialised and submitted."
+            )
+
+        if len(job_files) > 1:
+            logger.warning(
+                "Multiple sbatch files found in %s. Using the last one: %s",
+                self.directory,
+                job_files[-1],
+            )
+        return cscs.SlurmJob(
+            path=job_files[-1],  # Use the last sbatch file if multiple exist
+            job_id=self.job_id,
+        )
 
     @property
     def initial_conditions_file_path(self) -> Path:
@@ -310,7 +331,7 @@ class Case:
         job_id: Optional[int] = None
         for file in out_files:
             file_name = file.name
-            match = re.search(r"\d+", file_name)
+            match = re.search(r"\d{6}", file_name)
             if match is not None:
                 job_id = int(match.group())
 
@@ -922,6 +943,14 @@ class Case:
         """Summarise output files in the case directory."""
         files = [f.name for f in self.directory.iterdir() if f.is_file()]
 
+        # Files written exclusively by `microhh init`. Other restart files written
+        # during init can gain later timestamps and remain complete file series.
+        initialisation_names = {
+            "fftwplan.0000000",
+            "grid.0000000",
+            "rhoref.0000000",
+        }
+
         # Regex patterns for timestamped files
         # Pattern 1: name.XXXXXXX  (e.g. ch4.0000000, u.0000020)
         # Pattern 2: name.XXX.XXXXXXX (e.g. ch4_path.xy.000.0000000)
@@ -932,11 +961,16 @@ class Case:
         )  # for ch4_path.xy.NNN.TTTTTTT
         nc_pattern = re.compile(r"^(.+?)\.nc$")
 
+        initialisation_files = []
         timestamped = defaultdict(list)  # base_name -> [timestamps]
         nc_files = []
         other_files = []
 
         for fname in sorted(files):
+            if fname in initialisation_names:
+                initialisation_files.append(fname)
+                continue
+
             # Try the two-level timestamp pattern first (more specific)
             m2 = ts2_pattern.match(fname)
             m1 = ts_pattern.match(fname)
@@ -946,13 +980,21 @@ class Case:
                 timestamped[m2.group(1)].append(int(m2.group(2)))
             elif m1:
                 timestamped[m1.group(1)].append(int(m1.group(2)))
-            elif mn and not fname.endswith("_input.nc") and fname != "fftwplan.0000000":
+            elif mn:
                 nc_files.append(fname)
             else:
                 other_files.append(fname)
 
         # --- Print summary ---
         print(f"Case directory: {self.directory}\n")
+
+        if initialisation_files:
+            print("=" * 60)
+            print("INITIALISATION FILES")
+            print("=" * 60)
+            for f in initialisation_files:
+                print(f"  {f}")
+            print()
 
         print("=" * 60)
         print("TIMESTAMPED FILE SERIES")
@@ -1014,10 +1056,10 @@ class Case:
                 logger.warning("File %s does not exist.", src)
 
     def domain(self) -> Domain:
-        """Creates a Domain from the Case ini file.
+        """Creates a :class:`Domain` from the :class:`Case` ini file.
 
         Returns:
-            instance of spacial.Domain
+            instance of :class:`Domain`
         """
         domain = Domain(
             xsize=self.config.grid.xsize,
