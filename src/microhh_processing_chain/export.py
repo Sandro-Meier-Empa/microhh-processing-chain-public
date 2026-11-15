@@ -46,6 +46,8 @@ TimeSelection = Union[slice, Sequence[float], np.ndarray]
 # Snapshots requested as model seconds must match an output time this closely.
 _TIME_TOLERANCE_S = 0.5
 _SPACING_RTOL = 1e-6
+# A time-dependent source position must stay within this distance [m].
+_POSITION_ATOL_M = 1e-6
 _LOG_HEAD_BYTES = 65536
 _GIT_HASH_PATTERN = re.compile(r"Microhh git-hash:\s*(\S+)", re.IGNORECASE)
 
@@ -107,7 +109,8 @@ def export_plume_column(
         Dataset following the ``spectra.PlumeColumn`` contract.
 
     Raises:
-        ValueError: If the source emits a volume mixing ratio, the gas cannot
+        ValueError: If the source emits a volume mixing ratio, is a line
+            source or moves before the last exported snapshot, the gas cannot
             be inferred, the start time is unknown, the tracer is not emitted
             by exactly the selected source, or requested snapshots are missing.
         FileExistsError: If ``output_path`` exists and ``overwrite`` is false.
@@ -138,6 +141,12 @@ def export_plume_column(
     )
     dataset = convert_microhh_timestep_to_date(dataset, start_timestamp)
 
+    timedep_location = bool(case.config["source"].get("swtimedep_location", False))
+    if timedep_location:
+        source_settings.update(
+            _timedep_source_position(case, source_index, model_seconds)
+        )
+
     timedep = bool(case.config["source"]["swtimedep_strength"])
     rates = _emission_rates(case, model_seconds, source_index, timedep)
     dataset["emission_rate"] = (
@@ -145,7 +154,7 @@ def export_plume_column(
         rates,
         {"units": EMISSION_RATE_UNITS, "long_name": f"{gas_name} emission rate"},
     )
-    if timedep:
+    if timedep or timedep_location:
         source_files.append(case.initial_conditions_file_path.name)
 
     if include_wind:
@@ -202,7 +211,18 @@ def _resolve_gas(tracer: str, gas: Optional[str]) -> str:
 def _source_settings(
     case: init.Case, tracer: str, source_index: int
 ) -> dict[str, float]:
-    """Return position and extent of the selected source from the ``.ini`` file."""
+    """Return position and extent of the selected source from the ``.ini`` file.
+
+    ``source_x/y/z`` are the prescribed emission point ``source_x0/y0/z0`` in
+    metres in the LES model frame, whose origin is the lower-left domain edge,
+    i.e. the frame of the exported ``x``/``y`` cell centres. A time-dependent
+    location replaces them in :func:`_timedep_source_position`.
+
+    Raises:
+        ValueError: If the source does not emit ``tracer`` alone, emits a
+            volume mixing ratio, is a line source, or a ``[source]`` list has
+            neither one value nor one value per source.
+    """
     config = case.config["source"]
     sourcelist = [str(name) for name in np.atleast_1d(config["sourcelist"])]
     matching = [i for i, name in enumerate(sourcelist) if name == tracer]
@@ -216,14 +236,32 @@ def _source_settings(
             f"Tracer {tracer!r} is emitted by sources {matching}; the column "
             "mixes their plumes, but a PlumeColumn file holds one source."
         )
-    if bool(np.atleast_1d(config["swvmr"])[source_index]):
+
+    def value(key: str, default: Optional[float] = None) -> float:
+        # MicroHH broadcasts a single value to every source (source.cxx).
+        if key not in config and default is not None:
+            return default
+        values = np.atleast_1d(config[key])
+        if values.size == 1:
+            return float(values[0])
+        if values.size != len(sourcelist):
+            raise ValueError(
+                f"'[source] {key}' has {values.size} values but sourcelist has "
+                f"{len(sourcelist)} entries."
+            )
+        return float(values[source_index])
+
+    if bool(value("swvmr")):
         raise ValueError(
             f"Source {source_index} emits a volume mixing ratio (swvmr=1), so "
             f"'{tracer}_path' is not a mass column in {COLUMN_UNITS}."
         )
-
-    def value(key: str) -> float:
-        return float(np.atleast_1d(config[key])[source_index])
+    lines = {axis: value(f"line_{axis}", default=0.0) for axis in "xyz"}
+    if any(length != 0.0 for length in lines.values()):
+        raise ValueError(
+            f"Source {source_index} is a line source ({lines}); it has no single "
+            "emission point, which a PlumeColumn file records as source_x/y/z."
+        )
 
     sigma_x = value("sigma_x")
     sigma_y = value("sigma_y")
@@ -237,6 +275,58 @@ def _source_settings(
         # 4-sigma rule, as in PostProcessing.create_sources_dataset.
         "source_diameter": 4.0 * max(sigma_x, sigma_y),
     }
+
+
+def _timedep_source_position(
+    case: init.Case, source_index: int, model_seconds: np.ndarray
+) -> dict[str, float]:
+    """Return the time-dependent source position, which must be constant.
+
+    With ``swtimedep_location`` MicroHH replaces ``source_x0/y0/z0`` by
+    ``/timedep source_{x,y,z}0_{n}`` of the initial-condition file, linearly
+    interpolated in time. Each snapshot holds the plume emitted since model
+    second zero, so the position must not change up to the last exported
+    snapshot for ``source_x/y/z`` to describe the plume.
+
+    Args:
+        case: :class:`init.Case` whose initial-condition file holds ``/timedep``.
+        source_index: Index of the source in the ``[source]`` arrays.
+        model_seconds: Exported snapshots in model seconds [s].
+
+    Returns:
+        ``source_x``, ``source_y`` and ``source_z`` in metres [m].
+
+    Raises:
+        ValueError: If ``/timedep`` or a position variable is missing, or the
+            position changes before the last exported snapshot.
+    """
+    tree = io.open_initial_cond(case)
+    if "/timedep" not in tree.groups:
+        raise ValueError(
+            f"'{case.initial_conditions_file_path}' has no '/timedep' group, "
+            "which '[source] swtimedep_location = True' requires."
+        )
+    timedep = tree["/timedep"].dataset
+    last = float(np.max(model_seconds))
+    position: dict[str, float] = {}
+    for axis in "xyz":
+        name = f"source_{axis}0_{source_index}"
+        if name not in timedep:
+            raise ValueError(
+                f"'{case.initial_conditions_file_path}' /timedep lacks '{name}'."
+            )
+        series = timedep[name].load()
+        times = np.asarray(series["time_source"].values, dtype=float)
+        values = np.asarray(series.values, dtype=float)
+        used = np.append(values[times <= last], np.interp(last, times, values))
+        if np.ptp(used) > _POSITION_ATOL_M:
+            raise ValueError(
+                f"Source {source_index} moves in {axis} from {used.min()} m to "
+                f"{used.max()} m before {last} s; a PlumeColumn file records one "
+                "fixed source position."
+            )
+        position[f"source_{axis}"] = float(used[-1])
+    return position
 
 
 def _resolve_start_time(

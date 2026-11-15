@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-16
+
+### Fixed
+
+- `export.export_plume_column()` records the emission point MicroHH actually
+  uses as `source_x/y/z`. With `[source] swtimedep_location = True` the
+  position comes from `/timedep source_{x,y,z}0_{n}` of the initial-condition
+  file; a source that moves before the last exported snapshot raises
+  `ValueError` instead of exporting the `.ini` position.
+- `[source]` keys holding one value are broadcast to every source, as in
+  MicroHH, instead of raising `IndexError` for `source_index > 0`.
+
+### Changed
+
+- Line sources (non-zero `line_x/y/z`) are rejected by the export, since a
+  `PlumeColumn` file records one emission point.
+
 ## 2026-10-14
 
 ### Breaking changes
