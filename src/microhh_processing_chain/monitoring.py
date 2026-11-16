@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from microhh_processing_chain import io
@@ -17,30 +18,87 @@ if TYPE_CHECKING:
 def add_progress_to_df(df: pd.DataFrame) -> pd.DataFrame:
     """Add MicroHH simulation progress to a DataFrame containing queued jobs.
 
+    A job's ``WORK_DIR`` is either a case directory (single-case job) or the
+    folder holding the cases of a multi-GPU job (see
+    :func:`~microhh_processing_chain.preprocessing.create_run_4x_script`). The
+    cases of a multi-GPU job are the subdirectories that contain the job's run
+    log ``run_microhh_<JOBID>.out``.
+
     Args:
-        df:
-            DataFrame containing jobs in the queue.
+        df: DataFrame containing jobs in the queue, with the columns ``JOBID``
+            and ``WORK_DIR``.
 
     Returns:
-        Jobs in the queue with simulation progress.
+        Jobs in the queue with two added columns: ``PROGRESS [%]``, the
+        progress of the slowest case of each job (``NaN`` for jobs without
+        readable MicroHH cases), and ``CASE_PROGRESS [%]``, the progress of
+        each case of a multi-case job.
+    """
+    progress = []
+    case_progress = []
+
+    for _, row in df.iterrows():
+        # ``squeue -o %all`` has two JOBID columns (equal except for array jobs),
+        # so the row lookup can return a Series instead of a scalar
+        job_id = row["JOBID"]
+        if isinstance(job_id, pd.Series):
+            job_id = job_id.iloc[0]
+        try:
+            cases = _job_cases(Path(str(row["WORK_DIR"])), str(job_id))
+            percentages = [_case_progress_percentage(case) for case in cases]
+        except Exception:
+            percentages = []
+
+        progress.append(round(min(percentages), 1) if percentages else np.nan)
+        case_progress.append(
+            " / ".join(f"{p:.1f}" for p in percentages) if len(percentages) > 1 else ""
+        )
+
+    df["PROGRESS [%]"] = progress
+    df["CASE_PROGRESS [%]"] = case_progress
+
+    return df
+
+
+def _job_cases(job_dir: Path, job_id: str) -> list["Case"]:
+    """Return the MicroHH cases run by a Slurm job.
+
+    Args:
+        job_dir: Working directory of the job.
+        job_id: Slurm job ID.
+
+    Returns:
+        The case in *job_dir* for a single-case job, otherwise the cases in the
+        subdirectories of *job_dir* that contain ``run_microhh_<job_id>.out``,
+        sorted by directory name. Empty if there are neither.
     """
     import microhh_processing_chain.initialisation as init
 
-    progress_percentages = []
+    try:
+        return [init.read_case(job_dir)]
+    except FileNotFoundError:
+        pass
 
-    for _, row in df.iterrows():
-        job_dir = str(row["WORK_DIR"])
-        try:
-            case = init.read_case(job_dir)
-            current_timestep, max_timestep = get_simulation_progress_from_files(case)
-            progress_percentage = current_timestep / max_timestep * 100
-            progress_percentages.append(int(progress_percentage))
-        except Exception:
-            progress_percentages.append("NA")
+    case_dirs = sorted(
+        log.parent for log in job_dir.glob(f"*/run_microhh_{job_id}.out")
+    )
+    return [init.read_case(case_dir) for case_dir in case_dirs]
 
-    df["PROGRESS [%]"] = progress_percentages
 
-    return df
+def _case_progress_percentage(case: "Case") -> float:
+    """Return the progress of a case in percent of its end time.
+
+    Uses the model time in the MicroHH ``.out`` file, which is updated every
+    ``outputiter`` steps, and falls back to the latest restart file while the
+    ``.out`` file has no time step yet.
+    """
+    try:
+        current, end = get_simulation_progress_from_out(case)
+    except (IndexError, KeyError, ValueError):
+        current, end = 0.0, 0
+    if current == 0:
+        current, end = get_simulation_progress_from_files(case)
+    return float(current) / end * 100
 
 
 def print_simulation_progress(case: "Case") -> None:
