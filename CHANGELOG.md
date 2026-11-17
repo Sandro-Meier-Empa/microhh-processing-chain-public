@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-11-17
+
+### Changed
+
+- TUV photolysis rates are computed by the new `case_input.calc_tuv_photolysis()`
+  instead of `microhhpy.chem.calc_tuv_photolysis()`. Results are identical, but
+  each call runs in its own temporary directory, so parallel runs and stale
+  `microh.txt` files from earlier runs can no longer mix up results.
+- `InitialBoundaryConditions.calc_photolysis_rates()` now raises `TuvError` by
+  default if TUV fails or returns missing/non-finite rates (previously these
+  were silently set to zero). Pass `raise_on_error=False` for the old
+  behaviour, and `suppress_stdout=False` to show the TUV console output.
+
+- `init_icbc()` `start_date`/`end_date` are UTC (model second zero, matching
+  `[time] datetime_utc`); they were documented as local time. `utc_offset` is
+  now the offset of local standard time (no daylight saving time) and defaults
+  to `None`, which determines it from the time zone at the domain centre
+  (`case_input.local_standard_utc_offset()`, requires the new dependency
+  `timezonefinder`). Use `InitialBoundaryConditions.to_local_standard_time()`
+  for inputs defined in local time, e.g. the CORSO emission profiles.
+- `sources.create_strength_profiles()` takes `utc_offset` to give the schedule
+  clock times in local standard time (default `0.0`, unchanged behaviour).
+
+### Added
+
+- Tests for the TUV photolysis wrapper (`tests/test_case_input_tuv.py`). Set
+  `TUV_PATH` to also run them against a compiled TUV.
+
+### Fixed
+
+- Start/end dates that are not on a whole hour no longer produce zero or
+  misaligned photolysis rates. Dates must lie on the 15 min TUV grid;
+  otherwise a `ValueError` is raised.
+
+## 2026-10-29
+
+### Fixed
+
+- `io.open_initial_cond()` no longer fails on cases with a land-surface model.
+  The `soil` group's `z` dimension clashed with the atmospheric `z` of the root
+  group; it is now renamed to `z_soil`.
+
 ## 2026-10-14
 
 ### Breaking changes

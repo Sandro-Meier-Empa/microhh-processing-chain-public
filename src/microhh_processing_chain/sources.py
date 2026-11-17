@@ -161,12 +161,14 @@ def create_strength_profiles(
     gas_mass: Union[float, str],
     time_format: str = "%H:%M:%S",
     spacing: str = "1min",
+    utc_offset: float = 0.0,
 ) -> xr.Dataset:
     """Create strength profiles with 1-second ramp up/down for each time interval.
 
     Args:
-        start_times: Start times for each interval.
-        end_times: End times for each interval.
+        start_times: Start clock times for each interval, in local standard
+            time (UTC + ``utc_offset``).
+        end_times: End clock times for each interval, in local standard time.
         strengths: Source strength values for each interval.
         reference_start: Start time of the output time series.
         reference_end: End time of the output time series.
@@ -175,6 +177,10 @@ def create_strength_profiles(
         gas_mass: Molecular mass or gas name for unit conversion.
         time_format: Format of the input start and end times.
         spacing: Time spacing for the output profile.
+        utc_offset: Offset [h] of the local standard time of ``start_times``
+            and ``end_times`` from UTC, e.g.
+            ``InitialBoundaryConditions.utc_offset``. The reference times and
+            the output time axis stay in UTC.
 
     Returns:
         Dataset with source-by-time strength profiles.
@@ -201,6 +207,9 @@ def create_strength_profiles(
     time_range = pd.date_range(start=reference_start, end=reference_end, freq=spacing)
 
     results = []
+    # The schedules are clock times in local standard time.
+    local_time_range = time_range + pd.Timedelta(hours=utc_offset)
+    time_of_day = np.array([ts.time() for ts in local_time_range])
 
     for start_time, end_time, strength in zip(
         start_times, end_times, strengths_converted
@@ -212,7 +221,6 @@ def create_strength_profiles(
         if start_t > end_t:
             raise ValueError("end_time must be after start_time")
 
-        time_of_day = np.array([ts.time() for ts in time_range])
         mask = (time_of_day >= start_t) & (time_of_day <= end_t)
 
         results.append(np.where(mask, strength, 0.0))

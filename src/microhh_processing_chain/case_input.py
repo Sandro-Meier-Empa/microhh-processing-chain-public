@@ -5,16 +5,25 @@ import logging
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Union
+from zoneinfo import ZoneInfo
 
 import ls2d
-import microhhpy  # pyright: ignore[reportMissingImports]
+import microhhpy
 import numpy as np
 import pandas as pd
 import xarray as xr
+from microhhpy.chem.tuv import (
+    create_tuv_input,
+    read_tuv,
+)
+from microhhpy.constants import xm_cams
+from microhhpy.utils import get_data_file
+from timezonefinder import TimezoneFinder
 
 from microhh_processing_chain import initialisation as init
 from microhh_processing_chain import spatial
@@ -31,6 +40,194 @@ Era5Source = Union[ls2d.Read_era5, xr.Dataset]
 CamsSource = Union[ls2d.Read_cams, xr.Dataset]
 
 NUDGEFAC_MIN = 1e-6
+
+TUV_NAME = "microh"  # TUV requires exactly six characters.
+# microhhpy's TUV input writer fixes the output interval to 15 min (nt = 4/hour).
+TUV_STEP = timedelta(minutes=15)
+TUV_RATE_COLUMNS = (
+    "jo31d",
+    "jh2o2",
+    "jno2",
+    "jno3",
+    "jn2o5",
+    "jch2or",
+    "jch2om",
+    "jch3o2h",
+)
+# Everything TUV reads relative to its working directory, besides INPUTS/.
+_TUV_SHARED_ENTRIES = ("DATAE1", "DATAJ1", "DATAS1", "helpin")
+
+
+class TuvError(RuntimeError):
+    """Raised when TUV fails or returns incomplete photolysis rates."""
+
+
+def _midnight(time: datetime) -> datetime:
+    """Return 00:00 of the day of ``time``."""
+    return time.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _tuv_day_windows(
+    start: datetime, end: datetime
+) -> list[tuple[datetime, float, float]]:
+    """Split a period into per-day TUV runs of (day, tstart [h], tstop [h])."""
+    hour = timedelta(hours=1)
+    windows = []
+    day = _midnight(start)
+    while day < end:
+        next_day = day + timedelta(days=1)
+        tstart = (max(start, day) - day) / hour
+        tstop = (min(end, next_day) - day) / hour
+        windows.append((day, tstart, tstop))
+        day = next_day
+    return windows
+
+
+def _tail(text: str, n_lines: int = 20) -> str:
+    """Return the last lines of a console output."""
+    return "\n".join(text.strip().splitlines()[-n_lines:])
+
+
+def calc_tuv_photolysis(
+    tuv_path: Union[Path, str],
+    start_date: datetime,
+    end_date: datetime,
+    lon: float,
+    lat: float,
+    input_file: Optional[Union[Path, str]] = None,
+    suppress_stdout: bool = True,
+    raise_on_error: bool = True,
+) -> pd.DataFrame:
+    """Calculate photolysis rates with TUV for one location and period.
+
+    Replaces ``microhhpy.chem.calc_tuv_photolysis``. It uses the same input
+    file and reader, but checks the TUV exit code and output. Each call runs
+    in its own temporary directory, so parallel runs and stale output files
+    from earlier runs cannot mix up results.
+
+    Args:
+        tuv_path: TUV root directory containing the compiled ``tuv`` binary
+            and the ``DATA*`` directories, e.g. ``.../TUV/V5.4``.
+        start_date: Start in UTC (the base input uses ``tmzone = 0``). Must
+            lie on the 15 min TUV grid.
+        end_date: End in UTC, on the 15 min TUV grid.
+        lon: Longitude [deg east].
+        lat: Latitude [deg north].
+        input_file: TUV base input. Defaults to microhhpy's
+            ``microhh_tuv.base``; only date, time and location are replaced.
+        suppress_stdout: Hide the TUV console output. It is still captured
+            and included in error messages.
+        raise_on_error: Raise :class:`TuvError` if TUV exits with an error,
+            writes no or unreadable output, or returns missing/non-finite
+            rates. If False, log a warning and set the affected rates to zero.
+
+    Returns:
+        Solar zenith angle [deg] and photolysis rates [s-1], indexed by UTC
+        time at 15 min intervals from ``start_date`` to ``end_date``.
+
+    Raises:
+        FileNotFoundError: If the ``tuv`` binary does not exist.
+        ValueError: If the period is empty or not on the 15 min grid.
+        TuvError: If ``raise_on_error`` and TUV fails.
+    """
+    tuv_path = Path(tuv_path)
+    executable = tuv_path / "tuv"
+    if not executable.is_file():
+        raise FileNotFoundError(f"TUV executable not found: {executable}")
+    if input_file is None:
+        input_file = get_data_file("microhh_tuv.base")
+
+    start, end = start_date, end_date
+    if end <= start:
+        raise ValueError(f"end_date ({end}) must be after start_date ({start}).")
+    for label, value in (("start_date", start), ("end_date", end)):
+        if (value - _midnight(value)) % TUV_STEP:
+            raise ValueError(
+                f"{label} ({value}) must be on the 15 min TUV output grid; "
+                "otherwise the rates do not line up with the model time."
+            )
+
+    def fail(message: str) -> None:
+        if raise_on_error:
+            raise TuvError(message)
+        logger.warning(message)
+
+    daily: list[pd.DataFrame] = []
+    with tempfile.TemporaryDirectory(prefix="tuv_") as tmp:
+        # TUV reads INPUTS/<name> and DATA*/ relative to its working directory
+        # and writes ../<name>.txt, so run it from <tmp>/run.
+        run_dir = Path(tmp) / "run"
+        (run_dir / "INPUTS").mkdir(parents=True)
+        for entry in _TUV_SHARED_ENTRIES:
+            (run_dir / entry).symlink_to(tuv_path / entry)
+        output_file = Path(tmp) / f"{TUV_NAME}.txt"
+
+        for day, tstart, tstop in _tuv_day_windows(start, end):
+            run_label = f"TUV run for {day:%Y-%m-%d} {tstart:g}-{tstop:g} h UTC"
+            logger.debug("Starting %s", run_label)
+            output_file.unlink(missing_ok=True)
+            create_tuv_input(
+                input_file,
+                run_dir / "INPUTS" / TUV_NAME,
+                TUV_NAME,
+                day.year,
+                day.month,
+                day.day,
+                tstart,
+                tstop,
+                lon,
+                lat,
+            )
+            # Answers to TUV's interactive prompts (input file, output name).
+            result = subprocess.run(
+                [str(executable)],
+                input=f"\n{TUV_NAME}\n\n{TUV_NAME}\n\n",
+                cwd=run_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # stderr last: Fortran runtime errors must survive _tail().
+            console = result.stdout + result.stderr
+            if not suppress_stdout:
+                print(result.stdout, result.stderr, sep="", end="")
+
+            if result.returncode != 0:
+                fail(
+                    f"{run_label} exited with code {result.returncode}. "
+                    f"TUV output:\n{_tail(console)}"
+                )
+            if not output_file.is_file():
+                # Console output was already reported for a non-zero exit code.
+                details = "" if result.returncode else f"\n{_tail(console)}"
+                fail(f"{run_label} wrote no output.{details}")
+                continue
+            try:
+                daily.append(read_tuv(output_file, day.year, day.month, day.day))
+            except Exception as err:
+                fail(f"{run_label}: could not read {output_file.name}: {err}")
+
+    columns = ["sza", *TUV_RATE_COLUMNS]
+    if daily:
+        tuv_df: pd.DataFrame = pd.concat(daily)
+        # Consecutive days share midnight (24 h of one day = 0 h of the next).
+        tuv_df = tuv_df.loc[~tuv_df.index.duplicated(keep="last")]
+    else:
+        tuv_df = pd.DataFrame(columns=columns)
+    expected_times = pd.date_range(start, end, freq=TUV_STEP)
+    tuv_df = tuv_df.reindex(expected_times).loc[:, columns].astype(float)
+
+    invalid = ~np.isfinite(tuv_df[list(TUV_RATE_COLUMNS)].to_numpy()).all(axis=1)
+    if invalid.any():
+        bad_times = tuv_df.index[invalid]
+        fail(
+            f"TUV photolysis rates missing or non-finite at {invalid.sum()} of "
+            f"{len(tuv_df)} times ({bad_times[0]} to {bad_times[-1]}); "
+            "setting them to zero."
+        )
+        tuv_df = tuv_df.fillna(0.0).replace([np.inf, -np.inf], 0.0)
+
+    return tuv_df
 
 
 def nudge_factor(
@@ -69,6 +266,58 @@ def nudge_factor(
     return factor
 
 
+def standard_utc_offset(timezone: str, date: datetime) -> float:
+    """Return the offset of local standard time from UTC, ignoring DST.
+
+    Args:
+        timezone: IANA time zone name, e.g. ``"Europe/Berlin"``.
+        date: UTC date at which to evaluate the offset (standard offsets have
+            changed historically).
+
+    Returns:
+        Offset [h] such that local standard time = UTC + offset.
+    """
+    utc = date.replace(tzinfo=ZoneInfo("UTC")) if date.tzinfo is None else date
+    local = utc.astimezone(ZoneInfo(timezone))
+    utc_offset = local.utcoffset()
+    dst = local.dst()
+    if utc_offset is None or dst is None:
+        raise ValueError(f"Time zone {timezone!r} has no defined UTC offset.")
+    return (utc_offset - dst) / timedelta(hours=1)
+
+
+def local_standard_utc_offset(lon: float, lat: float, date: datetime) -> float:
+    """Return the local standard-time offset from UTC at a location.
+
+    Looks up the legal time zone at the location (``timezonefinder``) and
+    returns its offset without daylight saving time. Over sea this falls back
+    to the nautical zones ``Etc/GMT+-N``.
+
+    Args:
+        lon: Longitude [deg east].
+        lat: Latitude [deg north].
+        date: UTC date at which to evaluate the offset.
+
+    Returns:
+        Offset [h] such that local standard time = UTC + offset.
+
+    Raises:
+        ValueError: If no time zone is found at the location.
+    """
+    timezone = TimezoneFinder().timezone_at(lng=lon, lat=lat)
+    if timezone is None:
+        raise ValueError(f"No time zone found at lon={lon}, lat={lat}.")
+    offset = standard_utc_offset(timezone, date)
+    logger.info(
+        "Local standard time at lon=%.3f, lat=%.3f (%s): UTC%+g h.",
+        lon,
+        lat,
+        timezone,
+        offset,
+    )
+    return offset
+
+
 class InitialBoundaryConditions:
     """Prepare MicroHH inputs from ERA5 and CAMS EAC4 data.
 
@@ -102,7 +351,7 @@ class InitialBoundaryConditions:
         self.vgrid = vgrid
         self._start_date: Optional[datetime] = None
         self._end_date: Optional[datetime] = None
-        self._utc_offset: float = 0.0
+        self._utc_offset: Optional[float] = None
         self._chemical_species: list[str] = [
             "co",
             "no",
@@ -265,7 +514,7 @@ class InitialBoundaryConditions:
 
     @property
     def start_date(self) -> datetime:
-        """Return the start date for the generated input data."""
+        """Return the start date in UTC (model second zero)."""
         if self._start_date is None:
             raise RuntimeError("Start date has not been set yet.")
         return self._start_date
@@ -275,13 +524,13 @@ class InitialBoundaryConditions:
         """Set the input-data start date.
 
         Args:
-            value: Start date of the input data.
+            value: Start date in UTC (model second zero).
         """
         self._start_date = value
 
     @property
     def end_date(self) -> datetime:
-        """Return the end date for the generated input data."""
+        """Return the end date in UTC."""
         if self._end_date is None:
             raise RuntimeError("End date has not been set yet.")
         return self._end_date
@@ -291,23 +540,48 @@ class InitialBoundaryConditions:
         """Set the input-data end date.
 
         Args:
-            value: Enddate for the input data
+            value: End date in UTC.
         """
         self._end_date = value
 
     @property
     def utc_offset(self) -> float:
-        """Return the UTC offset for the simulation."""
+        """Return the local standard-time offset from UTC [h].
+
+        Local standard time = UTC + ``utc_offset``, without daylight saving
+        time. If not set explicitly, it is determined from the time zone at
+        the domain centre on ``start_date``.
+        """
+        if self._utc_offset is None:
+            self._utc_offset = local_standard_utc_offset(
+                self.central_lon, self.central_lat, self.start_date
+            )
         return self._utc_offset
 
     @utc_offset.setter
-    def utc_offset(self, value: float) -> None:
-        """Set the UTC offset for the simulation.
+    def utc_offset(self, value: Optional[float]) -> None:
+        """Set the local standard-time offset from UTC.
 
         Args:
-            value: UTC offset for the simulation.
+            value: Offset [h] such that local standard time = UTC + offset.
+                ``None`` determines it from the domain centre.
         """
         self._utc_offset = value
+
+    def to_local_standard_time(self, time_utc: datetime) -> datetime:
+        """Convert a UTC time to local standard time (no daylight saving time).
+
+        Use this for inputs whose temporal profiles are defined in local
+        time, e.g. the CORSO hourly and weekly emission profiles. MicroHH,
+        ERA5, CAMS EAC4 and TUV all work in UTC.
+
+        Args:
+            time_utc: Time in UTC.
+
+        Returns:
+            The same instant in local standard time.
+        """
+        return time_utc + timedelta(hours=self.utc_offset)
 
     @property
     def float_type(self) -> FloatType:
@@ -428,32 +702,33 @@ class InitialBoundaryConditions:
         """
         self._dedicated_co2_tracers = value
 
-    def calc_photolysis_rates(self) -> pd.DataFrame:
-        """Calculate photolysis rates using TUV wrapper."""
-        name = "microh"  # Must be exactly 6 characters!
+    def calc_photolysis_rates(
+        self,
+        suppress_stdout: bool = True,
+        raise_on_error: bool = True,
+    ) -> pd.DataFrame:
+        """Calculate photolysis rates with TUV at the domain centre.
 
-        # Default input file. Only start/end date and lat/lon location are updated.
-        input_file = microhhpy.utils.get_data_file("microhh_tuv.base")
+        Args:
+            suppress_stdout: Hide the TUV console output. It is still captured
+                and included in error messages.
+            raise_on_error: Raise :class:`TuvError` if TUV fails or returns
+                missing/non-finite rates. If False, log a warning and set the
+                affected rates to zero.
 
-        tuv_df = microhhpy.chem.calc_tuv_photolysis(
-            input_file,
+        Returns:
+            Photolysis rates [s-1] and solar zenith angle [deg] at 15 min
+            intervals from ``start_date`` to ``end_date``.
+        """
+        tuv_df = calc_tuv_photolysis(
             self.tuv_path,
-            name,
             self.start_date,
             self.end_date,
             self.central_lon,
             self.central_lat,
-            suppress_stdout=True,
-        )
-
-        for name, value in tuv_df.items():
-            value = np.asarray(value, dtype=self.float_type)
-            if np.any(~np.isfinite(value)):
-                logging.warning(
-                    "Chemistry timedep %s contains NaNs/Infs; replacing with zero.",
-                    name,
-                )
-            tuv_df[name] = np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0)
+            suppress_stdout=suppress_stdout,
+            raise_on_error=raise_on_error,
+        ).astype(self.float_type)
 
         self._df_tuv = tuv_df
         return tuv_df
@@ -719,8 +994,8 @@ class InitialBoundaryConditions:
             elif specie not in self.lumping_species:
                 species_cams[specie] = (
                     self.cams_eac4_les_input[specie].values
-                    * microhhpy.constants.xm_cams["air"]
-                    / microhhpy.constants.xm_cams[specie]
+                    * xm_cams["air"]
+                    / xm_cams[specie]
                 )
 
         for output_specie, sub_species in self.lumping_species.items():
@@ -728,8 +1003,8 @@ class InitialBoundaryConditions:
             for sub_specie in sub_species:
                 species_cams[output_specie] += (
                     self.cams_eac4_les_input[sub_specie].values
-                    * microhhpy.constants.xm_cams["air"]
-                    / microhhpy.constants.xm_cams[sub_specie]
+                    * xm_cams["air"]
+                    / xm_cams[sub_specie]
                 )
 
         self._species_cams = species_cams
@@ -862,7 +1137,7 @@ def init_icbc(
     tuv_path: Union[Path, str],
     microhh_src_path: Union[Path, str],
     gpt_path: Union[Path, str],
-    utc_offset: float = 0.0,
+    utc_offset: Optional[float] = None,
     era5: Optional[Era5Source] = None,
     cams_eac4: Optional[CamsSource] = None,
     float_type: FloatType = np.float32,
@@ -874,11 +1149,15 @@ def init_icbc(
         case: :class:`init.Case` to simulate.
         domain: :class:`spatial.Domain` of the case.
         vgrid: Vertical grid from LS2D.
-        utc_offset: UTC offset for the simulation.
-        start_date: Local start date of the simulation.
-        end_date: Local end date of the simulation.
+        start_date: Start of the simulation in UTC (model second zero; must
+            match ``[time] datetime_utc``).
+        end_date: End of the simulation in UTC.
+        utc_offset: Offset [h] of local standard time (no daylight saving
+            time) from UTC, used for emission profiles defined in local time.
+            ``None`` determines it from the time zone at the domain centre.
         lcc_path: Path to the land-cover classification data.
-        tuv_path: Path to the TUV photolysis lookup data.
+        tuv_path: TUV root directory containing the compiled ``tuv`` binary,
+            e.g. ``.../TUV/V5.4``.
         microhh_src_path: Path to the MicroHH source directory.
         gpt_path: Path to the RRTMGP coefficient data.
         era5: Optional ERA5 input: ``ls2d.Read_era5`` (CDS/MARS), the 3D
