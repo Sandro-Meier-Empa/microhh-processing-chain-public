@@ -64,7 +64,8 @@ def open_initial_cond(case: "Case") -> xr.DataTree:
         case: :class:`Case` for which the initial conditions should be read.
 
     Returns:
-        Initial conditions with the NetCDF group structure preserved.
+        Initial conditions with the NetCDF group structure preserved. The soil
+        levels of the ``soil`` group are renamed from ``z`` to ``z_soil``.
 
     Examples:
         >>> tree = open_initial_cond(case)
@@ -72,7 +73,12 @@ def open_initial_cond(case: "Case") -> xr.DataTree:
         >>> initial_profiles = tree["/init"].dataset
         >>> root = tree.dataset
     """
-    return xr.open_datatree(case.initial_conditions_file_path, decode_times=False)
+    groups = xr.open_groups(case.initial_conditions_file_path, decode_times=False)
+    # MicroHH's soil group reuses the dimension name "z" for the soil levels,
+    # which conflicts with the atmospheric "z" of the root group in a DataTree.
+    if "/soil" in groups:
+        groups["/soil"] = groups["/soil"].rename({"z": "z_soil"})
+    return xr.DataTree.from_dict(groups)
 
 
 def open_statistics(case: "Case") -> xr.DataTree:
