@@ -11,6 +11,7 @@ from typing import Optional, Union, cast
 import cscs
 import ls2d
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 import microhh_processing_chain.initialisation as init
@@ -42,10 +43,98 @@ _TWO_DIMENSIONAL_INPUT_FIELDS = frozenset(
 )
 _SOIL_INPUT_FIELDS = frozenset({"index_soil", "root_frac", "t_soil", "theta_soil"})
 
+# MicroHH treats the wall clock limit as reached once less than 10 minutes remain
+# (hardcoded in Master::at_wall_clock_limit).
+_MICROHH_WALLCLOCK_MARGIN = pd.Timedelta(minutes=10)
+# Only fill in a missing wallclocklimit for runs long enough that this reserve
+# costs a small part of the run (at most 1/12 at the threshold).
+_MIN_RUN_TIME_FOR_WALLCLOCK = pd.Timedelta(hours=2)
+_WALLCLOCK_TOLERANCE_HOURS = 1.0 / 3600.0
+
 
 def _is_switch_active(value: object) -> bool:
     """Return whether a MicroHH configuration switch is active."""
     return bool(value) and value != "0" and value != 0 and str(value).lower() != "false"
+
+
+def _ensure_wallclock_limit(case: init.Case, alps_setup: cscs.AlpsSetup) -> None:
+    """Align ``[master] wallclocklimit`` of a case with the Slurm run time.
+
+    MicroHH writes restart files and stops once less than 10 minutes of
+    ``wallclocklimit`` [h] remain. Without the setting, a job that reaches the
+    Slurm time limit is killed without restart files.
+
+    A missing ``wallclocklimit`` is set to the Slurm run time and saved to the
+    INI file, but only if the Slurm run time is at least 2 h. Shorter runs would
+    lose a large part of their time to the 10 minute reserve, so a warning is
+    logged instead and the INI file is left unchanged.
+
+    An existing value is never changed; a warning is logged when the Slurm run
+    time is shorter, because Slurm then kills the job before MicroHH reaches its
+    own limit.
+
+    Args:
+        case: Case whose INI file is checked and, if needed, updated.
+        alps_setup: Slurm setup providing the requested run time.
+
+    Raises:
+        ValueError: If the existing ``wallclocklimit`` is not a number.
+    """
+    slurm_time = pd.to_timedelta(alps_setup.run_time)
+    slurm_hours = slurm_time.total_seconds() / 3600.0
+    limit = case.config.get("master", "wallclocklimit", None)
+
+    if limit is None:
+        if slurm_time < _MIN_RUN_TIME_FOR_WALLCLOCK:
+            logger.warning(
+                "Not setting 'wallclocklimit' for %s: the Slurm run time (%s) is "
+                "shorter than %s, and MicroHH stops once less than %s of "
+                "'wallclocklimit' remain. Slurm will kill the job without "
+                "restart files if it does not finish. Set [master] "
+                "wallclocklimit by hand if restart files are needed.",
+                case.full_name,
+                alps_setup.run_time,
+                _MIN_RUN_TIME_FOR_WALLCLOCK,
+                _MICROHH_WALLCLOCK_MARGIN,
+            )
+            return
+
+        case.modify_ini({"master": {"wallclocklimit": slurm_hours}})
+        logger.info(
+            "Setting 'wallclocklimit' of %s to %g h (Slurm run time %s).",
+            case.full_name,
+            slurm_hours,
+            alps_setup.run_time,
+        )
+        return
+
+    try:
+        limit_hours = float(limit)
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"[master] wallclocklimit of {case.full_name} must be a number of "
+            f"hours, not {limit!r}."
+        ) from err
+
+    if slurm_hours < limit_hours - _WALLCLOCK_TOLERANCE_HOURS:
+        logger.warning(
+            "The Slurm run time (%s, %g h) is shorter than 'wallclocklimit' "
+            "(%g h) of %s. Slurm will kill the job before MicroHH writes "
+            "restart files.",
+            alps_setup.run_time,
+            slurm_hours,
+            limit_hours,
+            case.full_name,
+        )
+    elif limit_hours < slurm_hours - _WALLCLOCK_TOLERANCE_HOURS:
+        logger.info(
+            "Keeping 'wallclocklimit' of %s at %g h, shorter than the Slurm run "
+            "time (%s, %g h).",
+            case.full_name,
+            limit_hours,
+            alps_setup.run_time,
+            slurm_hours,
+        )
 
 
 class PreProcessing:
@@ -195,6 +284,12 @@ class PreProcessing:
             ``npx`` and ``npy`` in the INI file when MPI is disabled. It must run
             before :meth:`copy_required_files` and :meth:`create_run_script`,
             because both rely on the normalized INI file.
+
+            A missing ``[master] wallclocklimit`` is set to the Slurm run time
+            of the Alps setup if it is at least 2 h, so that MicroHH writes
+            restart files and stops before the job is killed. Shorter run times
+            only log a warning. An existing value is kept; a warning is
+            logged when the Slurm run time is shorter.
         """
         if restart_time is not None:
             self._check_restart_ini_updated(restart_time)
@@ -459,6 +554,7 @@ class PreProcessing:
         """
         self._check_ini_content()
         self._adjust_mpi_settings()
+        _ensure_wallclock_limit(self.case, self.alps_setup)
         self._check_grid_match()
         self._check_nodes_match()
         self._check_grid_order()
@@ -1268,6 +1364,11 @@ def create_run_4x_script(
 ) -> cscs.SlurmJob:
     """Create a SLURM script that runs prepared simulations on a GPU node.
 
+    A missing ``[master] wallclocklimit`` in the INI file of a case is set to
+    the Slurm run time of `alps_setup` if it is at least 2 h; shorter run times
+    only log a warning. An existing value is kept; a warning is
+    logged when the Slurm run time is shorter.
+
     Raises:
         ValueError: If `alps_setup` allocates no GPUs, or if the number of
             allocated GPUs does not match the number of cases.
@@ -1291,6 +1392,10 @@ def create_run_4x_script(
 
     if ncases != 4:
         logger.warning("Expected 4 cases, but got %d.", len(cases))
+
+    # The shared setup can differ from the one each case was validated with.
+    for case in cases:
+        _ensure_wallclock_limit(case, alps_setup)
 
     master_job_file = Path(scratch_path, f"{run_mode}_microhh_{ncases}x.sbatch")
 

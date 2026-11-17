@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-17
+
+### Added
+
+- `PreProcessing.validate()` and `preprocessing.create_run_4x_script()` set a
+  missing `[master] wallclocklimit` in the `.ini` file to the Slurm run time of
+  the Alps setup, so that MicroHH writes restart files and stops before the job
+  is killed. An existing value is kept; a warning is logged when the Slurm run
+  time is shorter. Nothing is set for Slurm run times shorter than 2 h, because
+  MicroHH stops once less than 10 minutes of `wallclocklimit` remain; a warning
+  is logged instead.
+
 ## 2026-11-16
 
 ### Fixed
