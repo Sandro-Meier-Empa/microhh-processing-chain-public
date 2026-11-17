@@ -6,6 +6,7 @@ from typing import Optional, Union
 
 import numpy as np
 import xarray as xr
+from scipy.ndimage import convolve
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +111,10 @@ def calculate_plume_psd(
         )
 
     plume_data = plume_field.values.astype(float, copy=True)
-    plume_data -= np.nanmean(plume_data)
-    plume_data = np.nan_to_num(plume_data, nan=0.0)
+    # plume_data -= np.nanmean(plume_data)
+    # plume_data = np.nan_to_num(plume_data, nan=0.0)
+    plume_data = fill_nan_with_neighbour_mean(plume_data)
+    plume_data -= np.mean(plume_data)
 
     dx = float(np.sqrt(np.nanmean(data_2d["pixel_area"].values)))
     dy = dx
@@ -172,6 +175,32 @@ def calculate_plume_psd(
             ),
         },
     )
+
+
+def fill_nan_with_neighbour_mean(field: np.ndarray) -> np.ndarray:
+    """Iteratively replace NaNs with the mean of their finite 8-connected neighbours."""
+    filled = np.array(field, dtype=float, copy=True)
+    kernel = np.ones((3, 3))
+    kernel[1, 1] = 0.0
+
+    while True:
+        nan_mask = np.isnan(filled)
+        if not nan_mask.any():
+            return filled
+
+        valid = ~nan_mask
+        neighbour_sum = convolve(
+            np.where(valid, filled, 0.0), kernel, mode="constant", cval=0.0
+        )
+        neighbour_count = convolve(
+            valid.astype(float), kernel, mode="constant", cval=0.0
+        )
+
+        fillable = nan_mask & (neighbour_count > 0)
+        if not fillable.any():
+            raise ValueError("Field contains no finite values to fill NaNs from.")
+
+        filled[fillable] = neighbour_sum[fillable] / neighbour_count[fillable]
 
 
 def calculate_radial_plume_psd(

@@ -42,6 +42,33 @@
   The `soil` group's `z` dimension clashed with the atmospheric `z` of the root
   group; it is now renamed to `z_soil`.
 
+### Added
+
+- `PreProcessing.validate()` and `preprocessing.create_run_4x_script()` set a
+  missing `[master] wallclocklimit` in the `.ini` file to the Slurm run time of
+  the Alps setup, so that MicroHH writes restart files and stops before the job
+  is killed. An existing value is kept; a warning is logged when the Slurm run
+  time is shorter. Nothing is set for Slurm run times shorter than 2 h, because
+  MicroHH stops once less than 10 minutes of `wallclocklimit` remain; a warning
+  is logged instead.
+
+## 2026-11-16
+
+### Fixed
+
+- `export.export_plume_column()` records the emission point MicroHH actually
+  uses as `source_x/y/z`. With `[source] swtimedep_location = True` the
+  position comes from `/timedep source_{x,y,z}0_{n}` of the initial-condition
+  file; a source that moves before the last exported snapshot raises
+  `ValueError` instead of exporting the `.ini` position.
+- `[source]` keys holding one value are broadcast to every source, as in
+  MicroHH, instead of raising `IndexError` for `source_index > 0`.
+
+### Changed
+
+- Line sources (non-zero `line_x/y/z`) are rejected by the export, since a
+  `PlumeColumn` file records one emission point.
+
 ## 2026-10-14
 
 ### Breaking changes

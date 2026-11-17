@@ -42,9 +42,32 @@ analysis.
 - Keep comments focused on non-obvious scientific, filesystem, or HPC behavior.
 - Avoid committing generated Python caches, local environment files, large
   outputs, or bulky simulation artifacts.
-- Don't create tests for new code unless the user explicitly requests test additions.
-- Write units in square brackets, not parentheses, e.g. `XCH4 [ppb]` or
-  `wind speed [m s-1]`, in docstrings, comments, plot labels and docs.
+- Write units in square brackets, never parentheses.
+  - In rendered text (plot labels, titles, colorbar labels, legends, notebook
+    markdown, README and docs), write exponents as superscripts and chemical
+    subscripts with `$...$` math, e.g. `wind speed [m s$^{-1}$]`,
+    `XCH$_4$ [ppb]`, `CO$_2$ flux [kg h$^{-1}$]`, `$\chi^2$`.
+  - In docstrings and code comments, use plain ASCII, e.g. `wind speed [m s-1]`,
+    `XCH4 [ppb]`, `chi2`.
+- Never use Unicode subscripts, superscripts or symbols (CH₄, CO₂, m⁻², χ², µ, °)
+  in code, docstrings, comments, docs or notebooks. Use `$...$` math in rendered
+  text and ASCII elsewhere.
+- NetCDF/xarray `units` attributes and `ucat` unit arguments stay plain
+  CF/udunits strings (`kg m-2`, `ppb`, `m s-1`), with no brackets or `$`.
+- When renaming, moving or changing an API, update every caller in the
+  repository and remove the old name. Do not leave deprecated aliases,
+  re-export shims or backward-compatibility wrappers unless the user asks.
+
+## Tests And Checks
+
+- Write pytest tests in `tests/` for every new feature and bug fix, following
+  the existing test patterns. Prefer small synthetic data; anything that needs
+  real or external data must skip cleanly when it is absent.
+- Run `python -m pytest` before finishing and report failures honestly.
+- Run `pre-commit run --all-files` before finishing and fix every Ruff (and
+  Pyright, where configured) finding at its root cause. Do not silence
+  findings with `# noqa`, `# type: ignore`, `# pyright: ignore`, or new
+  excludes or ignore rules in the config.
 
 ## Notebooks And Data
 
