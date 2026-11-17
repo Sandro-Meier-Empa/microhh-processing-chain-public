@@ -127,29 +127,42 @@ def _parse_string_to_list(var: str) -> list:
 
 
 def to_comma_separated_list(
-    lst: Union[list, np.ndarray], n: int = 1, ndecimals: Optional[int] = None
+    lst: Union[list, np.ndarray], n: int = 1, nsignificant: Optional[int] = None
 ) -> str:
     """Convert a Python iterable to a comma-separated string.
 
-    Handles float precision artifacts (e.g. 209.20000000000002 -> 209.2)
-    while preserving small numbers (e.g. 0.00000123).
+    Floats are formatted with significant digits, so small values such as
+    source strengths in kg s-1 are never rounded to zero. Float precision
+    artifacts are hidden (e.g. 209.20000000000002 -> 209.2, float32 0.1 -> 0.1).
+    Very small or large values are written in exponent notation (e.g.
+    2.5e-05), which both MicroHH and ``microhh_py`` parse.
 
     Args:
         lst: List or array of items to convert.
         n: Number of times to repeat the list.
-        ndecimals: Number of decimal places for floats. Uses significant
-            digits when omitted.
+        nsignificant: Number of significant digits for floats. When omitted,
+            the full precision of the float type is used (15 digits for
+            float64, 6 for float32).
 
     Returns:
         Comma-separated string representation.
-    """
 
-    def clean_fmt(x: Union[float, np.floating]) -> str:
+    Raises:
+        ValueError: If *nsignificant* is smaller than 1.
+    """
+    if nsignificant is not None and nsignificant < 1:
+        raise ValueError(f"nsignificant must be at least 1, got {nsignificant}.")
+
+    def clean_fmt(x: object) -> str:
         """Format numbers without exposing floating-point precision artifacts."""
         if isinstance(x, (float, np.floating)):
-            if ndecimals is not None:
-                return f"{x:.{ndecimals}f}"
-            return f"{x:.15g}"
+            if nsignificant is not None:
+                digits = nsignificant
+            elif isinstance(x, np.floating):
+                digits = np.finfo(x.dtype).precision
+            else:
+                digits = np.finfo(np.float64).precision
+            return f"{x:.{digits}g}"
         return str(x)
 
     clean_items = [clean_fmt(x) for x in lst]

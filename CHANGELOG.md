@@ -2,6 +2,18 @@
 
 ## 2026-11-17
 
+### Fixed
+
+- `utils.to_comma_separated_list()` no longer rounds small values, such as
+  source strengths in kg s-1, to `0`: `ndecimals=1` turned 0.0278 kg s-1 into
+  `strength=0.0`. float32 input is formatted without precision artifacts
+  (`0.1` instead of `0.100000001490116`).
+
+### Changed
+
+- **Breaking:** `utils.to_comma_separated_list()` takes `nsignificant`
+  (significant digits) instead of `ndecimals` (decimal places).
+
 ### Added
 
 - `PreProcessing.validate()` and `preprocessing.create_run_4x_script()` set a
