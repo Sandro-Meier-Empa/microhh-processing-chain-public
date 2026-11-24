@@ -27,6 +27,7 @@ from timezonefinder import TimezoneFinder
 
 from microhh_processing_chain import initialisation as init
 from microhh_processing_chain import spatial
+from microhh_processing_chain.misc import K_OH_CAMS_EAC4, propene_equivalent_weights
 
 logger = logging.getLogger(__name__)
 
@@ -414,20 +415,13 @@ class InitialBoundaryConditions:
         self.co = 2.49477023097387e-08
         self.no2 = 1.95490375341816e-12
 
-        self.lumping_species = {
-            "c3h6": [
-                "par",
-                "c2h4",
-                "ole",
-                "c5h8",
-                "ch3oh",
-                "c2h5oh",
-                "c3h8",
-                "c3h6",
-                "c10h16",
-            ],
-            "rooh": ["rooh", "ch3ooh"],
-            "ro2": ["ch3o2", "c2o3", "aco2"],
+        # CAMS EAC4 species summed into one MicroHH species, with their weights.
+        # MicroHH treats c3h6 as propene, so the VOCs count with their OH
+        # reactivity relative to propene, like the VOC emissions.
+        self.lumping_species: dict[str, dict[str, float]] = {
+            "c3h6": propene_equivalent_weights(K_OH_CAMS_EAC4),
+            "rooh": {"rooh": 1.0, "ch3ooh": 1.0},
+            "ro2": {"ch3o2": 1.0, "c2o3": 1.0, "aco2": 1.0},
         }
         self._dedicated_co2_tracers = None
         return None
@@ -1000,9 +994,10 @@ class InitialBoundaryConditions:
 
         for output_specie, sub_species in self.lumping_species.items():
             species_cams[output_specie] = np.zeros_like(self.cams_eac4_les_input["no2"])
-            for sub_specie in sub_species:
+            for sub_specie, weight in sub_species.items():
                 species_cams[output_specie] += (
-                    self.cams_eac4_les_input[sub_specie].values
+                    weight
+                    * self.cams_eac4_les_input[sub_specie].values
                     * xm_cams["air"]
                     / xm_cams[sub_specie]
                 )

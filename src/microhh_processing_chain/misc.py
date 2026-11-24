@@ -198,6 +198,83 @@ def _as_weights(
     return dict.fromkeys(species, 1.0)
 
 
+# VOCs are lumped into the single species c3h6 of the MicroHH chemistry, which
+# reacts with the rate constants of propene. Each compound counts with its OH
+# reactivity relative to propene, so that the lumped species has the OH
+# reactivity of the mixture. The emissions (CAMS-GLOB) and the background
+# concentrations (CAMS EAC4) must use the same rate constants.
+
+#: OH rate constant of propene at 298 K [cm3 molecule-1 s-1].
+K_OH_PROPENE = 2.44e-11
+
+#: OH rate constants at 298 K [cm3 molecule-1 s-1] of the CAMS-GLOB VOC classes,
+#: from the ACTRIS data portal (https://data.eurochamp.org/data-access/kin/#/data).
+#: Not lumped: formaldehyde (own species), chlorinated-hydrocarbons, other-vocs,
+#: non-methane-vocs and vocs-all (sums), dimethyl-sulphide and tribromomethane.
+K_OH_CAMS_GLOB = {
+    "acetylene": 7.5e-13,
+    "alcohols": 8.78e-13,
+    "benzene": 1.2e-12,
+    "butanes": 2.38e-12,
+    "esters": 8.75e-13,
+    "ethane": 2.49e-13,
+    "ethene": 8.52e-12,
+    "ethers": 2.8e-12,
+    "hexanes": 4.97e-12,
+    "isoprene": 1.0e-10,
+    "monoterpenes": 5.3e-11,
+    "other-aldehydes": 1.5e-11,
+    "other-alkenes-alkynes": 3.1e-11,
+    "other-aromatics": 7e-12,
+    "pentanes": 3.76e-12,
+    "propane": 1.1e-12,
+    "propene": K_OH_PROPENE,
+    "toluene": 5.6e-12,
+    "total-acids": 1.87e-13,
+    "total-ketones": 1.87e-13,
+    "trimethylbenzenes": 3.3e-11,
+    "xylenes": 1.7e-11,
+}
+
+#: OH rate constants at 298 K [cm3 molecule-1 s-1] of the VOC species of CAMS
+#: EAC4, whose chemistry is the IFS version of CB05 (Flemming et al., 2015,
+#: doi:10.5194/gmd-8-975-2015, Tables A1 and A2 of the supplement; Huijnen et
+#: al., 2010, doi:10.5194/gmd-3-445-2010).
+#:
+#: Species that are also a CAMS-GLOB class use its value. PAR and OLE are lumped
+#: structure species: PAR is one paraffinic carbon atom [12 g mol-1] and OLE one
+#: olefinic carbon bond [24 g mol-1]. PAR has the rate constant of the mechanism.
+#: For OLE the sources disagree (the average of three expressions in Huijnen et
+#: al., 3.9e-11 at 298 K, against an expression in Flemming et al. that gives
+#: 6.7e-15), so it uses the value of the CAMS-GLOB class of the same compounds.
+#: Methanol and ethanol are separate species in EAC4, unlike the class
+#: "alcohols", and use the expressions of the mechanism, which are the IUPAC
+#: recommendations: 2.85e-12*exp(-345/T) and 3.0e-12*exp(20/T).
+K_OH_CAMS_EAC4 = {
+    "par": 8.1e-13,
+    "ole": K_OH_CAMS_GLOB["other-alkenes-alkynes"],
+    "c2h4": K_OH_CAMS_GLOB["ethene"],
+    "c3h6": K_OH_CAMS_GLOB["propene"],
+    "c3h8": K_OH_CAMS_GLOB["propane"],
+    "c5h8": K_OH_CAMS_GLOB["isoprene"],
+    "c10h16": K_OH_CAMS_GLOB["monoterpenes"],
+    "ch3oh": 9.0e-13,
+    "c2h5oh": 3.2e-12,
+}
+
+
+def propene_equivalent_weights(k_oh: dict[str, float]) -> dict[str, float]:
+    """Return the weights that lump VOCs into propene by their OH reactivity.
+
+    Args:
+        k_oh: OH rate constants at 298 K [cm3 molecule-1 s-1] by species.
+
+    Returns:
+        Moles of propene with the OH reactivity of one mole of each species.
+    """
+    return {species: k / K_OH_PROPENE for species, k in k_oh.items()}
+
+
 class CamsGlobInventoryPaths:
     """Class to manage paths to CAMS global inventory NetCDF files for a specific year.
 
@@ -282,42 +359,8 @@ class CamsGlobInventoryPaths:
             else _as_weights(lumping_nox)
         )
 
-        ### Values are from the ACTRIS data portal (https://data.eurochamp.org/data-access/kin/#/data)
-        k_oh = (
-            2.44e-11  # propane OH reaction rate constant at 298 K in cm3 molecule-1 s-1
-        )
         self.lumping_vocs = (
-            {
-                "acetylene": 7.5e-13 / k_oh,
-                "alcohols": 8.78e-13 / k_oh,
-                "benzene": 1.2e-12 / k_oh,
-                "butanes": 2.38e-12 / k_oh,
-                # "chlorinated-hydrocarbons": , # TODO
-                "esters": 8.75e-13 / k_oh,
-                "ethane": 2.49e-13 / k_oh,
-                "ethene": 8.52e-12 / k_oh,
-                "ethers": 2.8e-12 / k_oh,
-                # "formaldehyde": 1.0, there is its own variable
-                "hexanes": 4.97e-12 / k_oh,
-                "isoprene": 1.0e-10 / k_oh,
-                "monoterpenes": 5.3e-11 / k_oh,
-                # "non-methane-vocs": 1.0, # drop this for now
-                "other-aldehydes": 1.5e-11 / k_oh,
-                "other-alkenes-alkynes": 3.1e-11 / k_oh,
-                "other-aromatics": 7e-12 / k_oh,
-                # "other-vocs": 1.0, # TODO
-                "pentanes": 3.76e-12 / k_oh,
-                "propane": 1.1e-12 / k_oh,
-                "propene": 2.44e-11 / k_oh,  # the reference value for k_oh
-                "toluene": 5.6e-12 / k_oh,
-                "total-acids": 1.87e-13 / k_oh,
-                "total-ketones": 1.87e-13 / k_oh,
-                "trimethylbenzenes": 3.3e-11 / k_oh,
-                "xylenes": 1.7e-11 / k_oh,
-                # "dimethyl-sulphide": 1.0, oceanic
-                # "tribromomethane": 1.0, oceanic
-                # "vocs-all": 1.0,
-            }
+            propene_equivalent_weights(K_OH_CAMS_GLOB)
             if lumping_vocs is None
             else _as_weights(lumping_vocs)
         )
