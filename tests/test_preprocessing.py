@@ -6,6 +6,7 @@ from typing import Optional
 
 import cscs
 import microhh_py.microhh_tools as mht
+import numpy as np
 import pytest
 
 import microhh_processing_chain.initialisation as init
@@ -132,3 +133,165 @@ def test_non_numeric_wallclock_limit_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="wallclocklimit"):
         pre._ensure_wallclock_limit(case, _make_setup("06:00:00"))
+
+
+def _make_gpu_setup() -> cscs.AlpsSetup:
+    """Create a single-GPU Alps setup."""
+    return cscs.AlpsSetup(
+        cluster="santis",
+        processor="gpu",
+        account="test",
+        run_time="10:00:00",
+        partition="normal",
+        gpus_per_node=1,
+    )
+
+
+@pytest.mark.parametrize("jobreport_path", [None, "/opt/jobreport"])
+def test_single_run_command_changes_into_case_directory(
+    tmp_path: Path, jobreport_path: Optional[str]
+) -> None:
+    case = _make_case(tmp_path)
+    case.scratch_path = tmp_path / "case_dir"
+
+    commands = pre._get_single_run_command(
+        ["init", "run"], case=case, jobreport_path=jobreport_path
+    )
+
+    prefix = f"srun --chdir={case.scratch_path} "
+    assert len(commands) == 2
+    assert all(command.startswith(prefix) for command in commands)
+    assert commands[0] == f"{prefix}{case.scratch_path}/microhh init test"
+    if jobreport_path is None:
+        assert commands[1] == f"{prefix}{case.scratch_path}/microhh run test"
+    else:
+        assert commands[1] == (
+            f"{prefix}{jobreport_path} -- {case.scratch_path}/microhh run test"
+        )
+
+
+def test_run_4x_script_with_one_case_runs_in_case_directory(tmp_path: Path) -> None:
+    # Regression: with a single case, the sbatch script runs from the shared
+    # scratch directory, so MicroHH could not find the case INI file.
+    case = _make_case(tmp_path)
+    case.scratch_path = tmp_path / "case_dir"
+    case.scratch_path.mkdir()
+
+    slurm_job = pre.create_run_4x_script(
+        [case], _make_gpu_setup(), scratch_path=tmp_path, mode="restart"
+    )
+
+    script = Path(slurm_job.path).read_text().splitlines()
+    assert f"#SBATCH --chdir={tmp_path}" in script
+    srun_lines = [line for line in script if line.startswith("srun")]
+    assert srun_lines == [
+        f"srun --chdir={case.scratch_path} {case.scratch_path}/microhh run test"
+    ]
+
+
+_ITOT, _JTOT, _KTOT = 4, 3, 2
+
+
+def _make_restart_case(
+    tmp_path: Path, itemsize: int = 4, iotimeprec: Optional[int] = None
+) -> init.Case:
+    """Create a case with two scalars and a restart field u at 60 s."""
+    case_directory = tmp_path / "test.restart"
+    case_directory.mkdir()
+
+    lines = [
+        "[grid]",
+        f"itot={_ITOT}",
+        f"jtot={_JTOT}",
+        f"ktot={_KTOT}",
+        "",
+        "[fields]",
+        "slist=a,b",
+        "",
+        "[time]",
+        "starttime=60",
+        "endtime=120",
+    ]
+    if iotimeprec is not None:
+        lines.append(f"iotimeprec={iotimeprec}")
+    (case_directory / "test.ini").write_text("\n".join([*lines, ""]))
+
+    case = init.read_case(case_directory)
+    timestr = pre._restart_time_str(case, 60)
+    (case_directory / f"u.{timestr}").write_bytes(
+        b"\x01" * (_ITOT * _JTOT * _KTOT * itemsize)
+    )
+    return case
+
+
+@pytest.mark.parametrize("itemsize", [4, 8])
+def test_zero_restart_fields_are_written_for_all_scalars(
+    tmp_path: Path, itemsize: int
+) -> None:
+    case = _make_restart_case(tmp_path, itemsize=itemsize)
+
+    written = pre.write_zero_restart_fields(case, 60)
+
+    names = ["a.0000060", "a_gradbot.0000060", "b.0000060", "b_gradbot.0000060"]
+    assert written == [case.directory / name for name in names]
+    for path in written:
+        count = _ITOT * _JTOT * (1 if "_gradbot" in path.name else _KTOT)
+        assert path.stat().st_size == count * itemsize
+        data = np.fromfile(path, dtype=np.float32 if itemsize == 4 else np.float64)
+        assert np.all(data == 0)
+
+
+def test_existing_scalar_is_skipped_by_default(tmp_path: Path) -> None:
+    case = _make_restart_case(tmp_path)
+    # The restart of scalar a is a symbolic link into another case
+    other = tmp_path / "a.0000060"
+    other.write_bytes(b"\x02" * (_ITOT * _JTOT * _KTOT * 4))
+    (case.directory / "a.0000060").symlink_to(other)
+
+    written = pre.write_zero_restart_fields(case, 60)
+
+    assert [path.name for path in written] == ["b.0000060", "b_gradbot.0000060"]
+    assert other.read_bytes() == b"\x02" * (_ITOT * _JTOT * _KTOT * 4)
+
+
+def test_requested_existing_scalar_raises(tmp_path: Path) -> None:
+    case = _make_restart_case(tmp_path)
+    (case.directory / "a_gradbot.0000060").write_bytes(b"\x02")
+
+    with pytest.raises(FileExistsError, match="a_gradbot"):
+        pre.write_zero_restart_fields(case, 60, scalars=["a", "b"])
+
+    # Nothing is written when one target exists
+    assert not (case.directory / "b.0000060").exists()
+    assert (case.directory / "a_gradbot.0000060").read_bytes() == b"\x02"
+
+
+def test_unknown_scalar_raises(tmp_path: Path) -> None:
+    case = _make_restart_case(tmp_path)
+
+    with pytest.raises(ValueError, match="not in \\[fields\\] slist"):
+        pre.write_zero_restart_fields(case, 60, scalars=["c"])
+
+
+def test_missing_reference_field_raises(tmp_path: Path) -> None:
+    case = _make_restart_case(tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=r"u\.0000120"):
+        pre.write_zero_restart_fields(case, 120)
+
+
+def test_reference_field_of_wrong_size_raises(tmp_path: Path) -> None:
+    case = _make_restart_case(tmp_path)
+    (case.directory / "u.0000060").write_bytes(b"\x01" * (_ITOT * _JTOT * _KTOT * 2))
+
+    with pytest.raises(ValueError, match="neither single nor double precision"):
+        pre.write_zero_restart_fields(case, 60)
+
+
+def test_zero_restart_fields_use_iotimeprec(tmp_path: Path) -> None:
+    # iotimeprec = -1: the file names count tenths of a second
+    case = _make_restart_case(tmp_path, iotimeprec=-1)
+
+    written = pre.write_zero_restart_fields(case, 60, scalars=["a"])
+
+    assert [path.name for path in written] == ["a.0000600", "a_gradbot.0000600"]

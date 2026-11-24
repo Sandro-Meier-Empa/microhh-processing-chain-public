@@ -5,6 +5,7 @@ import logging
 import platform
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, Union, cast
 
@@ -1199,10 +1200,120 @@ class PreProcessing:
 
     def get_restart_str(self, endtime: int) -> str:
         """Get endtime string used for restart files."""
-        iotimeprec = self.case.config.get("time", "iotimeprec", 0) or 0
-        endtime_io = round(endtime * 10 ** (-iotimeprec))
+        return _restart_time_str(self.case, endtime)
 
-        return f"{endtime_io:07d}"
+
+def _restart_time_str(case: init.Case, time: float) -> str:
+    """Return the 7-digit time string of MicroHH restart file names.
+
+    Args:
+        case: Case whose ``[time] iotimeprec`` sets the time unit of the string.
+        time: Model time [s].
+    """
+    iotimeprec = case.config.get("time", "iotimeprec", 0) or 0
+    return f"{round(time * 10 ** (-iotimeprec)):07d}"
+
+
+def write_zero_restart_fields(
+    case: init.Case,
+    restart_time: float,
+    scalars: Optional[Sequence[str]] = None,
+) -> list[Path]:
+    """Write zero-valued restart fields for scalars that a restart lacks.
+
+    At a restart, MicroHH loads every scalar of ``[fields] slist`` from
+    ``<name>.<time>`` (``Fields::load``) and, for a scalar with a flux bottom
+    boundary condition, its surface gradient from ``<name>_gradbot.<time>``
+    (``Boundary_surface::load``). It stops with "Error loading fields" when a
+    file is missing or shorter than the grid. Scalars that were not part of the
+    run that wrote the restart, e.g. passive tracers left out of a spin-up,
+    therefore need these files before a run that includes them can restart.
+
+    The files are raw arrays without header, of shape (ktot, jtot, itot) and
+    (jtot, itot), in the precision of the restart field ``u.<time>``. They are
+    created as sparse files, which read as zeros but occupy no data blocks. The
+    ``_gradbot`` file is written for every scalar; MicroHH does not read it for
+    other boundary conditions.
+
+    Call this after the restart files have been copied or linked into the case
+    directory. Existing files are never overwritten, because a restart file may
+    be a symbolic link into another case.
+
+    Args:
+        case: Case that restarts at ``restart_time``.
+        restart_time: Model time of the restart [s].
+        scalars: Scalars to write. By default, every scalar of ``[fields] slist``
+            that has no ``<name>.<time>`` file in the case directory.
+
+    Returns:
+        Paths of the written files.
+
+    Raises:
+        ValueError: If a scalar is not in ``[fields] slist``, or if the size of
+            ``u.<time>`` fits neither single nor double precision.
+        FileNotFoundError: If ``u.<time>`` is not in the case directory.
+        FileExistsError: If a requested scalar already has a restart file.
+    """
+    directory = Path(case.directory)
+    timestr = _restart_time_str(case, restart_time)
+    slist = utils.object_to_list(case.config.get("fields", "slist", []))
+
+    def present(path: Path) -> bool:
+        return path.exists() or path.is_symlink()
+
+    if scalars is None:
+        names = []
+        for name in slist:
+            if present(directory / f"{name}.{timestr}"):
+                logger.info(
+                    "Restart field %s.%s exists, no zero field written.", name, timestr
+                )
+            else:
+                names.append(name)
+    else:
+        names = list(scalars)
+        unknown = [name for name in names if name not in slist]
+        if unknown:
+            raise ValueError(
+                f"Scalars {unknown} are not in [fields] slist of {case.full_name}."
+            )
+
+    itot = int(case.config.grid.itot)
+    jtot = int(case.config.grid.jtot)
+    ktot = int(case.config.grid.ktot)
+
+    # The restart's u field gives the precision of the MicroHH build
+    reference = directory / f"u.{timestr}"
+    if not reference.is_file():
+        raise FileNotFoundError(
+            f"{reference} not found. Copy or link the restart files first."
+        )
+    itemsize, remainder = divmod(reference.stat().st_size, itot * jtot * ktot)
+    if remainder or itemsize not in (4, 8):
+        raise ValueError(
+            f"The size of {reference} ({reference.stat().st_size} bytes) fits "
+            f"neither single nor double precision on a {itot} x {jtot} x {ktot} "
+            "grid."
+        )
+
+    targets = []
+    for name in names:
+        targets.append((directory / f"{name}.{timestr}", itot * jtot * ktot))
+        targets.append((directory / f"{name}_gradbot.{timestr}", itot * jtot))
+
+    existing = [str(path) for path, _ in targets if present(path)]
+    if existing:
+        raise FileExistsError(f"Restart files exist already: {existing}")
+
+    written = []
+    for path, count in targets:
+        # Exclusive creation never follows a symbolic link into another case
+        with path.open("xb") as file:
+            file.truncate(count * itemsize)
+        written.append(path)
+        logger.info("Wrote zero restart field %s.", path)
+
+    return written
 
 
 def _get_microhh_run_commands(
@@ -1263,6 +1374,10 @@ def _get_single_run_command(
 ) -> list[str]:
     """Generate srun commands for a single-case run, e.g. on a CPU node.
 
+    Each srun step runs inside the case directory, because MicroHH opens
+    ``{case.name}.ini`` and its input files relative to the working directory,
+    and the sbatch script may run from a different (e.g. parent) directory.
+
     Args:
         phases: list of MicroHH phases to execute (e.g. ["init", "run"]).
         case: The case to run.
@@ -1272,15 +1387,14 @@ def _get_single_run_command(
         list of shell command strings.
     """
     commands = []
+    srun_prefix = f"srun --chdir={case.scratch_path}"
+    executable = f"{case.scratch_path}/microhh"
     last_phase_idx = len(phases) - 1
     for phase_idx, phase in enumerate(phases):
         if jobreport_path and phase_idx == last_phase_idx:
-            cmd = (
-                f"srun {jobreport_path} -- "
-                f"{case.scratch_path}/microhh {phase} {case.name}"
-            )
+            cmd = f"{srun_prefix} {jobreport_path} -- {executable} {phase} {case.name}"
         else:
-            cmd = f"srun {case.scratch_path}/microhh {phase} {case.name}"
+            cmd = f"{srun_prefix} {executable} {phase} {case.name}"
         commands.append(cmd)
     return commands
 

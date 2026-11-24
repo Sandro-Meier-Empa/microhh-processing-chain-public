@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-23
+
+### Added
+
+- `preprocessing.write_zero_restart_fields()` writes zero-valued restart files
+  (`<name>.<time>` and `<name>_gradbot.<time>`) for scalars that a restart lacks,
+  e.g. passive tracers left out of a spin-up. MicroHH stops with "Error loading
+  fields" when a scalar of `[fields] slist` has no restart file. The files are
+  sparse, take the precision of the restart field `u.<time>`, and existing files
+  (including symbolic links into another case) are never overwritten.
+
 ## 2026-11-17
 
 ### Fixed
